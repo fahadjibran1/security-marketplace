@@ -262,7 +262,9 @@ async function main() {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
       // Migration 74 (1720900000021, certified by m74-migration.spec.ts) follows 73: its columns and indexes are not drift here.
       const m74 = /^ALTER TABLE "(patrol_policies|patrol_schedules|patrol_routes|patrol_checkpoints|shifts)" ADD "(setupMode|windowAnchor|setupConfirmedAt|setupConfirmedByUserId|anchor|kind|supersededByRouteId|supersededAt|confirmedAt|confirmedByUserId|confirmedTokenVersion|patrolRequirement)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_routes_superseded_by|IDX_patrol_routes_superseded)" /;
-      const semantic = drift.filter((x) => !m74.test(x) &&
+      // …and Migration 75's two Patrol Monitor indexes (m75-migration.spec.ts M75-10 certifies them).
+      const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
+      const semantic = drift.filter((x) => !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /patrol_schedules.*superseded|_patrol_schedules_superseded/i.test(x));

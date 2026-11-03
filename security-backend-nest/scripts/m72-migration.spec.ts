@@ -271,7 +271,9 @@ async function main() {
       // …and Migration 73's schedule successor columns and indexes (m73-migration.spec.ts M73-08 certifies them).
       const m73 = /^ALTER TABLE "patrol_schedules" ADD "superseded(ByScheduleId|At)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_schedules_superseded_by|IDX_patrol_schedules_superseded)" /;
       const m74 = /^ALTER TABLE "(patrol_policies|patrol_schedules|patrol_routes|patrol_checkpoints|shifts)" ADD "(setupMode|windowAnchor|setupConfirmedAt|setupConfirmedByUserId|anchor|kind|supersededByRouteId|supersededAt|confirmedAt|confirmedByUserId|confirmedTokenVersion|patrolRequirement)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_routes_superseded_by|IDX_patrol_routes_superseded)" /;
-      const semantic = drift.filter((x) => !m73.test(x) && !m74.test(x) &&
+      // …and Migration 75's two Patrol Monitor indexes (m75-migration.spec.ts M75-10 certifies them).
+      const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
+      const semantic = drift.filter((x) => !m73.test(x) && !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /patrol_sync_recovery_grants|UQ_shifts_id_company/.test(x));

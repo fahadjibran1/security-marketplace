@@ -428,10 +428,12 @@ async function main() {
       // …and Migration 73's schedule successor columns and indexes (m73-migration.spec.ts M73-08 certifies them).
       const m73 = /^ALTER TABLE "patrol_schedules" ADD "superseded(ByScheduleId|At)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_schedules_superseded_by|IDX_patrol_schedules_superseded)" /;
       const m74 = /^ALTER TABLE "(patrol_policies|patrol_schedules|patrol_routes|patrol_checkpoints|shifts)" ADD "(setupMode|windowAnchor|setupConfirmedAt|setupConfirmedByUserId|anchor|kind|supersededByRouteId|supersededAt|confirmedAt|confirmedByUserId|confirmedTokenVersion|patrolRequirement)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_routes_superseded_by|IDX_patrol_routes_superseded)" /;
-      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) &&
+      // …and Migration 75's two Patrol Monitor indexes (m75-migration.spec.ts M75-10 certifies them).
+      const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
+      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
-      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x));
+      const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x));
       // Foreign keys (most are composite, which TypeORM cannot declare) and CHECKs live in the migration only, as for
       // several existing tables; every column, unique key and index agrees.
       const unexpected = ours.filter((x) => !/^ALTER TABLE "patrol_[a-z_]+" DROP CONSTRAINT "(FK|CHK)_patrol_/.test(x));
