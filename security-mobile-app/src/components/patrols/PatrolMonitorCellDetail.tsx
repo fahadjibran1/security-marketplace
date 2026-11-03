@@ -5,7 +5,18 @@ import type { PatrolMonitorCell, PatrolMonitorHour, PatrolMonitorLane, PatrolMon
 import { Button } from '../ui/Button';
 import { Drawer } from '../ui/Drawer';
 import type { PatrolPageContext } from './patrolContext';
-import { monitorCellWindows, monitorClock, monitorClockOnDay, monitorHourLabel, monitorLaneTitle, monitorShiftTimes, monitorStateInfo } from './patrolMonitorPresentation';
+import {
+  monitorAdHocExplanation,
+  monitorCellWindows,
+  monitorClock,
+  monitorClockOnDay,
+  monitorCountWords,
+  monitorEvidenceGaps,
+  monitorHourLabel,
+  monitorLaneTitle,
+  monitorShiftTimes,
+  monitorStateInfo,
+} from './patrolMonitorPresentation';
 import { exceptionStatusLabel } from './patrolPresentation';
 import { KeyValue, ui } from './patrolUi';
 import { MonitorStateMark } from './PatrolMonitorMarks';
@@ -29,6 +40,8 @@ export function PatrolMonitorCellDetail({ ctx, site, selection, onClose }: {
   const windows = selection && lane ? monitorCellWindows(lane, selection.cell) : [];
   const laneTitle = lane ? monitorLaneTitle(lane) : '';
   const hourText = selection ? `${monitorHourLabel(selection.hour)}:00 – ${monitorClock(selection.hour.end, zone)}` : '';
+  // S4 patrol assignment correctness: ad-hoc patrols of this lane started in this hour — shown, never counted.
+  const adHoc = selection && lane && site ? site.otherRuns.filter((o) => o.laneKey === lane.key && o.hour === selection.cell.hour) : [];
   return (
     <Drawer
       visible={Boolean(selection && site)}
@@ -40,9 +53,11 @@ export function PatrolMonitorCellDetail({ ctx, site, selection, onClose }: {
       <View style={{ gap: spacing.md }} testID="patrol-monitor-cell-detail">
         {lane && lane.kind === 'shift' ? <Text style={ui.muted}>Shift {monitorShiftTimes(lane, zone, day)}{lane.requirement?.summary ? ` · ${lane.requirement.summary}` : ''}</Text> : null}
         {lane && lane.kind === 'site' ? <Text style={ui.muted}>Site-wide patrol: any Guard on duty at the site can complete it.</Text> : null}
-        {windows.length > 1 ? <Text style={ui.muted}>{selection!.cell.verified} of {windows.length} patrols in this hour verified.</Text> : null}
+        {windows.length > 1 ? <Text style={ui.muted}>{selection!.cell.later == null ? `${selection!.cell.verified} of ${windows.length} patrols in this hour verified.` : `${monitorCountWords(selection!.cell)}.`}</Text> : null}
         {windows.map((w) => <MonitorWindowDetail key={w.key} ctx={ctx} site={site!} lane={lane!} window={w} onLeave={onClose} />)}
-        {!windows.length ? <Text style={ui.muted}>No patrol window in this hour.</Text> : null}
+        {!windows.length ? <Text style={ui.muted}>No scheduled patrol window in this hour.</Text> : null}
+        {adHoc.length ? <Text style={ui.rowTitle} accessibilityRole="header">Ad-hoc patrols in this hour</Text> : null}
+        {adHoc.map((o) => <MonitorAdHocDetail key={o.runId} ctx={ctx} site={site!} other={o} onLeave={onClose} />)}
       </View>
     </Drawer>
   );
@@ -60,6 +75,9 @@ function MonitorWindowDetail({ ctx, site, lane, window: w, onLeave }: { ctx: Pat
   const photos = run?.photos;
   const exception = w.exceptionId != null ? site.exceptions[String(w.exceptionId)] ?? null : null;
   const openLiveOps = w.alertId != null && ctx.openLiveOperationsAlert ? ctx.openLiveOperationsAlert : null;
+  // Why received evidence has not (yet) satisfied this window.
+  const gaps = run ? monitorEvidenceGaps(run, w.state) : [];
+  const adHocHere = w.runId == null ? w.adHocRunIds ?? [] : [];
   return (
     <View style={styles.window} testID={`patrol-monitor-window-${w.key}`}>
       <View style={styles.windowHead}>
@@ -67,6 +85,12 @@ function MonitorWindowDetail({ ctx, site, lane, window: w, onLeave }: { ctx: Pat
         <MonitorStateMark state={w.state} />
       </View>
       <Text style={ui.rowMeta}>{info.description}</Text>
+      {gaps.map((g) => <Text key={g} style={[ui.rowMeta, { color: colors.warning }]}>{g}</Text>)}
+      {adHocHere.length ? (
+        <Text style={[ui.rowMeta, { color: colors.info }]}>
+          {adHocHere.map((id) => `Ad-hoc patrol P-${id}`).join(', ')} {adHocHere.length === 1 ? 'was' : 'were'} received while this window was open but {adHocHere.length === 1 ? 'is' : 'are'} not linked to it, so this window is still owed.
+        </Text>
+      ) : null}
       <KeyValue label="Guard" value={guard ?? 'No patrol recorded'} />
       {run ? <KeyValue label="Started (received by S4)" value={monitorClockOnDay(run.startedAtServer, zone, day)} /> : null}
       {run ? <KeyValue label="Completed (received by S4)" value={run.completedAtServer ? monitorClockOnDay(run.completedAtServer, zone, day) : 'Not completed'} /> : null}
@@ -97,7 +121,38 @@ function MonitorWindowDetail({ ctx, site, lane, window: w, onLeave }: { ctx: Pat
   );
 }
 
+/** An ad-hoc patrol: when, who, its counts, and why it counts towards no scheduled window. Counts only; no photo or link. */
+function MonitorAdHocDetail({ ctx, site, other, onLeave }: { ctx: PatrolPageContext; site: PatrolMonitorSite; other: PatrolMonitorSite['otherRuns'][number]; onLeave: () => void; key?: number }) {
+  const zone = site.timeZone;
+  const day = site.range.date;
+  const run = site.runs[String(other.runId)] ?? null;
+  return (
+    <View style={[styles.window, { borderStyle: 'dashed' as const }]} testID={`patrol-monitor-adhoc-${other.runId}`}>
+      <View style={styles.windowHead}>
+        <Text style={ui.rowTitle}>Ad-hoc patrol P-{other.runId}</Text>
+        <View style={styles.adHocMark}><Text style={styles.adHocMarkText}>◇ Not linked to a window</Text></View>
+      </View>
+      <Text style={ui.rowMeta}>{monitorAdHocExplanation(other.explanation)}</Text>
+      <KeyValue label="Guard" value={run?.guardName ?? (run ? `Guard #${run.guardId}` : '—')} />
+      <KeyValue label="Started (device)" value={monitorClockOnDay(other.startedAt ?? run?.startedAtDevice, zone, day)} />
+      {run ? <KeyValue label="Completed (received by S4)" value={run.completedAtServer ? monitorClockOnDay(run.completedAtServer, zone, day) : 'Not completed'} /> : null}
+      {run ? <KeyValue label="Photos" value={`${run.photos.taken} taken · ${run.photos.verified} verified · ${run.photos.missing} missing`} /> : null}
+      {run && run.checkpoints.required != null ? <KeyValue label="QR checkpoints" value={`${run.checkpoints.verified ?? 0} of ${run.checkpoints.required} verified · ${run.checkpoints.scans} scans`} /> : null}
+      <View style={ui.actions}>
+        <Button
+          label={ctx.permissions.canViewEvidence ? 'Open patrol record and photos' : 'Open patrol record'}
+          variant="secondary"
+          size="sm"
+          onPress={() => { onLeave(); ctx.openRun(other.runId); }}
+        />
+      </View>
+    </View>
+  );
+}
+
 const styles = {
   window: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm, padding: spacing.md, gap: spacing.xs, backgroundColor: colors.card },
   windowHead: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const, gap: spacing.sm, flexWrap: 'wrap' as const },
+  adHocMark: { borderWidth: 1, borderColor: colors.infoBorder, backgroundColor: colors.infoSurface, borderRadius: radii.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
+  adHocMarkText: { fontSize: 12, fontWeight: '600' as const, color: colors.info },
 };

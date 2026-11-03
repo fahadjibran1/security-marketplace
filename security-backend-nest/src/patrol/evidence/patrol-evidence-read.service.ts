@@ -136,7 +136,7 @@ export class PatrolEvidenceReadService {
     const evidence = runIds.length
       ? await this.dataSource.query(
         `SELECT e."id", e."runId", e."visitId", e."kind", e."uploadStatus", e."retentionStatus", e."capturedAtDevice", e."receivedAt", e."verifiedAt",
-                e."storageKey" FROM "patrol_evidence" e WHERE e."companyId" = $1 AND e."runId" = ANY($2::int[]) ORDER BY e."capturedAtDevice", e."id"`,
+                e."storageKey", e."sha256Stored" FROM "patrol_evidence" e WHERE e."companyId" = $1 AND e."runId" = ANY($2::int[]) ORDER BY e."capturedAtDevice", e."id"`,
         [actor.companyId, runIds],
       )
       : [];
@@ -182,6 +182,8 @@ export class PatrolEvidenceReadService {
           capturedAtDevice: e.capturedAtDevice ? new Date(e.capturedAtDevice).toISOString() : null,
           receivedAt: e.receivedAt ? new Date(e.receivedAt).toISOString() : null,
           verifiedAt: e.verifiedAt ? new Date(e.verifiedAt).toISOString() : null,
+          // The fingerprint of the original as stored (patrols.evidence only, like the rest of this list): shown in the viewer.
+          sha256: e.sha256Stored ?? null,
           viewable: viewable(e),
           stampedPath: viewable(e) ? `/patrols/evidence/${Number(e.id)}/stamped` : null,
         })) : null,
@@ -249,6 +251,7 @@ export class PatrolEvidenceReadService {
       receivedAtServer: row.receivedAt ? new Date(row.receivedAt) : row.verifiedAt ? new Date(row.verifiedAt) : null,
       timeZone: usableZone(ctx.timezone),
       runId: Number(ctx.runId),
+      evidenceId: Number(row.id),
       window: ctx.windowStart && ctx.windowEnd ? { start: new Date(ctx.windowStart), end: new Date(ctx.windowEnd), name: ctx.scheduleName ?? null } : null,
     };
     let rendered: Awaited<ReturnType<typeof renderStampedJpeg>>;

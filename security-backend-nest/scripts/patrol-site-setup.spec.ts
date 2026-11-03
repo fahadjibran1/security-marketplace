@@ -489,19 +489,25 @@ async function main() {
       const sEarly = await mk(every.siteId, g1, 'required', { start: day(8), end: day(12), bookOffAt: day(9, 30) });
       const sCancelled = await mk(every.siteId, g2, 'required', { status: 'cancelled' });
       const sOff = await mk(offSite.siteId, g1, 'required');
-      // An ad-hoc patrol (no schedule) on the every_shift shift: recorded, satisfies no window, raises nothing itself.
+      // S4 patrol assignment correctness (production P-6): a patrol started with no schedule inside the shift's one open
+      // window is linked to it by S4 — so the 08:00 window is covered, not missed.
       const adhoc = expect(await api('POST', '/patrols/runs', g1.token, { shiftId: sEvery, clientRunId: cid('adhoc'), startedAtDevice: day(8, 10).toISOString() }), 201);
-      assert.equal(adhoc.windowKey, null);
+      assert.equal(adhoc.windowKey, `s${every.schedule.id}:sh${sEvery}:20261110T0800Z:0`);
+      assert.ok(adhoc.syncFlags.includes('window_auto_assigned'));
       expect(await api('POST', `/patrols/runs/${adhoc.id}/complete`, g1.token, { completedAtDevice: day(8, 20).toISOString() }), 200);
       // A patrol for the second window of the every_shift shift covers exactly that window.
       const covered = expect(await api('POST', '/patrols/runs', g1.token, { shiftId: sEvery, clientRunId: cid('run'), scheduleId: Number(every.schedule.id), startedAtDevice: day(9, 15).toISOString() }), 201);
       assert.deepEqual([covered.windowKey, covered.windowStart], [`s${every.schedule.id}:sh${sEvery}:20261110T0800Z:1`, day(9).toISOString()]);
       expect(await api('POST', `/patrols/runs/${covered.id}/complete`, g1.token, { completedAtDevice: day(9, 30).toISOString() }), 200);
+      // A genuine ad-hoc patrol (its window already covered): recorded, satisfies no window, raises nothing itself.
+      const extra = expect(await api('POST', '/patrols/runs', g1.token, { shiftId: sEvery, clientRunId: cid('adhoc'), startedAtDevice: day(9, 35).toISOString() }), 201);
+      assert.equal(extra.windowKey, null);
+      expect(await api('POST', `/patrols/runs/${extra.id}/complete`, g1.token, { completedAtDevice: day(9, 40).toISOString() }), 200);
       await focus(D.id);
       await sweep(day(13));
       const missed = await missedOf(D.id);
       const byShift = (id: number) => missed.filter((e: any) => e.scopeKey === `sh${id}`).map((e: any) => new Date(e.windowStart).toISOString().slice(11, 16));
-      assert.deepEqual(byShift(sEvery), ['08:00', '10:00', '11:00'], 'every_shift, site default: owed from the scheduled start; the covered window and the ad-hoc patrol raise nothing');
+      assert.deepEqual(byShift(sEvery), ['10:00', '11:00'], 'every_shift, site default: owed from the scheduled start; the covered windows (one linked by S4) and the ad-hoc patrol raise nothing');
       assert.deepEqual(byShift(sEveryNot), [], 'every_shift, shift says not required');
       assert.deepEqual(byShift(sPerDefault), [], 'per_shift, site default: not required');
       assert.deepEqual(byShift(sPerRequired), ['08:00', '09:00', '10:00', '11:00'], 'per_shift, shift says required');

@@ -508,7 +508,11 @@ async function main() {
       assert.ok(cm && w('11').exceptionIds.includes(Number(cm.id)), 'not_verified carries the sweep\'s checkpoint_missed');
       // An unscheduled patrol is listed, never counted as a patrol — but its own exception (Gate 2 not scanned) counts.
       const unscheduledCm = await one(`SELECT id FROM patrol_exceptions WHERE "runId" = $1 AND type = 'checkpoint_missed'`, [unscheduled.id]);
-      assert.deepEqual(v.otherRuns, [{ runId: Number(unscheduled.id), reason: 'unscheduled', exceptionIds: [Number(unscheduledCm.id)] }]);
+      // S4 patrol assignment correctness: placed in its lane and hour, with why it counts towards no window.
+      assert.deepEqual(v.otherRuns, [{
+        runId: Number(unscheduled.id), reason: 'unscheduled', exceptionIds: [Number(unscheduledCm.id)],
+        laneKey: 'site', hour: 9, startedAt: new Date(unscheduled.startedAtDevice).toISOString(), explanation: 'ad_hoc',
+      }]);
       assert.ok(v.exceptions[unscheduledCm.id], 'and is described');
       assert.deepEqual([v.counts.windows, v.counts.owed, v.counts.verified, v.counts.verifiedOnTime, v.counts.lateVerified, v.counts.missed, v.counts.inProgress, v.counts.future],
         [8, 6, 2, 1, 1, 1, 1, 2]);

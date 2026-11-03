@@ -3,7 +3,7 @@
  * Patrol Monitor — the compact PatrolSafe-style Monitor on the company dashboard (S4 Patrol Monitor S2, owner-approved
  * 3 Nov 2026). Executes the REAL page (react-test-renderer on react-native-web) with the API stubbed, plus the pure rules.
  *
- * WHAT IS CERTIFIED (PMUI-01…17)
+ * WHAT IS CERTIFIED (PMUI-01…21)
  *   - Colours and labels: green ONLY for an on-time, server-verified patrol; red ONLY for a sweep-confirmed missed patrol;
  *     late · verified, awaiting verification, incomplete, needs review (flagged / not verified), overdue and awaiting
  *     check amber with distinct plain-English labels; every state carries a text label and a symbol.
@@ -19,6 +19,9 @@
  *     link, no image — and links to the existing audited patrol record (the photos) and Live Operations.
  *   - Empty, forbidden and switched-off states; read-only (every request a GET), no NFC, no Guard app code touched.
  *   - The release-gate wiring.
+ *   - S4 patrol assignment correctness (PMUI-18…21): cells and cards count on one basis (verified of those due, later
+ *     apart); an ad-hoc patrol is shown in its hour, marked, explained and never counted; why received evidence has
+ *     not satisfied a window; the evidence viewer shows the SHA-256 fingerprint and no review wording.
  */
 const Module = require('node:module');
 const originalLoad = Module._load;
@@ -228,9 +231,10 @@ function win(key, startHH, state, over = {}) {
 function cellsFor(windows, hours, fill = 'none', worst) {
   return hours.map((h) => {
     const ws = windows.filter((w) => w.start >= h.start && w.start < h.end);
-    if (!ws.length) return { hour: h.index, state: fill, total: 0, owed: 0, verified: 0, windowKeys: [] };
+    if (!ws.length) return { hour: h.index, state: fill, total: 0, owed: 0, verified: 0, later: 0, windowKeys: [], adHoc: 0 };
     const state = worst?.[h.index] ?? ws[0].state;
-    return { hour: h.index, state, total: ws.length, owed: ws.length, verified: ws.filter((w) => ['verified', 'late_verified'].includes(w.state)).length, windowKeys: ws.map((w) => w.key) };
+    const later = ws.filter((w) => w.state === 'future').length;
+    return { hour: h.index, state, total: ws.length, owed: ws.length - later, verified: ws.filter((w) => ['verified', 'late_verified'].includes(w.state)).length, later, windowKeys: ws.map((w) => w.key), adHoc: 0 };
   });
 }
 const SITE_WINDOWS = [
@@ -412,12 +416,14 @@ test('PMUI-05-A-COLLAPSED-CARD-SHOWS-SITE-CLIENT-VERIFIED-MISSED-REVIEW-AND-NEXT
   const r = await open();
   const card = byTestId(r.root, 'patrol-monitor-site-10')[0];
   const text = textOf(card);
-  for (const part of ['Alpha Site', 'Northwind Estates', '! Needs attention', '✓ Verified 3/5', '12 today', '✕ Missed 1', '⚑ Needs review 2', '○ Next 14:00']) {
+  for (const part of ['Alpha Site', 'Northwind Estates', '! Needs attention', '✓ Verified 3/5', '✕ Missed 1', '⚑ Needs review 2', '○ Next 14:00']) {
     assert.ok(text.includes(part), `collapsed card: ${part}`);
   }
   assert.equal(/Overdue|Incomplete|Late \d/.test(text), false, 'compact: only verified, missed, needs review and the next window');
   assert.ok(textOf(byTestId(r.root, 'patrol-monitor-site-40')[0]).includes('No more patrols due'));
   assert.ok(textOf(byTestId(r.root, 'patrol-monitor-site-20')[0]).includes('Missed 0'), 'a zero is shown, not hidden');
+  assert.ok(textOf(byTestId(r.root, 'patrol-monitor-site-20')[0]).includes('Verified 6/6 · 6 later'), 'verified of those due, and apart how many come later');
+  assert.equal(textOf(card).includes('later'), false, 'nothing later: no hint');
   // Live Operations counts on today.
   assert.ok(textOf(r.root).includes('Open patrol alerts: 2') && textOf(r.root).includes('Missed today: 1 (1 open)'));
   // The missed chip is the only red on a collapsed card, and only when something was missed.
@@ -546,8 +552,8 @@ test('PMUI-10-SEVERAL-PATROLS-IN-AN-HOUR-READ-1-OF-2', async () => {
   reset();
   const r = await open();
   await pressByText(r.root, 'Expand Alpha Site');
-  assert.ok(cellLabels(r.root).includes('Site Patrol, 10:00: Needs review, 1 of 2 verified'));
-  const cell = pressables(r.root, 'Site Patrol, 10:00: Needs review, 1 of 2 verified')[0];
+  assert.ok(cellLabels(r.root).includes('Site Patrol, 10:00: Needs review, 1 of 2 due verified'));
+  const cell = pressables(r.root, 'Site Patrol, 10:00: Needs review, 1 of 2 due verified')[0];
   assert.equal(textOf(cell), '⚑1/2', 'symbol and count, never colour alone');
   act(() => r.unmount());
 });
@@ -593,12 +599,12 @@ test('PMUI-12-A-CELL-OPENS-COUNTS-WITH-NO-REQUEST-AND-LINKS-TO-THE-AUDITED-RECOR
   const r = await open({ onOpenLiveOperationsAlert: (t) => liveOps.push(t) });
   await pressByText(r.root, 'Expand Alpha Site');
   const before = calls.length;
-  await pressByText(r.root, 'Site Patrol, 10:00: Needs review, 1 of 2 verified');
+  await pressByText(r.root, 'Site Patrol, 10:00: Needs review, 1 of 2 due verified');
   assert.equal(calls.length, before, 'opening a cell requests nothing');
   const detail = byTestId(r.root, 'patrol-monitor-cell-detail')[0];
   const text = textOf(detail);
   assert.ok(textOf(r.root).includes('Site Patrol · 10:00 – 11:00'), 'the hour');
-  assert.ok(text.includes('1 of 2 patrols in this hour verified.'));
+  assert.ok(text.includes('1 of 2 due verified.'), 'on the same basis as the card');
   for (const part of ['10:00 – 10:30', 'Verified', 'Ben Guard', '10:30 – 11:00', 'Needs review', 'flagged scan', 'Ava Guard',
     '3 of 4 verified · 5 scans · 1 repeat · 1 flagged', '1 taken · 1 verified · 1 missing', 'Started (received by S4)10:31']) {
     assert.ok(text.includes(part), `cell detail: ${part}`);
@@ -719,6 +725,96 @@ test('PMUI-16-READ-ONLY-NO-NFC-NO-GUARD-APP', () => {
   for (const n of names) assert.match(n, /^(get|list)/, `${n}: a read`);
   assert.equal(storageWrites.length, 0, 'nothing kept in browser storage');
   assert.equal(logged.some((l) => /https?:\/\/(?!react\.dev\/)/.test(l)), false, 'no link logged (React\'s own deprecation notice aside)');
+});
+
+
+// ═══ S4 patrol assignment correctness (owner-approved 3 Nov 2026) ═══
+
+test('PMUI-18-CELLS-AND-CARDS-COUNT-ON-ONE-BASIS-DUE-AND-LATER-APART', async () => {
+  assert.equal(M.monitorCellCount({ total: 2, owed: 1, verified: 0, later: 1 }), '0/1 +1', 'P-6\'s hour at 10:16: one due, one later');
+  assert.equal(M.monitorCellCount({ total: 2, owed: 2, verified: 1, later: 0 }), '1/2');
+  assert.equal(M.monitorCellCount({ total: 2, owed: 0, verified: 0, later: 2 }), '+2');
+  assert.equal(M.monitorCellCount({ total: 2, owed: 0, verified: 0, later: 0 }), null, 'neither due nor later (no Guard on duty): the symbol alone');
+  assert.equal(M.monitorCellCount({ total: 2, owed: 2, verified: 1 }), '1/2', 'an older API without later keeps verified/total');
+  assert.equal(M.monitorCountWords({ verified: 0, owed: 1, later: 1 }), '0 of 1 due verified, 1 later');
+  assert.deepEqual(M.monitorCardVerified({ verified: 0, owed: 1, future: 1 }), { label: 'Verified 0/1', hint: '1 later' }, 'the card reads the same way as the cell');
+  assert.deepEqual(M.monitorCardVerified({ verified: 3, owed: 3, future: 0 }), { label: 'Verified 3/3', hint: null });
+  // On the page: an hour with one window due and one later.
+  const hours = GMT_DAY_HOURS;
+  const ws = [win('d1', '10:10', 'due'), { ...win('d2', '10:40', 'future'), end: Z('11:10') }];
+  reset({ getPatrolMonitorSite: () => { const d = siteDetail(); return { ...d, lanes: [{ ...d.lanes[1], windows: ws, cells: cellsFor(ws, hours, 'none') }] }; } });
+  const r = await open();
+  await pressByText(r.root, 'Expand Alpha Site');
+  const cell = pressables(r.root, 'Ava Guard, 10:00: Due now, 0 of 1 due verified, 1 later')[0];
+  assert.ok(cell, cellLabels(r.root).filter((l) => l.includes('10:00')).join(' | '));
+  assert.equal(textOf(cell), '●0/1 +1');
+  await pressByText(r.root, 'Ava Guard, 10:00: Due now, 0 of 1 due verified, 1 later');
+  assert.ok(textOf(byTestId(r.root, 'patrol-monitor-cell-detail')[0]).includes('0 of 1 due verified, 1 later.'));
+  act(() => r.unmount());
+});
+
+test('PMUI-19-AN-AD-HOC-PATROL-IS-SHOWN-IN-ITS-HOUR-WITH-WHY-IT-DOES-NOT-COUNT', async () => {
+  assert.match(M.monitorAdHocExplanation('ad_hoc'), /phone started it without a scheduled patrol window/);
+  assert.match(M.monitorAdHocExplanation('ambiguous'), /More than one scheduled patrol window was open/);
+  assert.match(M.monitorAdHocExplanation('already_covered'), /already had a patrol/);
+  // P-6 as production saw it: the shift's 10:10 window still owed, an ad-hoc patrol with 4 verified photos at 10:10.
+  const hours = GMT_DAY_HOURS;
+  const ws = [{ ...win('s10', '10:10', 'due'), scopeKey: 'sh81', anchor: 'shift', adHocRunIds: [6] }, { ...win('s40', '10:40', 'future'), scopeKey: 'sh81', anchor: 'shift', end: Z('11:10') }];
+  reset({ getPatrolMonitorSite: () => {
+    const d = siteDetail();
+    const lane = { ...d.lanes[1], windows: ws, cells: cellsFor(ws, hours, 'none').map((c) => (c.hour === 10 ? { ...c, adHoc: 1 } : c)) };
+    return { ...d, lanes: [lane],
+      runs: { ...d.runs, 6: RUN(6, 11, 'Ava Guard', { startedAtDevice: Z('10:10'), startedAtServer: Z('10:10'), completedAtServer: Z('10:10'), photos: { taken: 4, verified: 4, missing: 0 } }) },
+      otherRuns: [{ runId: 6, reason: 'unscheduled', exceptionIds: [], laneKey: lane.key, hour: 10, startedAt: Z('10:10'), explanation: 'ad_hoc' }] };
+  } });
+  const opened = [];
+  answers.getPatrolRun = (id) => { opened.push(id); return { run: { id, siteId: 10, guardId: 11, status: 'completed', verificationStatus: 'verified', syncFlags: [] }, visits: [], exceptions: [], evidenceCount: 4, evidenceRestricted: false, evidence: [] }; };
+  const r = await open();
+  await pressByText(r.root, 'Expand Alpha Site');
+  const label = 'Ava Guard, 10:00: Due now, 0 of 1 due verified, 1 later, 1 ad-hoc patrol';
+  const cell = pressables(r.root, label)[0];
+  assert.ok(cell, 'the cell says it holds an ad-hoc patrol');
+  assert.ok(textOf(cell).includes('◇'), 'and marks it (a symbol, not colour alone)');
+  const before = calls.length;
+  await pressByText(r.root, label);
+  assert.equal(calls.length, before, 'nothing fetched');
+  const text = textOf(byTestId(r.root, 'patrol-monitor-cell-detail')[0]);
+  assert.ok(text.includes('Ad-hoc patrols in this hour') && text.includes('Ad-hoc patrol P-6') && text.includes('Not linked to a window'));
+  assert.ok(text.includes('without a scheduled patrol window'), 'why it does not count');
+  assert.ok(text.includes('4 taken · 4 verified · 0 missing'), 'its photo counts');
+  assert.ok(text.includes('Ad-hoc patrol P-6 was received while this window was open but is not linked to it, so this window is still owed.'), 'the window explains it is still owed');
+  assert.ok(text.includes('0 of 1 due verified'), 'and it is not counted');
+  await pressByText(r.root, 'Open patrol record and photos');
+  assert.deepEqual(opened, [6], 'the audited record');
+  act(() => r.unmount());
+  // An hour with only an ad-hoc patrol (no window) still opens.
+  assert.equal(M.monitorCellOpens({ total: 0, windowKeys: [], adHoc: 1 }), true);
+  assert.equal(M.monitorCellOpens({ total: 0, windowKeys: [], adHoc: 0 }), false);
+});
+
+test('PMUI-20-WHY-RECEIVED-EVIDENCE-HAS-NOT-SATISFIED-A-WINDOW', async () => {
+  const run = (over) => ({ status: 'completed', photos: { taken: 1, verified: 1, missing: 0 }, checkpoints: { required: null, verified: null, scans: 0, repeatScans: 0, flaggedScans: 0, qrRuleMissing: false }, ...over });
+  assert.deepEqual(M.monitorEvidenceGaps(run({ photos: { taken: 1, verified: 1, missing: 1 } }), 'not_verified'), ['1 photo received; S4 still needs 1 more for this patrol.']);
+  assert.deepEqual(M.monitorEvidenceGaps(run({ photos: { taken: 3, verified: 1, missing: 0 } }), 'awaiting_verification'), ['2 photos are still being received and checked by S4.']);
+  assert.deepEqual(M.monitorEvidenceGaps(run({ checkpoints: { required: 4, verified: 3, scans: 5, repeatScans: 1, flaggedScans: 1, qrRuleMissing: false } }), 'flagged'), ['3 of 4 required QR checkpoints verified.']);
+  assert.deepEqual(M.monitorEvidenceGaps(run({ photos: { taken: 1, verified: 1, missing: 1 } }), 'verified'), [], 'nothing for a verified window');
+  reset();
+  const r = await open();
+  await pressByText(r.root, 'Expand Alpha Site');
+  await pressByText(r.root, 'Site Patrol, 10:00: Needs review, 1 of 2 due verified');
+  const text = textOf(byTestId(r.root, 'patrol-monitor-cell-detail')[0]);
+  assert.ok(text.includes('1 photo received; S4 still needs 1 more for this patrol.') && text.includes('3 of 4 required QR checkpoints verified.'), 'the flagged patrol says what is missing');
+  act(() => r.unmount());
+});
+
+test('PMUI-21-THE-EVIDENCE-VIEWER-SHOWS-THE-FINGERPRINT-AND-NO-REVIEW-WORDING', () => {
+  const B = loadSource('src/components/patrols/PatrolEvidenceBrowser.tsx');
+  assert.equal(B.fingerprint('3F9A0C217BE4D1A2' + 'ab'.repeat(24)), '3f9a0c21 7be4d1a2 abababab abababab abababab abababab abababab abababab');
+  const src = stripComments(read('src/components/patrols/PatrolEvidenceBrowser.tsx'));
+  assert.ok(src.includes('SHA-256 fingerprint of the original') && src.includes('photo.sha256'), 'the original\'s SHA-256 beside the photo');
+  assert.ok(src.includes("'Received complete'") && !src.includes("photo.viewable ? 'Verified'"), 'the upload\'s integrity, not a person\'s review');
+  assert.ok(src.includes('a small panel in its corner'), 'the stamped view is described as it now is');
+  assert.ok(/received \{formatPatrolDateTime\(photo\.receivedAt, timeZone\)\} \(S4 server\)/.test(src), 'the server receipt time stays here');
 });
 
 test('PMUI-17-RELEASE-GATE-WIRING', () => {

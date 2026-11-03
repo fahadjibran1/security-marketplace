@@ -262,7 +262,7 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
           <Text style={ui.muted}>
             {view === 'original'
               ? 'The photo exactly as the Guard\'s phone sent it, opened through a short-lived link. Each view is recorded with your reason.'
-              : 'The whole photo with a band added below it giving the company, client, site, Guard, both times and www.sfour.co.uk, made for you on request. The original is unchanged; each view is recorded.'}
+              : 'The whole photo with a small panel in its corner giving the company, site, Guard, the time the phone took it and the patrol reference, made for you on request. The original is unchanged; each view is recorded.'}
           </Text>
           {view === 'original' ? (
             <ChipSelect label="Why are you viewing these photos?" scroll options={PATROL_EVIDENCE_ACCESS_PURPOSES.map((p) => ({ value: p, label: PURPOSE_LABELS[p] }))} value={purpose} onChange={setPurpose} />
@@ -272,12 +272,19 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
             <RowCard key={photo.id}>
               <View style={ui.actions}>
                 <Text style={ui.rowTitle}>{photo.kind === 'checkpoint_photo' ? 'Checkpoint photo' : 'Patrol photo'} #{photo.id}</Text>
-                <Badge label={photo.viewable ? 'Verified' : photo.uploadStatus === 'pending' ? 'Waiting for upload' : 'Not viewable'} tone={photo.viewable ? 'success' : 'pending'} />
+                {/* The upload's integrity check, not a person's review of the photo. */}
+                <Badge label={photo.viewable ? 'Received complete' : photo.uploadStatus === 'pending' ? 'Waiting for upload' : 'Not viewable'} tone={photo.viewable ? 'success' : 'pending'} />
                 {photo.viewable ? (
                   <Button label={view === 'stamped' ? 'View stamped' : 'View original'} size="sm" variant="secondary" loading={opening === photo.id} onPress={() => { void open(photo); }} />
                 ) : null}
               </View>
-              <Text style={ui.rowMeta}>Taken {formatPatrolDateTime(photo.capturedAtDevice, timeZone)} (device) · received {formatPatrolDateTime(photo.receivedAt, timeZone)} (S4)</Text>
+              <Text style={ui.rowMeta}>Taken {formatPatrolDateTime(photo.capturedAtDevice, timeZone)} (device) · received {formatPatrolDateTime(photo.receivedAt, timeZone)} (S4 server)</Text>
+              <Text style={ui.rowMeta}>Patrol {card.reference} · photo #{photo.id}</Text>
+              {photo.sha256 ? (
+                <Text style={[ui.muted, { fontFamily: 'monospace' } as any]} selectable accessibilityLabel={`SHA-256 fingerprint of the original: ${photo.sha256}`}>
+                  SHA-256 {fingerprint(photo.sha256)}
+                </Text>
+              ) : null}
             </RowCard>
           ))}
         </View>
@@ -295,4 +302,9 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
       </AppModal>
     </PatrolPanel>
   );
+}
+
+/** The original's SHA-256 in groups of eight, readable and copyable ("3f9a0c21 7be4…"). */
+export function fingerprint(sha256: string): string {
+  return (sha256.toLowerCase().match(/.{1,8}/g) ?? []).join(' ');
 }

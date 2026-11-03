@@ -7,6 +7,7 @@ import { CompletePatrolRunDto, RecordPatrolVisitDto, StartPatrolRunDto } from '.
 import { PatrolAccessService, PatrolGuardActor } from './patrol-access.service';
 import { PatrolConfigService } from './patrol-config.service';
 import {
+  PATROL_ASSIGNMENT_FLAGS,
   PATROL_REVIEW_FLAGS,
   PATROL_UNVERIFIED_ONLY_FLAGS,
   PatrolErrorCode,
@@ -33,6 +34,7 @@ import { ScheduleVersionBounds, scheduleVersionBounds, supersededSince, withVers
 import { setupFor, shiftAnchoredSchedules, siteSetups } from './patrol-shift-context';
 import { effectiveShiftRequirement, setupActive, shiftAnchoredWindows, shiftScopeKey, shiftWindowForStart } from './patrol-shift-windows';
 import { PatrolWindow, runCoverageKey, windowForStart, windowsBetween } from './patrol-window.service';
+import { MatchCandidate, matchStartWindow, WindowMatch } from './patrol-window-match';
 
 const INT32_MAX = 2_147_483_647;
 /** The configuration problem a Guard is shown for shift windows without a confirmed checkpoint (rule A1). */
@@ -500,7 +502,16 @@ export class PatrolGuardService {
     const driftMs = clockDriftMs(now, dto.sentAtDevice ? new Date(dto.sentAtDevice) : null);
     const adjustedStart = adjustForDrift(startedAtDevice, driftMs);
     let assigned: { window: PatrolWindow; lateStart: boolean } | null = null;
-    if (schedule) {
+    // S4 patrol assignment correctness: no schedule sent (the app had no due window) → the ONE eligible window, if any.
+    let match: WindowMatch<any> | null = null;
+    if (dto.scheduleId == null) {
+      match = await this.matchWindow(shift, actor.guardId, policy, adjustedStart, attendance);
+      if (match.outcome === 'auto_assigned') {
+        schedule = match.candidate.schedule;
+        assigned = { window: match.candidate.window as PatrolWindow, lateStart: match.lateStart };
+      }
+    }
+    if (schedule && !match) {
       const [site] = await this.dataSource.query(`SELECT "timezone" FROM "sites" WHERE "id" = $1`, [shift.siteId]);
       const timeZone = site?.timezone || 'Europe/London';
       if (schedule.anchor === 'shift') {
@@ -565,16 +576,21 @@ export class PatrolGuardService {
     // 1.3.0 B1: a shift-anchored window is owed by its shift, whatever the policy's requirement scope.
     const scopeKey = schedule?.anchor === 'shift' ? shiftScopeKey(shift.id) : policy.requirementScope === 'per_guard' ? `sh${shift.id}` : 'site';
 
+    const autoAssigned = match?.outcome === 'auto_assigned';
+    if (match?.outcome === 'ambiguous') flags.push('window_match_ambiguous');
     const insertRun = async (withWindow: boolean) => {
       const window = withWindow ? assigned : null;
-      const runFlags = withWindow || !assigned ? flags : [...flags, 'window_already_covered' as PatrolSyncFlag];
+      const runFlags: PatrolSyncFlag[] = withWindow || !assigned ? [...flags] : [...flags, 'window_already_covered'];
+      if (withWindow && autoAssigned) runFlags.push('window_auto_assigned');
+      // An auto-linked run that lost its window to a concurrent run is an ad-hoc run (no schedule), never half-linked.
+      const scheduleId = autoAssigned ? (withWindow ? Number(schedule.id) : null) : dto.scheduleId ?? null;
       const [row] = await this.dataSource.query(
         `INSERT INTO "patrol_runs" ("companyId", "siteId", "shiftId", "guardId", "startedByUserId", "scheduleId", "routeId",
             "startedAtDevice", "startedAtServer", "clockOffsetMs", "clientRunId", "windowKey", "windowStart", "windowEnd", "scopeKey",
             "lateStart", "provisional", "syncedLate", "needsReview", "syncFlags", "clockDriftMs")
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, $18, $19::jsonb, $20)
          ON CONFLICT ("companyId", "clientRunId") DO NOTHING RETURNING *`,
-        [shift.companyId, shift.siteId, shift.id, actor.guardId, actor.userId, dto.scheduleId ?? null, routeId, startedAtDevice, now,
+        [shift.companyId, shift.siteId, shift.id, actor.guardId, actor.userId, scheduleId, routeId, startedAtDevice, now,
           clockOffsetMs, dto.clientRunId, window?.window.windowKey ?? null, window?.window.start ?? null, window?.window.end ?? null, scopeKey,
           window?.lateStart ?? false, postShift, runFlags.some((f) => PATROL_REVIEW_FLAGS.includes(f)), JSON.stringify(runFlags), driftMs],
       );
@@ -612,11 +628,113 @@ export class PatrolGuardService {
       if (grant) {
         await this.grants.recordUse(grant, { userId: actor.userId, step: 'run_start', entityType: 'patrol_run', entityId: Number(inserted.id), runId: Number(inserted.id), now });
       }
-      return serializeRun(created);
+      // The audit entry keeps S4's full decision (the windows weighed, in words); the answer is read from the run alone,
+      // exactly as a replay or a concurrent duplicate will read it.
+      if (match) await this.auditWindowMatch(created, actor, match, runWindowAssignment(created, match));
+      return { ...serializeRun(created), windowAssignment: runWindowAssignment(created, null) };
     }
     // A concurrent request with the same clientRunId won the insert: answer with that row, or 409 if it differs.
     const winner = await this.findRunByClientId(shift.companyId, dto.clientRunId);
     return this.replayRun(winner, actor, dto, startedAtDevice);
+  }
+
+  /**
+   * S4 patrol assignment correctness: the scheduled windows a patrol started with NO schedule could be for, and the one it
+   * is linked to when exactly one is eligible (patrol-window-match.ts). The candidates are THIS shift's windows only —
+   * its site's clock windows overlapping the shift (every schedule version in force, as the Guard plan lists them; scope
+   * site or this shift by the policy) and, when the setup is active and this shift must patrol, its own shift-anchored
+   * windows (scope this shift) — around the drift-adjusted start, each marked covered (a run already holds it for its
+   * scope) or missed (patrol_missed already raised for it and its scope). Company-scoped throughout; reads only.
+   */
+  private async matchWindow(
+    shift: { id: number; companyId: number; siteId: number | null; start: Date; end: Date },
+    guardId: number,
+    policy: { startGraceMinutes: number; requirementScope: string },
+    at: Date,
+    attendance: { bookOnAt: Date | null } | null,
+  ): Promise<WindowMatch<any>> {
+    const siteId = shift.siteId as number;
+    const [site] = await this.dataSource.query(`SELECT "timezone" FROM "sites" WHERE "id" = $1`, [siteId]);
+    const timeZone = site?.timezone || 'Europe/London';
+    const grace = Math.max(0, policy.startGraceMinutes);
+    const versions = await scheduleVersionBounds(this.dataSource, shift.companyId);
+    const shiftStart = new Date(shift.start).getTime();
+    const shiftEnd = new Date(shift.end).getTime();
+    const candidates: Array<MatchCandidate<any>> = [];
+
+    // Clock windows: the schedules in force, and versions replaced during this shift (their earlier windows).
+    const clock = await this.dataSource.query(
+      `SELECT "id", "siteId", "routeId", "name", "active", "archivedAt", "anchor", "daysOfWeek", "activeFrom", "activeTo", "frequencyMinutes",
+              "windowMinutes", "startsOn"::text AS "startsOn", "endsOn"::text AS "endsOn"
+         FROM "patrol_schedules"
+        WHERE "companyId" = $1 AND "siteId" = $2 AND "anchor" = 'clock' AND (("active" AND "archivedAt" IS NULL) OR "id" = ANY($3::int[]))
+        ORDER BY "id"`,
+      [shift.companyId, siteId, supersededSince(versions, new Date(shift.start))],
+    );
+    const clockScope = policy.requirementScope === 'per_guard' ? `sh${shift.id}` : 'site';
+    const from = new Date(at.getTime() - (24 * 60 + grace + 1) * 60_000);
+    const to = new Date(at.getTime() + 60_000);
+    for (const raw of clock) {
+      const schedule = withVersionBounds(raw, versions);
+      for (const w of windowsBetween(schedule, timeZone, from, to)) {
+        if (!(w.end.getTime() > shiftStart && w.start.getTime() < shiftEnd)) continue; // not this shift's window
+        candidates.push({ scheduleId: Number(schedule.id), scheduleName: String(schedule.name), anchor: 'clock', scopeKey: clockScope,
+          windowKey: w.windowKey, start: w.start, end: w.end, covered: false, missed: false, schedule, window: w });
+      }
+    }
+
+    // Shift-anchored windows of THIS shift, when the setup is active and the shift must patrol.
+    const setup = setupFor(await siteSetups(this.dataSource, shift.companyId, [siteId]), siteId);
+    const [req] = await this.dataSource.query(`SELECT "patrolRequirement" FROM "shifts" WHERE "id" = $1`, [shift.id]);
+    if (setupActive(setup) && effectiveShiftRequirement(req?.patrolRequirement ?? null, setup).effectiveRequired) {
+      const schedules = await shiftAnchoredSchedules(this.dataSource, shift.companyId, [siteId], versions, new Date(shift.start));
+      const bookOnAt = setup.windowAnchor === 'book_on' ? (attendance ?? await this.guardAttendance(shift.id, guardId)).bookOnAt : null;
+      for (const schedule of schedules) {
+        for (const w of shiftAnchoredWindows(schedule, shift, setup.windowAnchor, bookOnAt, timeZone)) {
+          candidates.push({ scheduleId: Number(schedule.id), scheduleName: String(schedule.name), anchor: 'shift', scopeKey: shiftScopeKey(shift.id),
+            windowKey: w.windowKey, start: w.start, end: w.end, covered: false, missed: false, schedule, window: w });
+        }
+      }
+    }
+    const near = candidates.filter((c) => c.start.getTime() <= at.getTime() && at.getTime() < c.end.getTime() + grace * 60_000);
+    if (!near.length) return matchStartWindow([], at, grace, timeZone);
+
+    const keys = [...new Set(near.map((c) => c.windowKey))];
+    const runs = await this.dataSource.query(
+      `SELECT "scheduleId", "windowKey", "windowStart", "scopeKey" FROM "patrol_runs" WHERE "companyId" = $1 AND "siteId" = $2 AND "windowKey" = ANY($3::text[])`,
+      [shift.companyId, siteId, keys],
+    );
+    const missed = await this.dataSource.query(
+      `SELECT "windowKey", "scopeKey" FROM "patrol_exceptions" WHERE "companyId" = $1 AND "type" = 'patrol_missed' AND "windowKey" = ANY($2::text[])`,
+      [shift.companyId, keys],
+    );
+    for (const c of near) {
+      const key = runCoverageKey(c.scheduleId, c.windowKey, null, c.start);
+      c.covered = runs.some((r: any) => r.scopeKey === c.scopeKey && runCoverageKey(r.scheduleId, r.windowKey, null, r.windowStart) === key);
+      c.missed = missed.some((e: any) => e.windowKey === c.windowKey && e.scopeKey === c.scopeKey);
+    }
+    return matchStartWindow(near, at, grace, timeZone);
+  }
+
+  /** The audit entry of a start that came with no schedule: what S4 decided, and the windows it weighed (no personal data). */
+  private async auditWindowMatch(row: any, actor: PatrolGuardActor, match: WindowMatch<any>, assignment: { outcome: string; message: string }) {
+    const windows = match.outcome === 'auto_assigned' ? [match.candidate] : match.candidates;
+    await this.auditLogService.log({
+      company: { id: Number(row.companyId) },
+      user: { id: actor.userId },
+      action: assignment.outcome === 'auto_assigned' ? 'patrol.run.window_auto_assigned' : 'patrol.run.window_not_assigned',
+      entityType: 'patrol_run',
+      entityId: Number(row.id),
+      afterData: {
+        shiftId: Number(row.shiftId),
+        outcome: assignment.outcome,
+        message: assignment.message,
+        windowKey: row.windowKey ?? null,
+        scheduleId: row.scheduleId == null ? null : Number(row.scheduleId),
+        lateStart: Boolean(row.lateStart),
+        candidates: windows.map((c) => ({ scheduleId: c.scheduleId, windowKey: c.windowKey, scopeKey: c.scopeKey, start: c.start.toISOString(), end: c.end.toISOString(), covered: c.covered, missed: c.missed })),
+      },
+    });
   }
 
   /** Audit a flagged acceptance; annotate a missed exception of the window this late-arriving run is for. */
@@ -635,7 +753,8 @@ export class PatrolGuardService {
       });
       if (annotated > 0) current = await this.markLate(Number(row.id), ['evidence_after_alert'], false);
     }
-    const allFlags: PatrolSyncFlag[] = current.syncFlags ?? flags;
+    // The assignment flags say how the run was linked, not that it synced late: they are audited on their own.
+    const allFlags: PatrolSyncFlag[] = (current.syncFlags ?? flags).filter((f: PatrolSyncFlag) => !PATROL_ASSIGNMENT_FLAGS.includes(f));
     if (allFlags.length) {
       await this.auditLogService.log({
         company: { id: companyId },
@@ -686,11 +805,14 @@ export class PatrolGuardService {
     const same = row
       && Number(row.guardId) === actor.guardId
       && Number(row.shiftId) === dto.shiftId
-      && (row.scheduleId == null ? null : Number(row.scheduleId)) === (dto.scheduleId ?? null)
+      // An ad-hoc start S4 linked to its one window (window_auto_assigned) is the same request when replayed without one.
+      && ((row.scheduleId == null ? null : Number(row.scheduleId)) === (dto.scheduleId ?? null)
+        || (dto.scheduleId == null && (row.syncFlags ?? []).includes('window_auto_assigned')))
       && new Date(row.startedAtDevice).getTime() === startedAtDevice.getTime()
       && await sameRoute();
     if (!same) throw idempotencyConflict('clientRunId');
-    return serializeRun(row);
+    // Read from the stored run alone, so a replay (or a concurrent duplicate) answers exactly as the first request did.
+    return { ...serializeRun(row), windowAssignment: runWindowAssignment(row, null) };
   }
 
   // ── Scan ───────────────────────────────────────────────────────────────────────────────────────────
@@ -988,4 +1110,27 @@ function idempotencyConflict(what: string) {
 function isUniqueViolation(error: unknown, constraint: string): boolean {
   const driverError = (error as QueryFailedError & { driverError?: { code?: string; constraint?: string } })?.driverError;
   return error instanceof QueryFailedError && driverError?.code === '23505' && driverError?.constraint === constraint;
+}
+
+/**
+ * S4 patrol assignment correctness: how a started run relates to the scheduled windows, for the start answer (additive;
+ * the 1.2.1 app ignores it). `match` is the decision just made for a start with no schedule; without one (a replay, or
+ * a start for a schedule) it is read back from the run.
+ */
+export function runWindowAssignment(row: any, match: WindowMatch<unknown> | null): { outcome: string; message: string } {
+  const flags: string[] = row?.syncFlags ?? [];
+  if (match) {
+    if (row.windowKey) return { outcome: 'auto_assigned', message: match.message };
+    if (match.outcome === 'auto_assigned') {
+      return { outcome: 'covered', message: 'Recorded as an ad-hoc patrol: another patrol took the scheduled patrol window at the same moment.' };
+    }
+    return { outcome: match.outcome, message: match.message };
+  }
+  if (flags.includes('window_auto_assigned')) return { outcome: 'auto_assigned', message: 'Linked by S4 to the scheduled patrol window it was started in.' };
+  if (flags.includes('window_match_ambiguous')) {
+    return { outcome: 'ambiguous', message: 'Recorded as an ad-hoc patrol: more than one scheduled patrol window was open, so S4 could not tell which one it was for.' };
+  }
+  if (row?.windowKey) return { outcome: 'scheduled', message: 'Started for its scheduled patrol window.' };
+  if (flags.includes('window_already_covered')) return { outcome: 'covered', message: 'Recorded as an extra patrol: its scheduled patrol window already had a patrol.' };
+  return { outcome: 'ad_hoc', message: 'Recorded as an ad-hoc patrol (not linked to a scheduled patrol window).' };
 }

@@ -1657,7 +1657,8 @@ test('PM-41-EVIDENCE-ORIGINAL-VS-STAMPED-NO-LINK-IN-TEXT-LOGS-OR-STORAGE', async
   // Stamped: derived by the server, no link of any kind.
   await pressByText(root, 'Stamped');
   assert.equal(root.findAll((n) => n.props && n.props.accessibilityLabel === 'Patrol photo 900 (original)').length, 0, 'switching drops the original');
-  assert.ok(textOf(root).includes('a band added below it giving the company, client, site, Guard, both times and www.sfour.co.uk'));
+  // S4 patrol assignment correctness: the stamp is a small corner panel; the details stay here, beside the photo.
+  assert.ok(textOf(root).includes('a small panel in its corner giving the company, site, Guard, the time the phone took it and the patrol reference'));
   await pressByText(root, 'View stamped');
   assert.deepEqual(calls.filter(([k]) => k === 'getPatrolEvidenceStampedImage').map(([, a]) => a), [[900]]);
   assert.equal(calls.filter(([k]) => k === 'getPatrolEvidenceLink').length, 1, 'the stamped view asks for no link');

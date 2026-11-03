@@ -1,141 +1,56 @@
 import sharp = require('sharp');
 
 /**
- * Stamped patrol photos (S4 1.3.0 B1, owner decision 7). GET /patrols/evidence/:id/stamped derives a JPEG from the
- * verified original PER REQUEST: the original object is only read (its bytes and SHA-256 never change), and the derived
- * image is streamed to the caller and never stored anywhere.
+ * Stamped patrol photos. GET /patrols/evidence/:id/stamped derives a JPEG from the verified original PER REQUEST: the
+ * original object is only read (its bytes and SHA-256 never change), and the derived image is streamed to the caller and
+ * never stored anywhere (S4 1.3.0 B1, owner decision 7).
  *
- * TEXT WITHOUT FONTS. The stamp's text is drawn from an embedded 5 × 7 bitmap font as SVG paths, so it renders the same
- * on every server (Windows development, the Linux CI runner, the Render Node image) with no installed font, no
- * fontconfig and no network: librsvg (inside sharp) only fills rectangles. Characters outside printable ASCII are
- * transliterated (accents dropped, dashes and quotes simplified) or shown as '?'.
+ * THE STAMP (S4 patrol assignment correctness, owner-approved 3 Nov 2026; replaces the B2 footer band as the default).
+ * A compact, translucent panel in the photo's bottom-left corner carrying, prominently: the security company, the site,
+ * the Guard and the device capture time (site time, with its zone abbreviation); then one small line with the patrol
+ * reference, the photo number and sfour.co.uk. The server receipt time, the patrol's window and the SHA-256 fingerprint
+ * stay in the evidence viewer, beside the photo. No wording implies that a person reviewed the photograph.
  *
- * The stamp is a SEPARATE footer band appended BELOW the photograph (S4 1.3.0 B2 correction): the output is the upright
- * original (EXIF orientation applied) at its full size, untouched, with a dark band of the same width added underneath —
- * nothing is drawn over the picture. The band carries:
- *   the security company's name (large),
- *   Client · Site, Guard (display name),
- *   "Captured (device)" and "Received by S4 (server)" — two clearly different times, in the SITE's time zone with the
- *   zone's abbreviation, and the zone named on the last line,
- *   the patrol reference (P-{runId}) and its window,
- *   www.sfour.co.uk.
+ * NOT COVERING EVIDENCE. The panel never covers more than STAMP_MAX_AREA of the photo (sized for the Guard app's 2048 px
+ * photos) and never more than about half its width; on a photo too small for a readable panel within those bounds the stamp falls back to a band appended BELOW the
+ * photograph (nothing drawn over it), as in B2.
+ *
+ * TEXT. Inter (SIL Open Font License, @fontsource/inter) is read from the installed package and drawn as SVG paths with
+ * opentype.js, so the stamp renders identically on every server (Windows development, the Linux CI runner, the Render
+ * image) with no system font, no fontconfig and no network; librsvg (inside sharp) only fills paths. Latin, Latin
+ * Extended, Greek, Cyrillic and Vietnamese are covered; any other character is drawn as '?'.
  */
 
-/** 5 × 7 glyphs, rows top to bottom, '#' = ink. Printable ASCII. */
-const GLYPHS: Record<string, string> = {
-  ' ': '.....|.....|.....|.....|.....|.....|.....',
-  '!': '..#..|..#..|..#..|..#..|..#..|.....|..#..',
-  '"': '.#.#.|.#.#.|.#.#.|.....|.....|.....|.....',
-  '#': '.#.#.|.#.#.|#####|.#.#.|#####|.#.#.|.#.#.',
-  '$': '..#..|.####|#.#..|.###.|..#.#|####.|..#..',
-  '%': '##...|##..#|...#.|..#..|.#...|#..##|...##',
-  '&': '.##..|#..#.|#.#..|.#...|#.#.#|#..#.|.##.#',
-  "'": '..#..|..#..|..#..|.....|.....|.....|.....',
-  '(': '...#.|..#..|.#...|.#...|.#...|..#..|...#.',
-  ')': '.#...|..#..|...#.|...#.|...#.|..#..|.#...',
-  '*': '.....|..#..|#.#.#|.###.|#.#.#|..#..|.....',
-  '+': '.....|..#..|..#..|#####|..#..|..#..|.....',
-  ',': '.....|.....|.....|.....|.##..|..#..|.#...',
-  '-': '.....|.....|.....|#####|.....|.....|.....',
-  '.': '.....|.....|.....|.....|.....|.##..|.##..',
-  '/': '.....|....#|...#.|..#..|.#...|#....|.....',
-  '0': '.###.|#...#|#..##|#.#.#|##..#|#...#|.###.',
-  '1': '..#..|.##..|..#..|..#..|..#..|..#..|.###.',
-  '2': '.###.|#...#|....#|...#.|..#..|.#...|#####',
-  '3': '#####|...#.|..#..|...#.|....#|#...#|.###.',
-  '4': '...#.|..##.|.#.#.|#..#.|#####|...#.|...#.',
-  '5': '#####|#....|####.|....#|....#|#...#|.###.',
-  '6': '..##.|.#...|#....|####.|#...#|#...#|.###.',
-  '7': '#####|....#|...#.|..#..|.#...|.#...|.#...',
-  '8': '.###.|#...#|#...#|.###.|#...#|#...#|.###.',
-  '9': '.###.|#...#|#...#|.####|....#|...#.|.##..',
-  ':': '.....|.##..|.##..|.....|.##..|.##..|.....',
-  ';': '.....|.##..|.##..|.....|.##..|..#..|.#...',
-  '<': '...#.|..#..|.#...|#....|.#...|..#..|...#.',
-  '=': '.....|.....|#####|.....|#####|.....|.....',
-  '>': '.#...|..#..|...#.|....#|...#.|..#..|.#...',
-  '?': '.###.|#...#|....#|...#.|..#..|.....|..#..',
-  '@': '.###.|#...#|....#|.##.#|#.#.#|#.#.#|.###.',
-  'A': '.###.|#...#|#...#|#####|#...#|#...#|#...#',
-  'B': '####.|#...#|#...#|####.|#...#|#...#|####.',
-  'C': '.###.|#...#|#....|#....|#....|#...#|.###.',
-  'D': '###..|#..#.|#...#|#...#|#...#|#..#.|###..',
-  'E': '#####|#....|#....|####.|#....|#....|#####',
-  'F': '#####|#....|#....|####.|#....|#....|#....',
-  'G': '.###.|#...#|#....|#.###|#...#|#...#|.####',
-  'H': '#...#|#...#|#...#|#####|#...#|#...#|#...#',
-  'I': '.###.|..#..|..#..|..#..|..#..|..#..|.###.',
-  'J': '..###|...#.|...#.|...#.|...#.|#..#.|.##..',
-  'K': '#...#|#..#.|#.#..|##...|#.#..|#..#.|#...#',
-  'L': '#....|#....|#....|#....|#....|#....|#####',
-  'M': '#...#|##.##|#.#.#|#.#.#|#...#|#...#|#...#',
-  'N': '#...#|#...#|##..#|#.#.#|#..##|#...#|#...#',
-  'O': '.###.|#...#|#...#|#...#|#...#|#...#|.###.',
-  'P': '####.|#...#|#...#|####.|#....|#....|#....',
-  'Q': '.###.|#...#|#...#|#...#|#.#.#|#..#.|.##.#',
-  'R': '####.|#...#|#...#|####.|#.#..|#..#.|#...#',
-  'S': '.####|#....|#....|.###.|....#|....#|####.',
-  'T': '#####|..#..|..#..|..#..|..#..|..#..|..#..',
-  'U': '#...#|#...#|#...#|#...#|#...#|#...#|.###.',
-  'V': '#...#|#...#|#...#|#...#|#...#|.#.#.|..#..',
-  'W': '#...#|#...#|#...#|#.#.#|#.#.#|#.#.#|.#.#.',
-  'X': '#...#|#...#|.#.#.|..#..|.#.#.|#...#|#...#',
-  'Y': '#...#|#...#|.#.#.|..#..|..#..|..#..|..#..',
-  'Z': '#####|....#|...#.|..#..|.#...|#....|#####',
-  '[': '.###.|.#...|.#...|.#...|.#...|.#...|.###.',
-  '\\': '.....|#....|.#...|..#..|...#.|....#|.....',
-  ']': '.###.|...#.|...#.|...#.|...#.|...#.|.###.',
-  '^': '..#..|.#.#.|#...#|.....|.....|.....|.....',
-  '_': '.....|.....|.....|.....|.....|.....|#####',
-  '`': '.#...|..#..|...#.|.....|.....|.....|.....',
-  'a': '.....|.....|.###.|....#|.####|#...#|.####',
-  'b': '#....|#....|#.##.|##..#|#...#|#...#|####.',
-  'c': '.....|.....|.###.|#....|#....|#...#|.###.',
-  'd': '....#|....#|.##.#|#..##|#...#|#...#|.####',
-  'e': '.....|.....|.###.|#...#|#####|#....|.###.',
-  'f': '..##.|.#..#|.#...|###..|.#...|.#...|.#...',
-  'g': '.....|.####|#...#|#...#|.####|....#|.###.',
-  'h': '#....|#....|#.##.|##..#|#...#|#...#|#...#',
-  'i': '..#..|.....|.##..|..#..|..#..|..#..|.###.',
-  'j': '...#.|.....|..##.|...#.|...#.|#..#.|.##..',
-  'k': '#....|#....|#..#.|#.#..|##...|#.#..|#..#.',
-  'l': '.##..|..#..|..#..|..#..|..#..|..#..|.###.',
-  'm': '.....|.....|##.#.|#.#.#|#.#.#|#...#|#...#',
-  'n': '.....|.....|#.##.|##..#|#...#|#...#|#...#',
-  'o': '.....|.....|.###.|#...#|#...#|#...#|.###.',
-  'p': '.....|.....|####.|#...#|####.|#....|#....',
-  'q': '.....|.....|.##.#|#..##|.####|....#|....#',
-  'r': '.....|.....|#.##.|##..#|#....|#....|#....',
-  's': '.....|.....|.###.|#....|.###.|....#|####.',
-  't': '.#...|.#...|###..|.#...|.#...|.#..#|..##.',
-  'u': '.....|.....|#...#|#...#|#...#|#..##|.##.#',
-  'v': '.....|.....|#...#|#...#|#...#|.#.#.|..#..',
-  'w': '.....|.....|#...#|#...#|#.#.#|#.#.#|.#.#.',
-  'x': '.....|.....|#...#|.#.#.|..#..|.#.#.|#...#',
-  'y': '.....|.....|#...#|#...#|.####|....#|.###.',
-  'z': '.....|.....|#####|...#.|..#..|.#...|#####',
-  '{': '...#.|..#..|..#..|.#...|..#..|..#..|...#.',
-  '|': '..#..|..#..|..#..|..#..|..#..|..#..|..#..',
-  '}': '.#...|..#..|..#..|...#.|..#..|..#..|.#...',
-  '~': '.....|.....|.#...|#.#.#|...#.|.....|.....',
-};
-const GLYPH_ROWS: Record<string, string[]> = Object.fromEntries(Object.entries(GLYPHS).map(([c, g]) => [c, g.split('|')]));
-const CELL_W = 6; // 5 columns + 1 of spacing
-const CELL_H = 9; // 7 rows + 2 of leading
-export const STAMP_MAX_LINE_CHARS = 72;
+// opentype.js ships no types: the few calls used here.
+type OtGlyph = { advanceWidth: number; getPath(x: number, y: number, size: number): { toPathData(decimals: number): string } };
+type OtFont = { unitsPerEm: number; ascender: number; descender: number; charToGlyphIndex(ch: string): number; charToGlyph(ch: string): OtGlyph };
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const opentype: { loadSync(path: string): OtFont } = require('opentype.js');
 
-/** Printable ASCII only: accents dropped, typographic dashes / quotes simplified, anything else '?'. */
-export function stampText(value: string): string {
-  return String(value ?? '')
-    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-    .replace(/[‐-―−]/g, '-').replace(/[‘’‛]/g, "'").replace(/[“”]/g, '"')
-    .replace(/[·•]/g, '-').replace(/\s+/g, ' ')
-    .replace(/[^\x20-\x7E]/g, '?')
-    .trim();
+const SUBSETS = ['latin', 'latin-ext', 'greek', 'greek-ext', 'cyrillic', 'cyrillic-ext', 'vietnamese'];
+type Weight = 400 | 600;
+const fontCache = new Map<Weight, OtFont[]>();
+function fonts(weight: Weight): OtFont[] {
+  let list = fontCache.get(weight);
+  if (!list) {
+    list = SUBSETS.map((s) => opentype.loadSync(require.resolve(`@fontsource/inter/files/inter-${s}-${weight}-normal.woff`)));
+    fontCache.set(weight, list);
+  }
+  return list;
 }
 
-function clip(text: string, max = STAMP_MAX_LINE_CHARS): string {
-  return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
+/** The share of the photo the corner panel may cover at most. */
+export const STAMP_MAX_AREA = 0.1;
+/** The panel's widest extent, as a share of the photo's width (landscape; a portrait photo allows more). */
+const MAX_WIDTH_LANDSCAPE = 0.45;
+const MAX_WIDTH_PORTRAIT = 0.62;
+/** The smallest text drawn (px); below it the stamp moves to a band under the photo. */
+const MIN_FONT_PX = 12;
+
+/** Printable text: control characters removed, whitespace collapsed, at most `max` characters. */
+export function stampText(value: string, max = 80): string {
+  const text = String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
 export type StampFields = {
@@ -147,10 +62,11 @@ export type StampFields = {
   receivedAtServer: Date | null;
   timeZone: string;
   runId: number;
+  evidenceId?: number | null;
   window: { start: Date; end: Date; name: string | null } | null;
 };
 
-/** "01 Nov 2026 14:32:05 GMT" in the site's zone (the zone's own abbreviation, e.g. GMT / BST). */
+/** "03 Nov 2026 10:10:32 GMT" in the site's zone (the zone's own abbreviation, e.g. GMT / BST). */
 export function stampTime(at: Date | null, timeZone: string): string {
   if (!at) return 'not recorded';
   try {
@@ -164,121 +80,149 @@ export function stampTime(at: Date | null, timeZone: string): string {
   }
 }
 
-function hhmm(at: Date, timeZone: string): string {
-  try {
-    return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
-  } catch {
-    return at.toISOString().slice(11, 16);
-  }
+export type StampLine = { text: string; weight: Weight; size: number; color: string };
+
+/**
+ * The stamp's lines (pure; what the unit test reads): company, site, Guard, device capture time — prominent — and one
+ * small reference line. `base` is the body text size in px.
+ */
+export function stampLines(f: StampFields, base = 16): StampLine[] {
+  const ref = [`Patrol P-${f.runId}`, f.evidenceId != null ? `Photo #${f.evidenceId}` : null, 'sfour.co.uk'].filter(Boolean).join('  ·  ');
+  return [
+    { text: stampText(f.companyName) || 'Security company', weight: 600, size: Math.round(base * 1.12), color: '#FFFFFF' },
+    { text: stampText(f.siteName), weight: 600, size: base, color: '#FFFFFF' },
+    { text: stampText(f.guardName), weight: 400, size: base, color: '#E2E8F0' },
+    { text: `${stampTime(f.capturedAtDevice, f.timeZone)}  ·  device time`, weight: 400, size: base, color: '#E2E8F0' },
+    { text: ref, weight: 400, size: Math.max(MIN_FONT_PX - 1, Math.round(base * 0.74)), color: '#99F6E4' },
+  ];
 }
 
-/** The stamp's text, title first (pure; what the unit test reads). */
-export function stampLines(f: StampFields): { title: string; lines: string[] } {
-  const window = f.window
-    ? `Window ${hhmm(f.window.start, f.timeZone)}-${hhmm(f.window.end, f.timeZone)}${f.window.name ? ` (${f.window.name})` : ''}`
-    : 'Unscheduled patrol';
-  return {
-    title: clip(stampText(f.companyName) || 'Security company', 48),
-    lines: [
-      `Client: ${f.clientName ? f.clientName : '-'}  |  Site: ${f.siteName}`,
-      `Guard: ${f.guardName}`,
-      `Captured (device): ${stampTime(f.capturedAtDevice, f.timeZone)}`,
-      `Received by S4 (server): ${stampTime(f.receivedAtServer, f.timeZone)}`,
-      `Patrol P-${f.runId}  |  ${window}`,
-      `Times in ${f.timeZone}  |  www.sfour.co.uk`,
-    ].map((l) => clip(stampText(l))),
-  };
+/** A glyph from the first subset that has it ('?' otherwise). */
+function glyphFor(ch: string, weight: Weight): { font: OtFont; glyph: OtGlyph } {
+  for (const font of fonts(weight)) if (font.charToGlyphIndex(ch) > 0) return { font, glyph: font.charToGlyph(ch) };
+  const font = fonts(weight)[0];
+  return { font, glyph: font.charToGlyph('?') };
 }
 
-/** One line of text as an SVG path of filled cells (horizontal runs merged), top-left at (x, y), `scale` px per cell. */
-export function textPath(text: string, x: number, y: number, scale: number): string {
+/** The width of `text` at `size` px. */
+export function measureText(text: string, weight: Weight, size: number): number {
+  let w = 0;
+  for (const ch of [...text]) { const { font, glyph } = glyphFor(ch, weight); w += (glyph.advanceWidth / font.unitsPerEm) * size; }
+  return w;
+}
+
+/** `text` shortened with "…" to fit `maxWidth` px. */
+export function fitText(text: string, weight: Weight, size: number, maxWidth: number): string {
+  if (measureText(text, weight, size) <= maxWidth) return text;
+  const chars = [...text];
+  while (chars.length > 1 && measureText(`${chars.join('').trimEnd()}…`, weight, size) > maxWidth) chars.pop();
+  return `${chars.join('').trimEnd()}…`;
+}
+
+/** One line of text as SVG path data, baseline at (x, y). */
+export function textPathData(text: string, weight: Weight, size: number, x: number, y: number): string {
+  let pen = x;
   const out: string[] = [];
-  [...stampText(text)].forEach((ch, i) => {
-    const rows = GLYPH_ROWS[ch] ?? GLYPH_ROWS['?'];
-    const gx = x + i * CELL_W * scale;
-    rows.forEach((row, r) => {
-      let c = 0;
-      while (c < row.length) {
-        if (row[c] !== '#') { c += 1; continue; }
-        let end = c;
-        while (end < row.length && row[end] === '#') end += 1;
-        out.push(`M${gx + c * scale} ${y + r * scale}h${(end - c) * scale}v${scale}h${-(end - c) * scale}z`);
-        c = end;
-      }
-    });
-  });
+  for (const ch of [...text]) {
+    const { font, glyph } = glyphFor(ch, weight);
+    const d = glyph.getPath(pen, y, size).toPathData(2);
+    if (d) out.push(d);
+    pen += (glyph.advanceWidth / font.unitsPerEm) * size;
+  }
   return out.join('');
 }
 
-/** Splits one line into pieces of at most `max` characters, at " | " or spaces where possible (pure). */
-export function wrapStampLine(line: string, max: number): string[] {
-  const out: string[] = [];
-  let rest = line;
-  while (rest.length > max) {
-    const window = rest.slice(0, max + 1);
-    const at = Math.max(window.lastIndexOf(' |'), window.lastIndexOf(' '));
-    const cut = at > Math.floor(max / 3) ? at : max;
-    out.push(rest.slice(0, cut).trimEnd());
-    rest = rest.slice(cut).replace(/^\s*\|?\s*/, '');
+export type StampLayout = {
+  mode: 'overlay' | 'band';
+  /** The panel (overlay) or the band (below the photo), in the output image's pixels. */
+  box: { x: number; y: number; width: number; height: number };
+  base: number;
+  lines: StampLine[];
+  svg: string;
+};
+
+const PANEL_FILL = '#0B1F33';
+const ACCENT = '#14B8A6';
+
+function block(lines: StampLine[], base: number) {
+  const pad = Math.round(base * 0.75);
+  const gap = Math.round(base * 0.28);
+  const heights = lines.map((l) => Math.round(l.size * 1.22));
+  const textHeight = heights.reduce((a, b) => a + b, 0) + gap * (lines.length - 1);
+  return { pad, gap, heights, height: textHeight + pad * 2, accent: Math.max(3, Math.round(base * 0.22)) };
+}
+
+function linesSvg(lines: StampLine[], heights: number[], gap: number, x: number, top: number): string {
+  let y = top;
+  const parts: string[] = [];
+  lines.forEach((l, i) => {
+    const baseline = y + Math.round(l.size * 0.98);
+    parts.push(`<path d="${textPathData(l.text, l.weight, l.size, x, baseline)}" fill="${l.color}"/>`);
+    y += heights[i] + gap;
+  });
+  return parts.join('');
+}
+
+/**
+ * The stamp for an upright photo `width` × `height` (pure). Overlay: the panel's text size follows the photo's shorter
+ * side and shrinks until the panel fits STAMP_MAX_AREA and the width bound; when even MIN_FONT_PX does not fit, a band
+ * the photo's width is laid out to go BELOW the photo instead.
+ */
+export function stampLayout(width: number, height: number, fields: StampFields): StampLayout {
+  const short = Math.min(width, height);
+  const maxWidth = width * (height > width ? MAX_WIDTH_PORTRAIT : MAX_WIDTH_LANDSCAPE);
+  const margin = Math.max(6, Math.round(short * 0.025));
+  for (let base = Math.max(MIN_FONT_PX, Math.min(44, Math.round(short * 0.022))); base >= MIN_FONT_PX; base -= 1) {
+    const b = block(stampLines(fields, base), base);
+    const textMax = Math.floor(maxWidth - b.pad * 2 - b.accent);
+    if (textMax < base * 6) continue;
+    const lines = stampLines(fields, base).map((l) => ({ ...l, text: fitText(l.text, l.weight, l.size, textMax) }));
+    const textWidth = Math.ceil(Math.max(...lines.map((l) => measureText(l.text, l.weight, l.size))));
+    const panel = { width: textWidth + b.pad * 2 + b.accent, height: b.height };
+    if (panel.width > maxWidth || (panel.width * panel.height) / (width * height) > STAMP_MAX_AREA) continue;
+    const box = { x: margin, y: height - margin - panel.height, width: panel.width, height: panel.height };
+    const r = Math.round(base * 0.45);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+      + `<rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${r}" ry="${r}" fill="${PANEL_FILL}" fill-opacity="0.82"/>`
+      + `<rect x="${box.x}" y="${box.y + r}" width="${b.accent}" height="${box.height - 2 * r}" fill="${ACCENT}"/>`
+      + linesSvg(lines, b.heights, b.gap, box.x + b.accent + b.pad, box.y + b.pad)
+      + '</svg>';
+    return { mode: 'overlay', box, base, lines, svg };
   }
-  if (rest.length) out.push(rest);
-  return out;
-}
-
-/**
- * The footer band for an upright photo `width` × `height`: an SVG exactly `width` × `bandHeight`, drawn BELOW the photo.
- * Text scales with the photo's width (whole pixels per font cell, so it stays crisp); on a narrow photo long lines wrap
- * rather than being cut. The band is at most about half the photo's height for a large photo, never less than one
- * readable scale.
- */
-export function stampSvg(width: number, height: number, stamp: { title: string; lines: string[] }): { svg: string; bandHeight: number; scale: number; lines: string[] } {
-  const usable = Math.max(CELL_W, Math.floor(width * 0.94));
-  const longest = Math.max(...stamp.lines.map((l) => l.length), 1);
-  let scale = Math.max(1, Math.floor(usable / (longest * CELL_W)));
-  const maxChars = (s: number) => Math.max(8, Math.floor(usable / (CELL_W * s)));
-  const layout = (s: number) => {
-    const lines = stamp.lines.flatMap((l) => wrapStampLine(l, maxChars(s)));
-    const titleScale = Math.max(s, Math.min(2 * s, Math.floor(usable / (Math.max(stamp.title.length, 1) * CELL_W))));
-    const title = wrapStampLine(stamp.title, maxChars(titleScale));
-    const bandHeight = Math.ceil(title.length * CELL_H * titleScale + lines.length * CELL_H * s + 4 * s);
-    return { lines, title, titleScale, bandHeight };
-  };
-  let fit = layout(scale);
-  while (scale > 1 && fit.bandHeight > Math.max(height * 0.5, 120)) { scale -= 1; fit = layout(scale); }
-  const pad = Math.max(2, Math.floor(width * 0.03));
-  let y = 2 * scale;
-  const paths: string[] = [];
-  for (const t of fit.title) { paths.push(textPath(t, pad, y, fit.titleScale)); y += CELL_H * fit.titleScale; }
-  for (const line of fit.lines) { paths.push(textPath(line, pad, y, scale)); y += CELL_H * scale; }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${fit.bandHeight}" viewBox="0 0 ${width} ${fit.bandHeight}">`
-    + `<rect x="0" y="0" width="${width}" height="${fit.bandHeight}" fill="#0B1F33"/>`
-    + `<path d="${paths.join('')}" fill="#FFFFFF"/>`
+  // Too small for a corner panel: a band of the photo's width, drawn below it.
+  const base = Math.max(MIN_FONT_PX, Math.min(28, Math.round(width * 0.04)));
+  const b = block(stampLines(fields, base), base);
+  const lines = stampLines(fields, base).map((l) => ({ ...l, text: fitText(l.text, l.weight, l.size, Math.max(base * 4, width - b.pad * 2 - b.accent)) }));
+  const box = { x: 0, y: height, width, height: b.height };
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${box.height}" viewBox="0 0 ${width} ${box.height}">`
+    + `<rect x="0" y="0" width="${width}" height="${box.height}" fill="${PANEL_FILL}"/>`
+    + `<rect x="0" y="0" width="${b.accent}" height="${box.height}" fill="${ACCENT}"/>`
+    + linesSvg(lines, b.heights, b.gap, b.accent + b.pad, b.pad)
     + '</svg>';
-  return { svg, bandHeight: fit.bandHeight, scale, lines: [...fit.title, ...fit.lines] };
+  return { mode: 'band', box, base, lines, svg };
 }
 
 /**
- * The stamped JPEG of an original photo (EXIF orientation applied, all metadata dropped): the upright photo at its full
- * size with the footer band appended below it, so the output is width × (height + bandHeight) and the photograph is
- * entirely visible. `width` / `height` are the PHOTO's (upright); `bandHeight` is the band's. Throws when sharp cannot
- * decode the original (the caller answers 422).
+ * The stamped JPEG of an original photo (EXIF orientation applied, all metadata dropped). Overlay: the upright photo at
+ * its full size with the corner panel composited on it. Band: the photo untouched with the band appended below it.
+ * Throws when sharp cannot decode the original (the caller answers 422).
  */
-export async function renderStampedJpeg(original: Buffer, fields: StampFields): Promise<{ jpeg: Buffer; width: number; height: number; bandHeight: number }> {
+export async function renderStampedJpeg(original: Buffer, fields: StampFields): Promise<{ jpeg: Buffer; width: number; height: number; bandHeight: number; layout: StampLayout }> {
   const options = { failOn: 'error' as const, limitInputPixels: 100_000_000 };
   const meta = await sharp(original, options).metadata();
   if (!meta.width || !meta.height) throw new Error('undecodable image');
-  // EXIF orientations 5–8 swap the axes once applied (rotate() below applies the orientation, then the overlay).
+  // EXIF orientations 5–8 swap the axes once applied (rotate() below applies the orientation, then the stamp).
   const swap = (meta.orientation ?? 1) >= 5;
   const width = swap ? meta.height : meta.width;
   const height = swap ? meta.width : meta.height;
-  const { svg, bandHeight } = stampSvg(width, height, stampLines(fields));
-  // Upright pixels first (raw, no re-encode), then a canvas extended DOWNWARDS by the band, which is drawn in the new area.
+  const layout = stampLayout(width, height, fields);
   const oriented = await sharp(original, options).rotate().raw().toBuffer({ resolveWithObject: true });
-  const jpeg = await sharp(oriented.data, { raw: { width: oriented.info.width, height: oriented.info.height, channels: oriented.info.channels } })
-    .extend({ top: 0, left: 0, right: 0, bottom: bandHeight, background: { r: 11, g: 31, b: 51, alpha: 1 } })
-    .composite([{ input: Buffer.from(svg), top: height, left: 0 }])
-    .flatten({ background: { r: 11, g: 31, b: 51 } })
-    .jpeg({ quality: 90, chromaSubsampling: '4:4:4' })
-    .toBuffer();
-  return { jpeg, width, height, bandHeight };
+  const raw = { raw: { width: oriented.info.width, height: oriented.info.height, channels: oriented.info.channels } };
+  const bandHeight = layout.mode === 'band' ? layout.box.height : 0;
+  const base = layout.mode === 'band'
+    ? sharp(oriented.data, raw).extend({ top: 0, left: 0, right: 0, bottom: bandHeight, background: { r: 11, g: 31, b: 51, alpha: 1 } })
+      .composite([{ input: Buffer.from(layout.svg), top: height, left: 0 }])
+    : sharp(oriented.data, raw).composite([{ input: Buffer.from(layout.svg), top: 0, left: 0 }]);
+  const jpeg = await base.flatten({ background: { r: 11, g: 31, b: 51 } }).jpeg({ quality: 90, chromaSubsampling: '4:4:4' }).toBuffer();
+  return { jpeg, width, height, bandHeight, layout };
 }

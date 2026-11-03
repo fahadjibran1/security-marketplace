@@ -1076,7 +1076,10 @@ async function main() {
       assert.deepEqual([v.body.syncedLate, v.body.provisional, v.body.syncFlags], [true, true, ['synced_after_book_off']]);
       const c = await complete(run.body.id);
       expect(c, 200, undefined, 'the completion after Book Off');
-      assert.deepEqual([c.body.status, c.body.syncedLate, c.body.needsReview, c.body.syncFlags], ['completed', true, false, ['synced_after_book_off']]);
+      // S4 patrol assignment correctness: started with no schedule — linked by S4 when (on the real clock this spec runs on)
+      // one of the site's windows was open at its start, ad hoc otherwise; the late-sync flags are unchanged either way.
+      assert.deepEqual([c.body.status, c.body.syncedLate, c.body.needsReview, c.body.syncFlags],
+        ['completed', true, false, ['synced_after_book_off', ...(run.body.windowKey ? ['window_auto_assigned'] : [])]]);
       assert.equal(c.body.completedAtDevice, iso(new Date(c.body.completedAtDevice)), 'device time kept');
       assert.ok(new Date(c.body.completedAtServer).getTime() > new Date(c.body.completedAtDevice).getTime(), 'server receipt kept separately');
       assert.ok(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.late_sync_flagged' AND "entityType" = 'patrol_run' AND "entityId" = $1`, [run.body.id]) >= 1);

@@ -257,6 +257,8 @@ async function main() {
       const card = all.patrols[0];
       assert.deepEqual([card.guard, card.photoCount, card.photosRestricted, card.window], [{ id: gA.id, displayName: 'Ava Okafor' }, 1, false, null]);
       assert.deepEqual(card.photos.map((p: any) => [p.id, p.uploadStatus, p.viewable, p.stampedPath]), [[verified.id, 'verified', true, `/patrols/evidence/${verified.id}/stamped`]]);
+      // The original's stored fingerprint, for the evidence viewer (S4 patrol assignment correctness).
+      assert.equal(card.photos[0].sha256, (await one(`SELECT "sha256Stored" FROM patrol_evidence WHERE id = $1`, [verified.id])).sha256Stored);
       assert.equal(card.thumbnailsPath, `/patrols/runs/${runPhoto.id}/evidence/thumbnails`, 'thumbnails through the existing audited page');
       assert.ok(card.verification.status && card.verification.code && card.verification.text, 'verification and its plain-English explanation');
       assert.ok(!JSON.stringify(all).includes(fake.url) && !/X-Amz-|storageKey/.test(JSON.stringify(all)), 'never a URL or storage key');
@@ -296,22 +298,28 @@ async function main() {
       assert.equal((await one(`SELECT "sha256Stored" FROM patrol_evidence WHERE id = $1`, [verified.id])).sha256Stored, row.sha256Stored);
       assert.deepEqual(fake.keys(), keysBefore, 'nothing new in storage');
       assert.deepEqual(fake.log.slice(logFrom).map((l) => [l.method, l.key === row.storageKey]), [['GET', true]], 'one read of the original, no write');
-      // B2 correction: the stamp is a footer band APPENDED below the photo — 640 × (480 + band), the photo whole above it.
+      // S4 patrol assignment correctness (3 Nov 2026): a compact corner panel ON the photo — 640 × 480, the photo's own size,
+      // the photo unchanged everywhere outside the panel; nothing is appended.
       const { data, info } = await sharp(r.bytes).raw().toBuffer({ resolveWithObject: true });
-      const band = ST.stampSvg(640, 480, ST.stampLines({
+      const layout = ST.stampLayout(640, 480, {
         companyName: 'Harbour Watch Security Ltd', clientName: 'Harbour Estates', siteName: 'Quay Gate', guardName: 'Ava Okafor', capturedAtDevice: new Date(row.capturedAtDevice),
-        receivedAtServer: new Date(row.receivedAt), timeZone: 'Europe/London', runId: runPhoto.id, window: null,
-      }));
-      assert.deepEqual([info.width, info.height], [640, 480 + band.bandHeight], 'output height = photo height + band');
+        receivedAtServer: new Date(row.receivedAt), timeZone: 'Europe/London', runId: runPhoto.id, evidenceId: Number(row.id), window: null,
+      });
+      assert.equal(layout.mode, 'overlay');
+      assert.deepEqual([info.width, info.height], [640, 480], 'the photo\'s own size: the stamp is drawn in its corner');
       const px = (x: number, y: number) => data[(y * info.width + x) * info.channels];
       const src = await sharp(original).raw().toBuffer({ resolveWithObject: true });
+      const inPanel = (x: number, y: number) => x >= layout.box.x && x < layout.box.x + layout.box.width && y >= layout.box.y && y < layout.box.y + layout.box.height;
       let diff = 0;
-      for (let y = 0; y < 480; y += 4) for (let x = 0; x < 640; x += 4) diff = Math.max(diff, Math.abs(px(x, y) - src.data[(y * 640 + x) * src.info.channels]));
-      assert.ok(diff < 40, `the whole photo, bottom rows included, is unchanged (worst ${diff})`);
-      let dark = 0;
-      let light = 0;
-      for (let y = 481; y < 480 + band.bandHeight - 1; y += 1) for (let x = 0; x < 640; x += 2) (px(x, y) < 60 ? (dark += 1) : px(x, y) > 200 ? (light += 1) : 0);
-      assert.ok(dark > 1000 && light > 150, `the stamp band and its text (${dark} dark, ${light} light)`);
+      for (let y = 0; y < 480; y += 4) for (let x = 0; x < 640; x += 4) if (!inPanel(x, y)) diff = Math.max(diff, Math.abs(px(x, y) - src.data[(y * 640 + x) * src.info.channels]));
+      assert.ok(diff < 40, `the photo outside the panel is unchanged (worst ${diff})`);
+      let changed = 0;
+      let total = 0;
+      for (let y = layout.box.y; y < layout.box.y + layout.box.height; y += 2) for (let x = layout.box.x; x < layout.box.x + layout.box.width; x += 2) {
+        total += 1;
+        if (Math.abs(px(x, y) - src.data[(y * 640 + x) * src.info.channels]) > 25) changed += 1;
+      }
+      assert.ok(changed > total * 0.5, `the stamp panel is drawn in the corner (${changed}/${total})`);
       const audit = await one(`SELECT * FROM audit_logs WHERE action = 'patrol.evidence_stamped_accessed' AND "entityId" = $1 ORDER BY id DESC`, [verified.id]);
       assert.deepEqual([audit.userId, audit.companyId, audit.afterData.runId, audit.afterData.sha256, audit.afterData.stored, audit.afterData.derived],
         [A.ownerId, A.id, runPhoto.id, row.sha256Stored, false, true]);

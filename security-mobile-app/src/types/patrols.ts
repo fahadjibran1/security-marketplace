@@ -673,6 +673,8 @@ export interface PatrolEvidenceCardPhoto {
   capturedAtDevice: string | null;
   receivedAt: string | null;
   verifiedAt: string | null;
+  /** The original's stored SHA-256 (hex), shown in the viewer as its fingerprint. Older APIs omit it. */
+  sha256?: string | null;
   viewable: boolean;
   /** An API path (authenticated), never a signed link. */
   stampedPath: string | null;
@@ -818,6 +820,8 @@ export interface PatrolMonitorWindow {
   exceptionIds: number[];
   alertId: number | null;
   alertStatus: string | null;
+  /** Ad-hoc patrols of the lane started while this window was open (never counted towards it). Older APIs omit it. */
+  adHocRunIds?: number[];
 }
 
 export interface PatrolMonitorCell {
@@ -826,8 +830,15 @@ export interface PatrolMonitorCell {
   total: number;
   owed: number;
   verified: number;
+  /** Windows of the hour not yet due. Older APIs omit it. */
+  later?: number;
   windowKeys: string[];
+  /** Ad-hoc patrols of the lane started in the hour (shown, never counted). Older APIs omit it. */
+  adHoc?: number;
 }
+
+/** Why a patrol counts towards no window (S4 patrol assignment correctness). */
+export type PatrolMonitorAdHocExplanation = 'ad_hoc' | 'ambiguous' | 'already_covered' | 'unmatched';
 
 export interface PatrolMonitorLane {
   key: string;
@@ -878,6 +889,15 @@ export interface PatrolMonitorSite {
   hours: PatrolMonitorHour[];
   lanes: PatrolMonitorLane[];
   runs: Record<string, PatrolMonitorRun>;
-  otherRuns: Array<{ runId: number; reason: 'unscheduled' | 'window_already_covered' | 'unmatched'; exceptionIds: number[] }>;
+  otherRuns: Array<{
+    runId: number;
+    reason: 'unscheduled' | 'window_already_covered' | 'unmatched';
+    exceptionIds: number[];
+    /** Where it is shown: its shift's lane (else the site lane) and the site-local hour of its start. Older APIs omit them. */
+    laneKey?: string | null;
+    hour?: number | null;
+    startedAt?: string;
+    explanation?: PatrolMonitorAdHocExplanation;
+  }>;
   exceptions: Record<string, { id: number; type: string; status: string; runId: number | null; alertId: number | null; alertStatus: string | null }>;
 }

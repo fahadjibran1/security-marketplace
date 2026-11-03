@@ -15,10 +15,11 @@
  *           no per-checkpoint photo on an automatic route, pending / rejected / quarantined / purged photos never count,
  *           QR without a route version never verified (A1)
  *   PB1-08  explainVerification: every code, plain English, the deadline on the site's clock
- *   PB1-09  the stamp: fields present (company, client, site, guard, both times distinct and zoned, P-ref, window,
- *           www.sfour.co.uk), ASCII-only text, glyph paths, and a real JPEG rendered by sharp without any font; (B2
- *           correction) the stamp is a footer band APPENDED below the photo — output = photo height + band, the photo's
- *           pixels above it unchanged — for landscape, portrait, small and EXIF-rotated photos; no "http" anywhere
+ *   PB1-09  the stamp (S4 patrol assignment correctness, owner-approved 3 Nov 2026): a compact translucent corner panel
+ *           — company, site, Guard, device capture time, then P-ref, photo number and sfour.co.uk — in Inter drawn as
+ *           paths (no system font); at most STAMP_MAX_AREA of the photo and about half its width; the photo outside it
+ *           unchanged and the original buffer untouched; a band below the photo only when it is too small; no wording
+ *           implying a person reviewed it; EXIF orientation; an undecodable image throws
  */
 process.env.TZ = 'UTC';
 
@@ -247,38 +248,36 @@ async function main() {
     'Waiting for photos to upload (deadline 15:45).');
   });
 
-  await test('PB1-09-THE-STAMP-FIELDS-ASCII-GLYPHS-AND-A-REAL-JPEG-WITHOUT-FONTS', async () => {
+  await test('PB1-09-THE-STAMP-A-COMPACT-CORNER-PANEL-ORIGINAL-UNTOUCHED-BAND-ONLY-WHEN-TOO-SMALL', async () => {
     const fields = {
       companyName: 'Sécurité Shield – North Ltd', clientName: 'Harbour Estates', siteName: 'Quay Gate', guardName: 'Ava Okafor',
-      capturedAtDevice: Z('2026-07-02T13:32:05Z'), receivedAtServer: Z('2026-07-02T13:40:11Z'), timeZone: 'Europe/London', runId: 123,
+      capturedAtDevice: Z('2026-07-02T13:32:05Z'), receivedAtServer: Z('2026-07-02T13:40:11Z'), timeZone: 'Europe/London', runId: 123, evidenceId: 15,
       window: { start: Z('2026-07-02T13:00:00Z'), end: Z('2026-07-02T14:00:00Z'), name: 'Shift patrol' },
     };
-    const { title, lines } = ST.stampLines(fields);
-    assert.equal(title, 'Securite Shield - North Ltd', 'the company name, prominent (accents and dashes transliterated)');
-    assert.deepEqual(lines, [
-      'Client: Harbour Estates | Site: Quay Gate',
-      'Guard: Ava Okafor',
-      'Captured (device): 02 Jul 2026 14:32:05 BST',
-      'Received by S4 (server): 02 Jul 2026 14:40:11 BST',
-      'Patrol P-123 | Window 14:00-15:00 (Shift patrol)',
-      'Times in Europe/London | www.sfour.co.uk',
-    ]);
-    assert.ok([title, ...lines].every((l) => !/https?:|:\/\//i.test(l)) && lines[lines.length - 1].endsWith(' www.sfour.co.uk'),
-      'B2: the stamp reads "www.sfour.co.uk" with no protocol prefix');
-    assert.notEqual(lines[2].split(': ')[1], lines[3].split(': ')[1], 'device capture and server receipt are two distinct times');
-    assert.ok([title, ...lines].every((l) => /^[\x20-\x7E]*$/.test(l)), 'printable ASCII only');
+    // The lines: company, site, Guard, device capture time — then one small reference line. Server receipt time, the
+    // window and the fingerprint stay in the evidence viewer.
+    const lines = ST.stampLines(fields, 20);
+    assert.deepEqual(lines.map((l) => l.text), [
+      'Sécurité Shield – North Ltd',
+      'Quay Gate',
+      'Ava Okafor',
+      '02 Jul 2026 14:32:05 BST  ·  device time',
+      'Patrol P-123  ·  Photo #15  ·  sfour.co.uk',
+    ], 'accents and dashes kept (Inter covers them); the device time on the site\'s clock with its zone');
+    assert.ok(lines[0].size > lines[3].size && lines[3].size > lines[4].size, 'the company is largest; the reference line smallest');
+    assert.deepEqual(lines.map((l) => l.weight), [600, 600, 400, 400, 400]);
+    const words = lines.map((l) => l.text).join(' ');
+    assert.doesNotMatch(words, /verif|review|approv|confirm|check/i, 'no wording that implies a person reviewed the photograph');
+    assert.doesNotMatch(words, /https?:|:\/\//i, 'no protocol prefix');
+    assert.doesNotMatch(words, /14:40:11/, 'the server receipt time is in the viewer, not on the photo');
     assert.equal(ST.stampTime(Z('2026-12-02T13:32:05Z'), 'Europe/London'), '02 Dec 2026 13:32:05 GMT', 'GMT in winter');
-    assert.match(ST.stampLines({ ...fields, window: null, clientName: null }).lines[4], /P-123 \| Unscheduled patrol$/);
-    assert.equal(ST.stampText('aé—b’c中'), 'ae-b\'c?');
-    // Glyph paths: a known glyph's cells, merged per row.
-    assert.equal(ST.textPath('-', 0, 0, 1), 'M0 3h5v1h-5z', 'the dash is one row of five cells');
-    assert.equal(ST.textPath('I', 10, 0, 2).split('M').length - 1, 7, 'one run per row of the I');
-    const { svg, bandHeight, scale } = ST.stampSvg(1600, 1200, { title, lines });
-    assert.ok(scale >= 2 && /<path d="M/.test(svg) && !/<text|font/i.test(svg), 'paths only — no <text>, no font');
-    assert.ok(svg.includes(`width="1600" height="${bandHeight}"`), 'the band is its own strip, the photo\'s width');
-    // A real JPEG through sharp: the original bytes are untouched; the band is APPENDED below the photo, which stays whole.
+    assert.equal(ST.stampText('a\u0007b\n  c'), 'a b c', 'control characters and runs of whitespace collapse');
+    assert.ok(ST.measureText('中', 400, 20) > 0, 'a character outside the fonts is drawn as "?" rather than failing');
+    // A long name is shortened with "…" to fit the panel, never overflowing it.
+    const long = ST.stampLayout(800, 600, { ...fields, companyName: 'An Exceptionally Long Security Company Name That Never Ends Limited' });
+    assert.ok(long.lines[0].text.endsWith('…') && long.box.width <= 800 * 0.45, 'shortened to fit under half the photo\'s width');
+
     const sharp = require('sharp');
-    // A non-uniform photo (a gradient), so "the photo's pixels are unchanged" is a real comparison.
     const gradient = (w: number, h: number) => {
       const raw = Buffer.alloc(w * h * 3);
       for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
@@ -288,53 +287,60 @@ async function main() {
       return sharp(raw, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 95 }).toBuffer() as Promise<Buffer>;
     };
     const decode = async (b: Buffer) => sharp(b).rotate().raw().toBuffer({ resolveWithObject: true });
-    const checkAppended = async (original: Buffer, w: number, h: number, what: string) => {
+    const check = async (w: number, h: number, what: string) => {
+      const original = await gradient(w, h);
       const sha = createHash('sha256').update(original).digest('hex');
       const copy = Buffer.from(original);
       const out = await ST.renderStampedJpeg(original, fields);
-      assert.equal(createHash('sha256').update(original).digest('hex'), sha, `${what}: the original buffer is never modified`);
+      assert.equal(createHash('sha256').update(original).digest('hex'), sha, `${what}: the original's bytes (and SHA-256) are never modified`);
       assert.ok(original.equals(copy));
       assert.deepEqual([out.jpeg[0], out.jpeg[1], out.jpeg[2]], [0xff, 0xd8, 0xff], `${what}: a JPEG`);
-      assert.deepEqual([out.width, out.height], [w, h], `${what}: the upright photo's size`);
+      const { layout } = out;
+      assert.ok(/<path d="M/.test(layout.svg) && !/<text|font-family|@font-face|<image|href=/i.test(layout.svg), `${what}: vector paths only — no system font, no external reference`);
       const stamped = await sharp(out.jpeg).raw().toBuffer({ resolveWithObject: true });
-      assert.deepEqual([stamped.info.width, stamped.info.height], [w, h + out.bandHeight], `${what}: output height = photo height + band`);
-      assert.ok(out.bandHeight > 0 && out.bandHeight === ST.stampSvg(w, h, ST.stampLines(fields)).bandHeight);
-      // The whole photo area matches the source (within JPEG re-encoding tolerance): nothing is drawn over the picture.
       const src = await decode(original);
-      let worst = 0;
-      let sum = 0;
-      let count = 0;
-      for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) for (let c = 0; c < 3; c += 1) {
-        const d = Math.abs(stamped.data[(y * w + x) * stamped.info.channels + c] - src.data[(y * w + x) * src.info.channels + c]);
-        worst = Math.max(worst, d); sum += d; count += 1;
+      const inBox = (x: number, y: number) => x >= layout.box.x && x < layout.box.x + layout.box.width && y >= layout.box.y && y < layout.box.y + layout.box.height;
+      // Everything outside the stamp matches the source within JPEG re-encoding tolerance.
+      let worst = 0; let sum = 0; let count = 0; let darker = 0; let inside = 0;
+      for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+        for (let c = 0; c < 3; c += 1) {
+          const d = Math.abs(stamped.data[(y * w + x) * stamped.info.channels + c] - src.data[(y * w + x) * src.info.channels + c]);
+          if (!inBox(x, y)) { worst = Math.max(worst, d); sum += d; count += 1; }
+        }
+        if (layout.mode === 'overlay' && inBox(x, y)) {
+          inside += 1;
+          if (stamped.data[(y * w + x) * stamped.info.channels + 2] < src.data[(y * w + x) * src.info.channels + 2] - 40) darker += 1;
+        }
       }
-      assert.ok(sum / count < 3 && worst < 40, `${what}: the photo above the band is unchanged (mean diff ${(sum / count).toFixed(2)}, worst ${worst})`);
-      // The band: dark, with white text drawn from the glyph paths (no font).
-      let dark = 0;
-      let light = 0;
-      for (let y = h + 1; y < h + out.bandHeight - 1; y += 1) for (let x = 0; x < w; x += 1) {
-        const v = stamped.data[(y * w + x) * stamped.info.channels];
-        if (v < 60) dark += 1; else if (v > 200) light += 1;
+      assert.ok(sum / count < 3 && worst < 60, `${what}: the photo outside the stamp is unchanged (mean ${(sum / count).toFixed(2)}, worst ${worst})`);
+      if (layout.mode === 'overlay') {
+        assert.deepEqual([stamped.info.width, stamped.info.height, out.bandHeight], [w, h, 0], `${what}: the photo's own size`);
+        const area = (layout.box.width * layout.box.height) / (w * h);
+        assert.ok(area <= ST.STAMP_MAX_AREA, `${what}: the panel covers at most ${ST.STAMP_MAX_AREA * 100}% (${(area * 100).toFixed(1)}%)`);
+        assert.ok(layout.box.width <= w * (h > w ? 0.62 : 0.45), `${what}: never wider than about half the photo`);
+        assert.ok(layout.box.x > 0 && layout.box.y + layout.box.height < h && layout.box.x < w * 0.1, `${what}: in the bottom-left corner, inside the photo`);
+        assert.ok(darker > inside * 0.5, `${what}: a dark translucent panel behind the text (${darker}/${inside})`);
+        assert.ok(layout.base >= 12, `${what}: readable text (${layout.base}px)`);
+      } else {
+        assert.deepEqual([stamped.info.width, stamped.info.height], [w, h + out.bandHeight], `${what}: a band appended below — nothing drawn over the photo`);
       }
-      assert.ok(dark > light && light > 50, `${what}: a dark band with light text (${dark} dark, ${light} light)`);
       return out;
     };
-    await checkAppended(await gradient(800, 600), 800, 600, 'landscape');
-    await checkAppended(await gradient(600, 900), 600, 900, 'portrait');
-    const small = await checkAppended(await gradient(160, 120), 160, 120, 'small');
-    const narrow = ST.stampSvg(160, 120, ST.stampLines(fields));
-    assert.ok(narrow.lines.length > ST.stampLines(fields).lines.length + 1, 'a narrow photo wraps the stamp text instead of cutting it');
-    assert.ok(narrow.lines.join(' ').includes('www.sfour.co.uk'), 'the address survives wrapping');
-    assert.ok(small.bandHeight > 120 * 0.5, 'small photos keep a readable band (appended, so it never hides the photo)');
-    const big = ST.stampSvg(4000, 3000, ST.stampLines(fields));
-    assert.ok(big.scale >= 8 && big.bandHeight <= 3000 * 0.5, `a large photo gets larger text, band at most half the height (scale ${big.scale}, band ${big.bandHeight})`);
-    for (const l of [title, ...lines, ...narrow.lines]) assert.doesNotMatch(l, /https?:|:\/\//i, 'no protocol anywhere in the stamp');
-    // EXIF orientation 6 (rotated): the band is appended below the upright image.
-    const rotated: Buffer = await sharp({ create: { width: 300, height: 200, channels: 3, background: '#888888' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
+    const landscape = await check(800, 600, 'landscape');
+    assert.equal(landscape.layout.mode, 'overlay');
+    assert.equal((await check(600, 900, 'portrait')).layout.mode, 'overlay');
+    const phone = await check(640, 480, 'a small phone photo');
+    assert.ok(phone.layout.mode === 'overlay' && phone.layout.base >= 12, `640 × 480 still gets the corner panel at a readable size (${phone.layout.base}px)`);
+    const tiny = await check(160, 120, 'tiny');
+    assert.equal(tiny.layout.mode, 'band', 'too small for a corner panel within the bounds: the band below the photo');
+    const big = ST.stampLayout(4032, 3024, fields);
+    assert.ok(big.mode === 'overlay' && big.base >= 40 && (big.box.width * big.box.height) / (4032 * 3024) < 0.05, `a 12 MP photo: large, legible text in a small corner (${big.base}px)`);
+    // EXIF orientation 6 (rotated): the stamp is laid out on the upright image.
+    const rotated: Buffer = await sharp({ create: { width: 600, height: 400, channels: 3, background: '#888888' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
     const upright = await ST.renderStampedJpeg(rotated, fields);
-    assert.deepEqual([upright.width, upright.height], [200, 300], 'axes swapped for orientation 6');
-    const uprightInfo = (await sharp(upright.jpeg).metadata());
-    assert.deepEqual([uprightInfo.width, uprightInfo.height], [200, 300 + upright.bandHeight], 'appended below the upright photo');
+    assert.deepEqual([upright.width, upright.height], [400, 600], 'axes swapped for orientation 6');
+    const uprightInfo = await sharp(upright.jpeg).metadata();
+    assert.deepEqual([uprightInfo.width, uprightInfo.height, uprightInfo.orientation ?? 1], [400, 600 + upright.bandHeight, 1], 'upright (with any band below it), no orientation tag');
     await assert.rejects(() => ST.renderStampedJpeg(Buffer.from('not an image'), fields), 'an undecodable original throws (the API answers 422)');
   });
 

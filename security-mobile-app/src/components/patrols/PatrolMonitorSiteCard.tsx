@@ -15,6 +15,7 @@ import {
   monitorHourLabel,
   monitorHourOffsetShown,
   monitorLaneTitle,
+  monitorCardVerified,
   monitorNeedsReview,
   monitorNextWindowLabel,
   monitorShiftTimes,
@@ -52,13 +53,14 @@ export function PatrolMonitorSiteCard({ ctx, site, expanded, live, onToggle }: {
   const status = monitorSiteStatusInfo(site.status);
   const c = site.counts;
   const review = monitorNeedsReview(c);
+  const verified = monitorCardVerified(c);
   const statusPalette = monitorPalette(status.tone);
   const title = `${site.siteName}${site.clientName ? `, ${site.clientName}` : ''}`;
   const wide = ctx.layout.mode !== 'mobile';
   // Exactly what a collapsed card owes the reader: verified of those due, missed, needs review, the next window.
   const chips = (
     <>
-      <Chip symbol="✓" label={`Verified ${c.verified}/${c.owed}`} tone="neutral" hint={`${c.windows} today`} />
+      <Chip symbol="✓" label={verified.label} tone="neutral" hint={verified.hint ?? undefined} />
       <Chip symbol="✕" label={`Missed ${c.missed}`} tone={c.missed > 0 ? 'danger' : 'neutral'} />
       <Chip symbol="⚑" label={`Needs review ${review}`} tone={review > 0 ? 'warning' : 'neutral'} />
       <Chip symbol="○" label={monitorNextWindowLabel(site.nextWindowStart, site.timeZone, site.date)} tone="neutral" />
@@ -190,6 +192,8 @@ function MonitorCellView({ lane, cell, hour, size, onOpen }: { lane: PatrolMonit
     <View style={[styles.cell, { backgroundColor: p.bg, borderColor: hour.current ? colors.primaryNavy : p.border }]}>
       {info.symbol ? <Text style={[styles.cellSymbol, { color: p.fg }]}>{info.symbol}</Text> : null}
       {count ? <Text style={[styles.cellCount, { color: p.fg }]}>{count}</Text> : null}
+      {/* An ad-hoc patrol in this hour: marked (and listed in the detail), never counted. */}
+      {cell.adHoc ? <Text style={styles.cellAdHoc} accessibilityElementsHidden>{'◇'}{cell.adHoc > 1 ? cell.adHoc : ''}</Text> : null}
     </View>
   );
   if (!monitorCellOpens(cell)) {
@@ -232,4 +236,5 @@ const styles = {
   cell: { flex: 1, borderWidth: 1, borderRadius: 6, alignItems: 'center' as const, justifyContent: 'center' as const },
   cellSymbol: { fontSize: 14, fontWeight: '700' as const, lineHeight: 16 },
   cellCount: { fontSize: 10, fontWeight: '700' as const, lineHeight: 12 },
+  cellAdHoc: { position: 'absolute' as const, top: 1, right: 3, fontSize: 9, fontWeight: '700' as const, color: colors.info },
 };

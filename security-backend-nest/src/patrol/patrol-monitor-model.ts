@@ -269,6 +269,11 @@ export type MonitorWindow = {
   exceptionIds: number[];
   alertId: number | null;
   alertStatus: string | null;
+  /**
+   * S4 patrol assignment correctness: ad-hoc patrols (not linked to any window) of this window's lane started while it was
+   * open. Shown so a controller sees why the window is still owed; they never cover or count towards it.
+   */
+  adHocRunIds: number[];
 };
 
 export type MonitorCell = {
@@ -280,7 +285,11 @@ export type MonitorCell = {
   owed: number;
   /** Of them, server-verified (on time or late). */
   verified: number;
+  /** Of them, not yet due (state future): the cell reads verified/owed and, apart, how many come later. */
+  later: number;
   windowKeys: string[];
+  /** Ad-hoc patrols of this lane started in the hour: shown in the cell's detail, never counted. */
+  adHoc: number;
 };
 
 export type MonitorLane = {
@@ -328,7 +337,19 @@ export type MonitorSiteModel = {
    * Runs at the site in the range that satisfy no window shown (unscheduled, already covered, or unmatched): listed, never
    * counted as patrols, but their exceptions count like any other.
    */
-  otherRuns: Array<{ runId: number; reason: 'unscheduled' | 'window_already_covered' | 'unmatched'; exceptionIds: number[] }>;
+  /**
+   * Runs that satisfy no window shown. S4 patrol assignment correctness: each is placed in a lane (its own shift's lane,
+   * else the site lane) and the site-local hour its device start falls in, with why it is not linked (`explanation`).
+   */
+  otherRuns: Array<{
+    runId: number;
+    reason: 'unscheduled' | 'window_already_covered' | 'unmatched';
+    exceptionIds: number[];
+    laneKey: string | null;
+    hour: number | null;
+    startedAt: string;
+    explanation: 'ad_hoc' | 'ambiguous' | 'already_covered' | 'unmatched';
+  }>;
   counts: MonitorCounts;
   status: MonitorSiteStatus;
   nextWindowStart: string | null;
@@ -418,6 +439,7 @@ export function buildSiteModel(input: MonitorSiteInput): MonitorSiteModel {
       exceptionIds,
       alertId: alerted?.safetyAlertId ?? null,
       alertStatus: alerted?.alertStatus ?? null,
+      adHocRunIds: [],
     };
   };
 
@@ -497,7 +519,27 @@ export function buildSiteModel(input: MonitorSiteInput): MonitorSiteModel {
   for (const r of input.runs) {
     if (usedRuns.has(r.id)) continue;
     const reason = r.syncFlags.includes('window_already_covered') ? 'window_already_covered' : r.windowKey == null ? 'unscheduled' : 'unmatched';
-    otherRuns.push({ runId: r.id, reason, exceptionIds: (exceptionsByRun.get(r.id) ?? []).map((e) => e.id).sort((a, b) => a - b) });
+    const started = r.startedAtDevice ?? r.startedAtServer;
+    const at = started.getTime();
+    const home = lanes.find((l) => l.kind === 'shift' && l.shiftId === r.shiftId) ?? lanes.find((l) => l.kind === 'site') ?? null;
+    const hour = hours.find((h) => new Date(h.start).getTime() <= at && at < new Date(h.end).getTime()) ?? null;
+    if (home) {
+      for (const w of home.windows) {
+        if (w.runId == null && new Date(w.start).getTime() <= at && at < new Date(w.end).getTime()) w.adHocRunIds.push(r.id);
+      }
+      const cell = hour ? home.cells.find((c) => c.hour === hour.index) : null;
+      if (cell) cell.adHoc += 1;
+    }
+    otherRuns.push({
+      runId: r.id,
+      reason,
+      exceptionIds: (exceptionsByRun.get(r.id) ?? []).map((e) => e.id).sort((a, b) => a - b),
+      laneKey: home?.key ?? null,
+      hour: hour?.index ?? null,
+      startedAt: started.toISOString(),
+      explanation: reason === 'window_already_covered' ? 'already_covered' : reason === 'unmatched' ? 'unmatched'
+        : r.syncFlags.includes('window_match_ambiguous') ? 'ambiguous' : 'ad_hoc',
+    });
   }
 
   const all = lanes.flatMap((l) => l.windows);
@@ -519,7 +561,7 @@ function cellsFor(l: MonitorLane, hours: MonitorHour[], shifts: MonitorShift[]):
       const states = ws.map((w) => w.state);
       return {
         hour: h.index, state: worstState(states)!, total: ws.length, owed: states.filter(isOwed).length,
-        verified: states.filter(isVerified).length, windowKeys: ws.map((w) => w.key),
+        verified: states.filter(isVerified).length, later: states.filter((x) => x === 'future').length, windowKeys: ws.map((w) => w.key), adHoc: 0,
       };
     }
     let state: MonitorCellState = 'none';
@@ -527,7 +569,7 @@ function cellsFor(l: MonitorLane, hours: MonitorHour[], shifts: MonitorShift[]):
       if (!overlaps(shift.start, shift.end, hs, he)) state = 'off_duty';
       else if (l.requirement && !l.requirement.effectiveRequired && !l.windows.length) state = 'not_required';
     }
-    return { hour: h.index, state, total: 0, owed: 0, verified: 0, windowKeys: [] };
+    return { hour: h.index, state, total: 0, owed: 0, verified: 0, later: 0, windowKeys: [], adHoc: 0 };
   });
 }
 

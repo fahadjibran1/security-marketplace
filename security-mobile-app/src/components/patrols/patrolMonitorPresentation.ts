@@ -14,6 +14,7 @@ import type {
   PatrolMonitorCounts,
   PatrolMonitorHour,
   PatrolMonitorLane,
+  PatrolMonitorRun,
   PatrolMonitorSiteStatus,
   PatrolMonitorSummarySite,
   PatrolMonitorWindow,
@@ -53,14 +54,72 @@ export function monitorStateTone(state: string | null | undefined): MonitorTone 
   return monitorStateInfo(state).tone;
 }
 
-/** Whether a cell can be opened: it holds at least one patrol window. */
-export function monitorCellOpens(cell: Pick<PatrolMonitorCell, 'total' | 'windowKeys'>): boolean {
-  return cell.total > 0 && cell.windowKeys.length > 0;
+/** Whether a cell can be opened: it holds a patrol window, or an ad-hoc patrol started in that hour. */
+export function monitorCellOpens(cell: Pick<PatrolMonitorCell, 'total' | 'windowKeys' | 'adHoc'>): boolean {
+  return (cell.total > 0 && cell.windowKeys.length > 0) || (cell.adHoc ?? 0) > 0;
 }
 
-/** A cell's aggregate count, e.g. "1/2" (verified of the hour's windows), when the hour has more than one window. */
-export function monitorCellCount(cell: Pick<PatrolMonitorCell, 'total' | 'verified'>): string | null {
-  return cell.total > 1 ? `${cell.verified}/${cell.total}` : null;
+/**
+ * A cell's aggregate count when the hour has more than one window, on the SAME basis as the site card: verified of the
+ * windows due so far, and apart the windows still to come — "0/1 +1" (none of the 1 due verified, 1 later), "2/2",
+ * "+2". Windows neither due nor later (no Guard on duty, not assessed) are in neither number. An older API without
+ * `later` keeps the earlier verified/total reading.
+ */
+export function monitorCellCount(cell: Pick<PatrolMonitorCell, 'total' | 'owed' | 'verified' | 'later'>): string | null {
+  if (cell.total <= 1) return null;
+  if (cell.later == null) return `${cell.verified}/${cell.total}`;
+  const due = cell.owed > 0 ? `${cell.verified}/${cell.owed}` : '';
+  const later = cell.later > 0 ? `+${cell.later}` : '';
+  return [due, later].filter(Boolean).join(' ') || null;
+}
+
+/** The same count in words, for screen readers and the cell detail: "0 of 1 due verified, 1 later". */
+export function monitorCountWords(c: { verified: number; owed: number; later?: number | null }): string {
+  const parts = [`${c.verified} of ${c.owed} due verified`];
+  if (c.later) parts.push(`${c.later} later`);
+  return parts.join(', ');
+}
+
+/** The site card's Verified chip and its hint, on the same basis as the cells: verified of those due; how many later. */
+export function monitorCardVerified(counts: Pick<PatrolMonitorCounts, 'verified' | 'owed' | 'future'>): { label: string; hint: string | null } {
+  return { label: `Verified ${counts.verified}/${counts.owed}`, hint: counts.future > 0 ? `${counts.future} later` : null };
+}
+
+/**
+ * Why a patrol's received evidence has not (yet) satisfied its window, from the run's COUNTS (no evidence is read): the
+ * photos S4 still needs, and the required QR checkpoints not verified. Nothing for a verified window.
+ */
+export function monitorEvidenceGaps(
+  run: Pick<PatrolMonitorRun, 'photos' | 'checkpoints' | 'status'>,
+  state: string,
+): string[] {
+  if (state === 'verified' || state === 'late_verified') return [];
+  const out: string[] = [];
+  if (run.photos.missing > 0) {
+    out.push(`${run.photos.taken} photo${run.photos.taken === 1 ? '' : 's'} received; S4 still needs ${run.photos.missing} more for this patrol.`);
+  } else if (run.photos.taken > run.photos.verified) {
+    const waiting = run.photos.taken - run.photos.verified;
+    out.push(`${waiting} photo${waiting === 1 ? ' is' : 's are'} still being received and checked by S4.`);
+  }
+  const { required, verified } = run.checkpoints;
+  if (required != null && (verified ?? 0) < required) out.push(`${verified ?? 0} of ${required} required QR checkpoints verified.`);
+  if (run.checkpoints.qrRuleMissing) out.push('QR is required but this site has no checkpoint route, so S4 cannot verify it.');
+  if (!out.length && run.status === 'in_progress') out.push('The patrol is still in progress.');
+  return out;
+}
+
+/** Why an ad-hoc patrol counts towards no scheduled window, in plain English. */
+export function monitorAdHocExplanation(code: string | null | undefined): string {
+  switch (code) {
+    case 'ambiguous':
+      return 'More than one scheduled patrol window was open when it started, so S4 could not tell which one it was for. It counts towards neither.';
+    case 'already_covered':
+      return 'Its scheduled patrol window already had a patrol, so this is an extra patrol. It does not count again.';
+    case 'unmatched':
+      return 'It names a scheduled patrol window that is not shown for this day.';
+    default:
+      return 'The Guard\'s phone started it without a scheduled patrol window (for example, its patrol plan was out of date), so it does not count towards a scheduled patrol.';
+  }
 }
 
 /** Hour heading: "14", and the repeated autumn hour marked "01 (2nd)". */
@@ -79,11 +138,18 @@ export function monitorLaneTitle(lane: Pick<PatrolMonitorLane, 'kind' | 'guardNa
   return lane.guardId == null ? 'Unassigned shift' : `Guard #${lane.guardId}`;
 }
 
-export function monitorCellA11yLabel(laneTitle: string, hour: Pick<PatrolMonitorHour, 'label' | 'repeated' | 'offset'>, cell: Pick<PatrolMonitorCell, 'state' | 'total' | 'verified'>): string {
+export function monitorCellA11yLabel(
+  laneTitle: string,
+  hour: Pick<PatrolMonitorHour, 'label' | 'repeated' | 'offset'>,
+  cell: Pick<PatrolMonitorCell, 'state' | 'total' | 'owed' | 'verified' | 'later' | 'adHoc'>,
+): string {
   const info = monitorStateInfo(cell.state);
   const when = `${hour.label}:00${hour.repeated ? ` (second time, ${hour.offset})` : ''}`;
-  const count = cell.total > 1 ? `, ${cell.verified} of ${cell.total} verified` : '';
-  return `${laneTitle}, ${when}: ${info.label}${count}`;
+  const count = cell.total > 1
+    ? cell.later == null ? `, ${cell.verified} of ${cell.total} verified` : `, ${monitorCountWords(cell)}`
+    : '';
+  const adHoc = cell.adHoc ? `, ${cell.adHoc} ad-hoc patrol${cell.adHoc === 1 ? '' : 's'}` : '';
+  return `${laneTitle}, ${when}: ${info.label}${count}${adHoc}`;
 }
 
 /** The windows a cell holds, in time order. */
