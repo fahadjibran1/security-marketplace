@@ -226,7 +226,7 @@ async function main() {
     const migrate = new DataSource({ ...base, entities: [], migrations: files.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
     await migrate.initialize();
     const done = await migrate.runMigrations({ transaction: 'each' });
-    assert.equal(done[done.length - 1]?.name, 'AddPatrolSiteSetup1720900000021');
+    assert.equal(done[done.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022');
     console.log(`Generating: ${SITES} sites, ${DAYS} days`);
     await generate(migrate);
     await migrate.destroy();
@@ -353,6 +353,12 @@ async function main() {
     memoryGuard('baseline');
     await explain('existing indexes only');
     await bench('existing indexes only');
+    // PERF_BASELINE_ONLY: measure the schema as it is (for example with Migration 75 applied) without the candidate runs.
+    if (process.env.PERF_BASELINE_ONLY) {
+      console.log('
+(baseline only: candidate comparison skipped)');
+      return;
+    }
     const baseWrites = new Map<string, number>();
     for (const c of CANDIDATES) baseWrites.set(c.key, await writeCost(c));
 

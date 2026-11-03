@@ -1,7 +1,7 @@
 # Patrol Monitor S1: read model and API contract
 
 Owner-approved 2 Nov 2026 (S1 only: backend model, summary endpoint, site-window endpoint, synthetic performance tests).
-S1 adds no migration and no new stored data. It does not change patrol scheduling, verification, QR signing, evidence
+S1 adds no stored data; Migration 75 adds two indexes (below). It does not change patrol scheduling, verification, QR signing, evidence
 retention or any existing route or payload. The Guard app 1.2.1 API is untouched.
 
 Code:
@@ -146,6 +146,25 @@ Each request runs a fixed batch of company-scoped queries, independent of the nu
   with the request. Without it, a per-guard site recomputed the same windows for every shift lane at about 2 ms per
   conversion (the 50-site summary took about 63 s). PMON-14 and PMON-16 prove the output is identical to the original
   path; PMON-15 times it.
+
+## Migration 75: AddPatrolMonitorIndexes1720900000022
+
+Owner-approved 3 Nov 2026 on the measured benchmark. Indexes only, no data change:
+
+| Index | Serves | Measured (50 sites, 1.27 M runs) |
+|---|---|---|
+| `patrol_runs ("companyId", "siteId", "windowStart")` | runs of the windows in a range | full scan 489 ms → index scan 1–2 ms |
+| `shifts ("companyId", "siteId", "end")` | shifts across a range | full scan 92 ms → 0.3 ms |
+
+- Built with `CREATE INDEX CONCURRENTLY` outside a transaction (`transaction = false`; `migration:run:prod` uses
+  `--transaction each`). A whole-run transaction is refused by TypeORM.
+- Idempotent. An index with the exact definition but INVALID (an interrupted concurrent build) is rebuilt; an index with
+  either name and any other definition is refused, valid or not, before anything is built.
+- `down()` drops both: concurrently outside a transaction; inside `migration:revert`'s transaction a plain drop with a
+  5 s lock timeout, so it never queues behind a long read.
+- Not added (measured, not justified): a `patrol_exceptions` index (the planner keeps its small scan) and a partial
+  `safety_alerts` index (today's count casts type and status to text, so it cannot use one).
+- Certified by `scripts/m75-migration.spec.ts` (M75-01…10).
 
 Known engine limit (unchanged by S1): `siteLocalToInstant` in `common/site-time.ts` resolves some times wrongly near a
 clock change in zones more than about 2 hours from UTC (for example New York's change days, or Adelaide's evening before

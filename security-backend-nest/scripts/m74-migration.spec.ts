@@ -172,9 +172,10 @@ async function main() {
 
     await test('M74-01-A-73-DATABASE-MIGRATES-TO-74-AND-74-IS-LAST', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_74], 'only 74 is pending on a 73 database');
-      assert.equal(allFiles.length, 74);
+      assert.equal(allFiles.length, 75);
       assert.equal(allFiles[72], '1720900000020-AddPatrolScheduleSuccessors.ts', 'Migration 73 comes just before 74');
       assert.equal(allFiles[73], '1720900000021-AddPatrolSiteSetup.ts', 'Migration 74 = 1720900000021 (1720900000019 stays reserved)');
+      assert.equal(allFiles[74], '1720900000022-AddPatrolMonitorIndexes.ts', 'Migration 75 follows 74 and is certified by m75-migration.spec.ts');
       assert.ok(!allFiles.some((f) => f.startsWith('1720900000019-')), 'no file takes the reserved timestamp');
     });
     const head = await schema();

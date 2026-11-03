@@ -146,7 +146,7 @@ async function main() {
 
     await test('M69-01-A-68-DATABASE-MIGRATES-TO-69-AND-69-IS-LAST', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_69], 'only 69 is pending on a 68 database');
-      assert.equal(allFiles.length, 74);
+      assert.equal(allFiles.length, 75);
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts');
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 follows 70 and is certified by m71-migration.spec.ts');

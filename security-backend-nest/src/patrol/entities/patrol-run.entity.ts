@@ -18,6 +18,7 @@ import type { PatrolRunStatus, PatrolSyncFlag, PatrolVerificationStatus } from '
 })
 @Index('UQ_patrol_runs_one_open_per_guard_shift', ['shiftId', 'guardId'], { unique: true, where: `"status" = 'in_progress'` })
 @Index('IDX_patrol_runs_company_site_started', ['companyId', 'siteId', 'startedAtServer'])
+@Index('IDX_patrol_runs_company_site_window_start', ['companyId', 'siteId', 'windowStart']) // Migration 75: the Patrol Monitor's range reads
 @Index('IDX_patrol_runs_shift', ['shiftId'])
 @Index('IDX_patrol_runs_open', ['companyId'], { where: `"status" = 'in_progress'` })
 export class PatrolRun {

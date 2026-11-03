@@ -85,7 +85,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolSiteSetup1720900000021', 'the head is Migration 74 (patrol site setup; 73 = durable schedule successors; 72 = patrol sync recovery grants) (#68); reconciliation is Migration 71');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022', 'the head is Migration 75 (Patrol Monitor indexes; 74 = patrol site setup; 73 = durable schedule successors; 72 = patrol sync recovery grants) (#68); reconciliation is Migration 71');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');

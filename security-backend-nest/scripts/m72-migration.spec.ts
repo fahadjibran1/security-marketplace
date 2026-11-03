@@ -136,7 +136,7 @@ async function main() {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_72], 'only 72 is pending on a 71 database');
       // S4 1.2.1: Migration 73 (1720900000020, certified by m73-migration.spec.ts) now follows 72 in the repository; this spec
       // still migrates exactly through 72, so 72 is the last migration applied here.
-      assert.equal(allFiles.length, 74);
+      assert.equal(allFiles.length, 75);
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts');
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 comes just before 72');
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts');

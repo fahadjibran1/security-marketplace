@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -17,6 +18,7 @@ import { RotaSlot } from '../../rota-slot/entities/rota-slot.entity';
 import { Timesheet } from '../../timesheet/entities/timesheet.entity';
 
 @Entity('shifts')
+@Index('IDX_shifts_company_site_end', ['company', 'site', 'end']) // Migration 75: the Patrol Monitor's range reads
 export class Shift {
   @PrimaryGeneratedColumn()
   id!: number;

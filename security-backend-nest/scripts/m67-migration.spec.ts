@@ -162,7 +162,7 @@ async function main() {
     await test('M67-01-A-66-DATABASE-MIGRATES-TO-67-AND-67-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 67 is pending on a 66 database');
       assert.equal(applied[0].name, MIGRATION_67);
-      assert.equal(allFiles.length, 74);
+      assert.equal(allFiles.length, 75);
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts');
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts', 'Migration 68 follows 67 and is certified by m68-migration.spec.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');

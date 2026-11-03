@@ -92,9 +92,9 @@ async function main() {
       assert.equal(applied.length, 63, `got ${applied.length}`);
       assert.equal(applied[61].name, MIGRATION_62);
       assert.equal(applied[62].name, MIGRATION_63);
-      assert.equal(allFiles.length, 74);
+      assert.equal(allFiles.length, 75);
       assert.equal(allFiles[62], '1720900000009-AddComplianceLapseAlerts.ts');
-      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts', '1720900000016-AddPatrolEvidenceStorage.ts', '1720900000017-AddPatrolSweepReconciliation.ts', '1720900000018-AddPatrolSyncRecoveryGrants.ts', '1720900000020-AddPatrolScheduleSuccessors.ts', '1720900000021-AddPatrolSiteSetup.ts'], 'after 63 come only 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement), 69 (AddPatrolScheduling), 70 (AddPatrolEvidenceStorage), 71 (AddPatrolSweepReconciliation), 72 (AddPatrolSyncRecoveryGrants), 73 (AddPatrolScheduleSuccessors) and 74 (AddPatrolSiteSetup)');
+      assert.deepEqual(allFiles.slice(63), ['1720900000010-AddShiftAmendments.ts', '1720900000011-AddWelfarePushReminders.ts', '1720900000012-AddGuardNotificationDispatches.ts', '1720900000013-AddManualAttendance.ts', '1720900000014-AddPatrolManagement.ts', '1720900000015-AddPatrolScheduling.ts', '1720900000016-AddPatrolEvidenceStorage.ts', '1720900000017-AddPatrolSweepReconciliation.ts', '1720900000018-AddPatrolSyncRecoveryGrants.ts', '1720900000020-AddPatrolScheduleSuccessors.ts', '1720900000021-AddPatrolSiteSetup.ts', '1720900000022-AddPatrolMonitorIndexes.ts'], 'after 63 come only 64 (AddShiftAmendments), 65 (AddWelfarePushReminders), 66 (AddGuardNotificationDispatches), 67 (AddManualAttendance), 68 (AddPatrolManagement), 69 (AddPatrolScheduling), 70 (AddPatrolEvidenceStorage), 71 (AddPatrolSweepReconciliation), 72 (AddPatrolSyncRecoveryGrants), 73 (AddPatrolScheduleSuccessors), 74 (AddPatrolSiteSetup) and 75 (AddPatrolMonitorIndexes)');
     });
     const head = await schema();
     const headLabels = await enumLabels();
