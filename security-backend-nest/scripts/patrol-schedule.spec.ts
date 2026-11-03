@@ -1066,6 +1066,8 @@ async function main() {
       await bookOff(shift.id, rg.id, new Date(nowMs() - MIN));
     });
 
+    /** The late-sync flags of a run, without the assignment flags (window_auto_assigned / _match_*; never review reasons). */
+    const lateFlags = (flags: string[]) => flags.filter((x) => !['window_auto_assigned', 'window_match_ambiguous', 'window_match_needs_route'].includes(x));
     await test('PS-O01-A-RUN-STARTED-ON-SHIFT-SYNCS-ITS-SCANS-AND-COMPLETION-AFTER-BOOK-OFF', async () => {
       const shift = await rShift(4, null);
       const run = await start({ shiftId: shift.id, startedAtDevice: iso(nowMs() - 2 * HOUR - 5 * MIN) });
@@ -1076,10 +1078,9 @@ async function main() {
       assert.deepEqual([v.body.syncedLate, v.body.provisional, v.body.syncFlags], [true, true, ['synced_after_book_off']]);
       const c = await complete(run.body.id);
       expect(c, 200, undefined, 'the completion after Book Off');
-      // S4 patrol assignment correctness: started with no schedule — linked by S4 when (on the real clock this spec runs on)
-      // one of the site's windows was open at its start, ad hoc otherwise; the late-sync flags are unchanged either way.
-      assert.deepEqual([c.body.status, c.body.syncedLate, c.body.needsReview, c.body.syncFlags],
-        ['completed', true, false, ['synced_after_book_off', ...(run.body.windowKey ? ['window_auto_assigned'] : [])]]);
+      // S4 patrol assignment correctness: a start with no schedule may also carry an assignment flag (which depends on
+      // whether a window was open on the real clock this spec runs on); the late-sync flags are unchanged.
+      assert.deepEqual([c.body.status, c.body.syncedLate, c.body.needsReview, lateFlags(c.body.syncFlags)], ['completed', true, false, ['synced_after_book_off']]);
       assert.equal(c.body.completedAtDevice, iso(new Date(c.body.completedAtDevice)), 'device time kept');
       assert.ok(new Date(c.body.completedAtServer).getTime() > new Date(c.body.completedAtDevice).getTime(), 'server receipt kept separately');
       assert.ok(await count(`SELECT count(*) FROM audit_logs WHERE action = 'patrol.late_sync_flagged' AND "entityType" = 'patrol_run' AND "entityId" = $1`, [run.body.id]) >= 1);
@@ -1092,7 +1093,7 @@ async function main() {
       await bookOff(shift.id, rg.id, new Date(nowMs() - HOUR));
       const c = await complete(run.body.id, { completedAtDevice: iso(nowMs() - 30 * MIN) });
       expect(c, 200);
-      assert.deepEqual([c.body.needsReview, c.body.syncFlags.sort()], [true, ['completed_after_book_off', 'synced_after_book_off']]);
+      assert.deepEqual([c.body.needsReview, lateFlags(c.body.syncFlags).sort()], [true, ['completed_after_book_off', 'synced_after_book_off']]);
     });
 
     let o03Run: any;
@@ -1282,7 +1283,7 @@ async function main() {
       const slow = await start({ shiftId: shift.id, startedAtDevice: iso(nowMs() - 70 * MIN), sentAtDevice: iso(nowMs() - 10 * MIN) });
       expect(slow, 201);
       near(slow.body.clockDriftMs, 10 * MIN, 20_000, 'drift');
-      assert.deepEqual([slow.body.syncFlags, slow.body.needsReview], [['clock_drift_suspect'], true]);
+      assert.deepEqual([lateFlags(slow.body.syncFlags), slow.body.needsReview], [['clock_drift_suspect'], true]);
       const v = await visit(slow.body.id, { scannedAtDevice: iso(nowMs() - 60 * MIN), sentAtDevice: iso(nowMs() + 8 * MIN) });
       expect(v, 201);
       near(v.body.clockDriftMs, -8 * MIN, 20_000, 'visit drift');
@@ -1290,7 +1291,7 @@ async function main() {
       expect(await complete(slow.body.id, { completedAtDevice: iso(nowMs() - 50 * MIN), sentAtDevice: iso(nowMs() - 4 * MIN) }), 200);
       const fine = await start({ shiftId: shift.id, startedAtDevice: iso(nowMs() - 40 * MIN), sentAtDevice: iso(nowMs() - 4 * MIN) });
       expect(fine, 201);
-      assert.deepEqual([fine.body.syncFlags, fine.body.needsReview], [[], false], 'within 5 minutes: not flagged');
+      assert.deepEqual([lateFlags(fine.body.syncFlags), fine.body.needsReview], [[], false], 'within 5 minutes: not flagged');
       expect(await complete(fine.body.id, { completedAtDevice: iso(nowMs() - 30 * MIN) }), 200);
       await bookOff(shift.id, rg.id, new Date(nowMs() - MIN));
     });
