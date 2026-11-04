@@ -34,8 +34,11 @@ import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlertRecord }
 import { CompanyPatrolsWorkspace } from '../components/patrols/CompanyPatrolsWorkspace';
 import { PatrolsSummaryCard } from '../components/patrols/PatrolsSummaryCard';
 import { patrolConflictMessage, resolvePatrolPermissions, withPatrolNavEntry } from '../components/patrols/patrolAccess';
-import type { PatrolNavTarget } from '../components/patrols/patrolContext';
-import { actionablePatrolAlerts, patrolAlertTitle, patrolRecordTarget } from '../components/patrols/patrolPresentation';
+import type { PatrolNavTarget, PatrolPageContext } from '../components/patrols/patrolContext';
+import { PatrolInvestigationPanel } from '../components/patrols/PatrolInvestigationPanel';
+import { missedTodayView, patrolCaseNotes, patrolCaseTitle } from '../components/patrols/patrolOperationsPresentation';
+import type { PatrolAttentionCase, PatrolOperationsAttention } from '../types/patrols';
+import { actionablePatrolAlerts, patrolAlertTitle, patrolLayout, patrolRecordTarget } from '../components/patrols/patrolPresentation';
 import { siteDefaultFromSetup } from '../components/patrols/patrolSetupText';
 import { CompanyIncidentReportDrawer } from '../components/company/CompanyIncidentReportDrawer';
 import { CompanyLogBookWorkspace, type LogBookDayPeriod } from '../components/company/CompanyLogBookWorkspace';
@@ -191,6 +194,7 @@ import {
   manualBookOff,
   correctAttendanceEvent,
   getAttendanceHistory,
+  getPatrolOperationsAttention,
 } from '../services/api';
 import {
   AttendanceEvent,
@@ -342,6 +346,11 @@ type OperationalActivityItem = {
 
 type UrgentOperationalItem = {
   id: string;
+  /** S3 Stage 3: the patrol case (from GET /patrols/operations/attention) this item shows, and what it says. */
+  patrolCase?: PatrolAttentionCase | null;
+  acknowledgedByName?: string | null;
+  patrolNotes?: string[];
+  patrolInconsistent?: boolean;
   /** A Ready shift with no Book On past start + 15 minutes: minutes since the scheduled start. Display only. */
   noBookOnOverdueMinutes?: number | null;
   severity?: string | null;
@@ -1384,6 +1393,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   );
   /** Every patrol read is keyed on the signed-in company: another company never sees this one's patrol state. */
   const patrolCompanyKey = `${user?.companyId ?? 'none'}:${user?.id ?? 'none'}`;
+  /**
+   * S3 Stage 3: Live Operations' patrol cases, from GET /patrols/operations/attention (bounded: the newest 200 cases and
+   * today's counts) — read with the section's other sources, never the patrol alert history. Null until read; the
+   * investigation panel shows one case.
+   */
+  const [patrolAttention, setPatrolAttention] = React.useState<PatrolOperationsAttention | null>(null);
+  const [investigationCase, setInvestigationCase] = React.useState<PatrolAttentionCase | null>(null);
   const [patrolTarget, setPatrolTarget] = React.useState<PatrolNavTarget | null>(null);
   const patrolTargetSeq = React.useRef(0);
   const openPatrolRecord = React.useCallback((target: ReturnType<typeof patrolRecordTarget> | 'overview') => {
@@ -1756,6 +1772,10 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
               { label: 'alerts', run: listCompanySafetyAlerts, apply: (value: SafetyAlert[]) => setAlerts(value) },
               { label: 'daily logs', run: listCompanyDailyLogs, apply: (value: DailyLog[]) => setDailyLogs(value) },
               { label: 'notifications', run: listCompanyNotifications, apply: (value: Notification[]) => setNotifications(value) },
+              // S3 Stage 3: the patrol cases and counts (patrols.view; nothing patrol is requested without it).
+              ...(patrolPermissions.canView
+                ? [{ label: 'patrol cases', run: getPatrolOperationsAttention, apply: (value: PatrolOperationsAttention) => setPatrolAttention(value) }]
+                : []),
             ],
           recruitment: [
             { label: 'jobs', run: listJobs, apply: (value: Job[]) => setJobs(value) },
@@ -1802,7 +1822,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     // `selectedShiftId` is deliberately NOT a dependency any more: the loader no longer reads it, and
     // keeping it here made this callback — and therefore the whole load — re-run every time the operator
     // opened or closed a shift.
-    [activeSection, runSettledLoaders, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance],
+    [activeSection, runSettledLoaders, selectedSiteId, companyMobileLayoutDisabled, canViewCompliance, patrolPermissions.canView],
   );
 
   /**
@@ -2550,7 +2570,33 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     // Patrols (P1-D): ONLY actionable patrol exceptions reach Live Operations — the patrol alerts the server raised
     // (one per actionable exception). Routine patrols, scans and photos never become an alert and stay in Patrol
     // Management. Every patrol item links to its patrol record; acting on it needs alerts.manage.
-    actionablePatrolAlerts(outstandingAlerts).forEach((alert) => {
+    // S3 Stage 3: with the case read, every patrol item is a CASE (an exception and its alert are one; a reconciliation
+    // summary is one). Until it is read — or when it fails — the alert-derived items below stand in, as before.
+    if (patrolAttention) {
+      patrolAttention.cases.forEach((c) => {
+        items.push({
+          id: `patrol-${c.caseKey}`,
+          alertId: c.alertId,
+          shiftId: c.shiftId,
+          status: c.status,
+          siteName: c.site?.name || 'Patrol site',
+          guardName: c.guardName || (c.kind === 'reconciliation_summary' ? 'Outage reconciliation' : 'No Guard recorded'),
+          category: 'patrol',
+          issueType: patrolCaseTitle(c),
+          message: c.message || 'A patrol needs attention.',
+          occurredAt: c.raisedAt || patrolAttention.generatedAt,
+          patrolTarget: c.runId != null
+            ? { kind: 'run', runId: c.runId, exceptionId: c.exceptionId }
+            : c.exceptionId != null ? { kind: 'exception', exceptionId: c.exceptionId, windowKey: c.windowKey } : null,
+          // A data inconsistency is investigated in the panel; the queue offers no one-click action on it.
+          canAct: patrolPermissions.canActOnAlerts && !c.stateMismatch,
+          patrolCase: c,
+          acknowledgedByName: c.acknowledgedByName,
+          patrolNotes: patrolCaseNotes(c),
+          patrolInconsistent: c.stateMismatch,
+        });
+      });
+    } else actionablePatrolAlerts(outstandingAlerts).forEach((alert) => {
       items.push({
         id: `patrol-${alert.id}`,
         alertId: alert.id,
@@ -2579,6 +2625,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     openIncidents,
     operationalNow,
     outstandingAlerts,
+    patrolAttention,
     patrolPermissions.canActOnAlerts,
     rejectedShiftOffers,
     shifts,
@@ -2878,6 +2925,37 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
    * The heading facts come from the item and its shift, so a controller clearing a queue knows
    * exactly what they are closing before they say why.
    */
+  /**
+   * S3 Stage 3: the patrol context the investigation panel's existing parts (the exception actions, the audited photo
+   * viewer) read. Live Operations has no Patrol Management page around it: no holds (unknown, never "none"), no routes.
+   */
+  const liveOpsPatrolCtx = React.useMemo<PatrolPageContext>(() => ({
+    companyKey: `${patrolCompanyKey}:live-operations`,
+    companyName: null,
+    permissions: patrolPermissions,
+    layout: patrolLayout(layoutWidth),
+    siteId: null,
+    sites: [],
+    policies: null,
+    siteName: (siteId) => sites.find((site) => site.id === siteId)?.name ?? 'Patrol site',
+    siteZone: (siteId) => resolveSiteZone(siteId),
+    routes: [],
+    holds: null,
+    reloadPolicies: () => undefined,
+    reloadRoutes: () => undefined,
+    reloadHolds: () => undefined,
+    openRun: (runId) => openPatrolRecord({ kind: 'run', runId, exceptionId: null }),
+    openException: (exceptionId) => openPatrolRecord({ kind: 'exception', exceptionId, windowKey: null }),
+  }), [patrolCompanyKey, patrolPermissions, layoutWidth, sites, resolveSiteZone, openPatrolRecord]);
+
+  // The open investigation follows the server: each re-read replaces it with the case's fresh state (a resolved case
+  // keeps its last view; the panel re-reads its own record).
+  React.useEffect(() => {
+    if (!investigationCase || !patrolAttention) return;
+    const fresh = patrolAttention.cases.find((c) => c.caseKey === investigationCase.caseKey);
+    if (fresh && fresh !== investigationCase) setInvestigationCase(fresh);
+  }, [patrolAttention, investigationCase]);
+
   const openResolveForAlert = React.useCallback((item: UrgentOperationalItem) => {
     if (!item.alertId) return;
     const zone = resolveShiftZone(item.shiftId);
@@ -4026,6 +4104,10 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         setLiveOperationsFeedback({ tone: 'error', message: 'Patrol Management is not available to your role.' });
         return;
       }
+      if (item.patrolCase) {
+        setInvestigationCase(item.patrolCase);
+        return;
+      }
       openPatrolRecord(item.patrolTarget ?? 'overview');
       return;
     }
@@ -5008,6 +5090,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           incidents: sourceStateOf(failedSources, 'incidents'),
           alerts: sourceStateOf(failedSources, 'alerts'),
           dailyLogs: sourceStateOf(failedSources, 'daily logs'),
+          patrolCases: sourceStateOf(failedSources, 'patrol cases'),
         }}
         liveShiftsCount={liveOperationsCounts.liveShifts}
         guardsNotBookedOnCount={liveOperationsCounts.guardsNotBookedOn}
@@ -5034,6 +5117,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         openIncidentsCount={liveOperationsCounts.openIncidents}
         missedCheckCallsCount={liveOperationsCounts.missedCheckCalls}
         urgentOperationalItems={urgentOperationalItems}
+        patrolIndicators={patrolPermissions.canView && (patrolAttention || failedSources.includes('patrol cases'))
+          ? {
+            openCases: patrolAttention?.counts.patrolAlerts ?? 0,
+            missedToday: patrolAttention?.counts.missedToday ?? 0,
+            missedTodayOpen: patrolAttention?.counts.missedTodayOpen ?? 0,
+          }
+          : null}
+        patrolMissedToday={patrolAttention ? missedTodayView(patrolAttention, operationalNow) : null}
+        onOpenPatrolCase={patrolPermissions.canView ? setInvestigationCase : undefined}
         urgentActionItemId={urgentActionItemId}
         liveOperationsFeedback={liveOperationsFeedback}
         canManageShifts={canManageShifts}
@@ -5821,6 +5913,31 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         onPrint={handlePrintIncidentReport}
         onClose={() => { setIncidentDetailId(null); setIncidentReportNotice(null); }}
       />
+      {/* S3 Stage 3: one patrol case, investigated without leaving Live Operations. */}
+      {patrolPermissions.canView ? (
+        <PatrolInvestigationPanel
+          ctx={liveOpsPatrolCtx}
+          patrolCase={investigationCase}
+          onClose={() => setInvestigationCase(null)}
+          onChanged={() => { void loadData(true); }}
+          onOpenInPatrolManagement={(c) => {
+            setInvestigationCase(null);
+            openPatrolRecord(c.runId != null ? { kind: 'run', runId: c.runId, exceptionId: c.exceptionId } : c.exceptionId != null ? { kind: 'exception', exceptionId: c.exceptionId, windowKey: c.windowKey } : 'overview');
+          }}
+          summaryActions={{
+            canAct: patrolPermissions.canActOnAlerts,
+            onAcknowledge: async (c) => {
+              const item = urgentOperationalItems.find((candidate) => candidate.id === `patrol-${c.caseKey}`);
+              if (item) await handleUrgentAlertFollowUp(item, 'acknowledge');
+            },
+            onResolve: (c) => {
+              const item = urgentOperationalItems.find((candidate) => candidate.id === `patrol-${c.caseKey}`);
+              setInvestigationCase(null);
+              if (item) openResolveForAlert(item);
+            },
+          }}
+        />
+      ) : null}
     </View>
   );
 }

@@ -2,6 +2,9 @@ import * as React from 'react';
 import { Fragment } from 'react/jsx-runtime';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import type { ShiftOperationsView } from '../../types/models';
+import type { PatrolAttentionCase } from '../../types/patrols';
+import { PatrolMissedTodayList } from '../patrols/PatrolMissedTodayList';
+import type { MissedTodayView } from '../patrols/patrolOperationsPresentation';
 import {
   logBookCell,
   operationalExceptions,
@@ -93,6 +96,15 @@ export type UrgentOperationalItem = {
    * its link but no action. Absent on every other item, which keeps its existing behaviour.
    */
   canAct?: boolean;
+  /**
+   * S3 Stage 3: a patrol CASE from GET /patrols/operations/attention (the investigation panel opens it). With it come
+   * who acknowledged it ("Acknowledged by", never an assignment), the lines shown under it (reconciliation windows, the
+   * summary rule, a data inconsistency) and whether the alert and its record disagree.
+   */
+  patrolCase?: PatrolAttentionCase | null;
+  acknowledgedByName?: string | null;
+  patrolNotes?: string[];
+  patrolInconsistent?: boolean;
   /** A Ready shift with no Book On past start + 15 minutes: minutes since the scheduled start. Display only. */
   noBookOnOverdueMinutes?: number | null;
   /** An incident's own recorded severity (low / medium / high / critical); absent for other items. */
@@ -211,7 +223,7 @@ export type SelectedShiftContext = {
  * unavailable — never as zero, "Queue clear" or "nothing in progress". Omitted entries are ready.
  */
 export type LiveOpsSourceStates = Partial<Record<
-  'shifts' | 'attendance' | 'monitoring' | 'coverage' | 'incidents' | 'alerts' | 'dailyLogs',
+  'shifts' | 'attendance' | 'monitoring' | 'coverage' | 'incidents' | 'alerts' | 'dailyLogs' | 'patrolCases',
   SourceState
 >>;
 
@@ -221,6 +233,7 @@ function anyFailed(states: LiveOpsSourceStates, ...keys: Array<keyof LiveOpsSour
 }
 
 const SOURCE_LABELS: Record<keyof LiveOpsSourceStates, string> = {
+  patrolCases: 'patrol cases',
   shifts: 'shifts',
   attendance: 'attendance',
   monitoring: 'Welfare and Log Book monitoring',
@@ -280,6 +293,15 @@ export type CompanyLiveOperationsWorkspaceProps = {
   missedCheckCallsCount: number;
   // Urgent queue
   urgentOperationalItems: UrgentOperationalItem[];
+  /**
+   * S3 Stage 3: the patrol indicators, from GET /patrols/operations/attention (patrols.view). Null hides them (no patrols,
+   * or no patrols.view); the figures read "—" while that source has failed.
+   */
+  patrolIndicators?: { openCases: number; missedToday: number; missedTodayOpen: number } | null;
+  /** S3 Stage 3: today's missed patrol windows (open, acknowledged and resolved), shown under the "Missed today" focus. */
+  patrolMissedToday?: MissedTodayView | null;
+  /** S3 Stage 3: open a patrol case's investigation panel. */
+  onOpenPatrolCase?: (c: PatrolAttentionCase) => void;
   urgentActionItemId: string | null;
   /** 'info': nothing was changed because the record had moved on (S3 Stage 1 — someone else acted first). */
   liveOperationsFeedback: { tone: 'success' | 'error' | 'info'; message: string } | null;
@@ -548,16 +570,16 @@ const wSelectStyle = {
 
 // ─── MetricFocus ──────────────────────────────────────────────────────────────
 
-type MetricFocus = 'all' | 'live' | 'not-booked' | 'no-book-off' | 'panic' | 'incidents' | 'missed-checks';
+type MetricFocus = 'all' | 'live' | 'not-booked' | 'no-book-off' | 'panic' | 'incidents' | 'missed-checks' | 'patrol-cases' | 'patrol-missed';
 
 // ─── LiveOpsStatusBar ─────────────────────────────────────────────────────────
 
 type StatusDotTone = 'aqua' | 'warning' | 'danger' | null;
 
 function StatusMetric({
-  count, label, tone: knownTone, active, onPress,
+  count, label, tone: knownTone, active, onPress, detail, wrapped,
 }: {
-  count: SafeCount; label: string; tone: StatusDotTone; active: boolean; onPress: () => void;
+  count: SafeCount; label: string; tone: StatusDotTone; active: boolean; onPress: () => void; detail?: string | null; wrapped?: boolean;
 }) {
   // An unavailable figure is flagged in warning colour; a stale one keeps its (non-zero) severity.
   const tone: StatusDotTone = count.kind === 'unavailable' ? 'warning' : count.kind === 'loading' ? null : knownTone;
@@ -579,7 +601,7 @@ function StatusMetric({
     undefined;
   return (
     <Pressable
-      style={[styles.statusMetric, activeBg ? { backgroundColor: activeBg } : null, IS_WEB ? (WEB_PTR as any) : null]}
+      style={[styles.statusMetric, wrapped ? styles.statusMetricWrapped : null, activeBg ? { backgroundColor: activeBg } : null, IS_WEB ? (WEB_PTR as any) : null]}
       onPress={onPress}
     >
       <View style={styles.statusMetricRow}>
@@ -587,13 +609,14 @@ function StatusMetric({
         <Text style={[styles.statusMetricValue, { color: valueColor }]}>{countText(count)}</Text>
       </View>
       <Text style={styles.statusMetricLabel}>{label}</Text>
+      {detail && !statusWord ? <Text style={styles.statusMetricState}>{detail}</Text> : null}
       {statusWord ? <Text style={styles.statusMetricState}>{statusWord}</Text> : null}
       {active && <View style={styles.statusMetricActiveLine} />}
     </Pressable>
   );
 }
 
-function LiveOpsStatusBar({
+export function LiveOpsStatusBar({
   sources,
   liveShiftsCount,
   guardsNotBookedOnCount,
@@ -603,7 +626,11 @@ function LiveOpsStatusBar({
   missedCheckCallsCount,
   metricFocus,
   onMetricPress,
+  patrolIndicators,
+  stacked,
 }: {
+  patrolIndicators?: { openCases: number; missedToday: number; missedTodayOpen: number } | null;
+  stacked?: boolean;
   liveShiftsCount: number;
   guardsNotBookedOnCount: number;
   overdueBookOffCount: number;
@@ -620,19 +647,32 @@ function LiveOpsStatusBar({
   const panic = safeCount(activePanicAlertsCount, anyFailed(sources, 'alerts'));
   const incidents = safeCount(openIncidentsCount, anyFailed(sources, 'incidents'));
   const missedChecks = safeCount(missedCheckCallsCount, anyFailed(sources, 'alerts'));
+  const patrolCases = patrolIndicators ? safeCount(patrolIndicators.openCases, anyFailed(sources, 'patrolCases')) : null;
+  const patrolMissed = patrolIndicators ? safeCount(patrolIndicators.missedToday, anyFailed(sources, 'patrolCases')) : null;
+  // At phone width the indicators wrap four to a row (S3 Stage 3 added two), so no label is squeezed into its neighbour.
+  const sep = stacked ? null : <View style={styles.statusBarSep} />;
   return (
-    <View style={styles.statusBar}>
-      <StatusMetric count={live}         label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} active={metricFocus === 'live'}          onPress={() => onMetricPress('live')} />
-      <View style={styles.statusBarSep} />
-      <StatusMetric count={notBookedOn}  label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} active={metricFocus === 'not-booked'}    onPress={() => onMetricPress('not-booked')} />
-      <View style={styles.statusBarSep} />
-      <StatusMetric count={noBookOff}    label="No Book Off"    tone={overdueBookOffCount > 0    ? 'warning' : null} active={metricFocus === 'no-book-off'}   onPress={() => onMetricPress('no-book-off')} />
-      <View style={styles.statusBarSep} />
-      <StatusMetric count={panic}        label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} active={metricFocus === 'panic'}         onPress={() => onMetricPress('panic')} />
-      <View style={styles.statusBarSep} />
-      <StatusMetric count={incidents}    label="Open incidents" tone={openIncidentsCount > 0     ? 'danger'  : null} active={metricFocus === 'incidents'}     onPress={() => onMetricPress('incidents')} />
-      <View style={styles.statusBarSep} />
-      <StatusMetric count={missedChecks} label="Missed checks"  tone={missedCheckCallsCount > 0  ? 'warning' : null} active={metricFocus === 'missed-checks'} onPress={() => onMetricPress('missed-checks')} />
+    <View style={[styles.statusBar, stacked ? styles.statusBarWrap : null]}>
+      <StatusMetric wrapped={stacked} count={live}         label="Live shifts"    tone={liveShiftsCount > 0        ? 'aqua'    : null} active={metricFocus === 'live'}          onPress={() => onMetricPress('live')} />
+      {sep}
+      <StatusMetric wrapped={stacked} count={notBookedOn}  label="Not booked on"  tone={guardsNotBookedOnCount > 0 ? 'warning' : null} active={metricFocus === 'not-booked'}    onPress={() => onMetricPress('not-booked')} />
+      {sep}
+      <StatusMetric wrapped={stacked} count={noBookOff}    label="No Book Off"    tone={overdueBookOffCount > 0    ? 'warning' : null} active={metricFocus === 'no-book-off'}   onPress={() => onMetricPress('no-book-off')} />
+      {sep}
+      <StatusMetric wrapped={stacked} count={panic}        label="Panic alerts"   tone={activePanicAlertsCount > 0 ? 'danger'  : null} active={metricFocus === 'panic'}         onPress={() => onMetricPress('panic')} />
+      {sep}
+      <StatusMetric wrapped={stacked} count={incidents}    label="Open incidents" tone={openIncidentsCount > 0     ? 'danger'  : null} active={metricFocus === 'incidents'}     onPress={() => onMetricPress('incidents')} />
+      {sep}
+      <StatusMetric wrapped={stacked} count={missedChecks} label="Missed checks"  tone={missedCheckCallsCount > 0  ? 'warning' : null} active={metricFocus === 'missed-checks'} onPress={() => onMetricPress('missed-checks')} />
+      {patrolIndicators && patrolCases && patrolMissed ? (
+        <>
+          {sep}
+          <StatusMetric wrapped={stacked} count={patrolCases} label="Open patrol cases" tone={patrolIndicators.openCases > 0 ? 'warning' : null} active={metricFocus === 'patrol-cases'} onPress={() => onMetricPress('patrol-cases')} />
+          {sep}
+          <StatusMetric wrapped={stacked} count={patrolMissed} label="Missed today" tone={patrolIndicators.missedTodayOpen > 0 ? 'danger' : null} active={metricFocus === 'patrol-missed'} onPress={() => onMetricPress('patrol-missed')}
+            detail={patrolIndicators.missedToday > 0 ? `${patrolIndicators.missedTodayOpen} open` : null} />
+        </>
+      ) : null}
     </View>
   );
 }
@@ -642,6 +682,7 @@ function LiveOpsStatusBar({
 const METRIC_FOCUS_LABELS: Record<MetricFocus, string> = {
   'all': '', 'live': 'Live shifts', 'not-booked': 'Not booked on', 'no-book-off': 'No Book Off',
   'panic': 'Panic alerts', 'incidents': 'Open incidents', 'missed-checks': 'Missed checks',
+  'patrol-cases': 'Open patrol cases', 'patrol-missed': 'Missed patrols today',
 };
 
 function MetricFocusHint({ metricFocus, onClear }: { metricFocus: MetricFocus; onClear: () => void }) {
@@ -1142,12 +1183,23 @@ function AttentionItem({
 
       {/* The lifecycle, in a word. Acknowledged must not be a shade of a colour: a controller
           scanning the queue has to see that someone already has this one. */}
-      {acknowledged && !isIncident ? (
+      {item.patrolInconsistent ? (
+        <View style={styles.attentionState}>
+          <Text style={[styles.attentionStateMark, { color: colors.danger }]}>!</Text>
+          <Text style={[styles.attentionStateText, { color: colors.danger }]}>Data inconsistency</Text>
+        </View>
+      ) : acknowledged && !isIncident ? (
         <View style={styles.attentionState}>
           <Text style={styles.attentionStateMark}>✓</Text>
-          <Text style={styles.attentionStateText}>Acknowledged</Text>
+          {/* "Acknowledged by" names who took it up (S3 Stage 3); it is not an assignment. */}
+          {item.acknowledgedByName
+            ? <Text style={styles.attentionStateText}>Acknowledged by {item.acknowledgedByName}</Text>
+            : <Text style={styles.attentionStateText}>Acknowledged</Text>}
         </View>
       ) : null}
+      {item.patrolNotes?.length ? item.patrolNotes.map((note) => (
+        <Text key={note} style={styles.attentionDetail}>{note}</Text>
+      )) : null}
 
       {/* An incident states its own lifecycle word, which is never "Acknowledged". */}
       {incidentActions.stateLabel ? (
@@ -1556,6 +1608,9 @@ export function CompanyLiveOperationsWorkspace({
   openIncidentsCount,
   missedCheckCallsCount,
   urgentOperationalItems,
+  patrolIndicators,
+  patrolMissedToday,
+  onOpenPatrolCase,
   urgentActionItemId,
   liveOperationsFeedback,
   liveOperationEnrichedRows,
@@ -1629,6 +1684,9 @@ export function CompanyLiveOperationsWorkspace({
     if (metricFocus === 'panic')         return urgentOperationalItems.filter((i) => i.category === 'panic');
     if (metricFocus === 'incidents')     return urgentOperationalItems.filter((i) => i.category === 'incident');
     if (metricFocus === 'missed-checks') return urgentOperationalItems.filter((i) => i.category === 'missed_check_call');
+    // S3 Stage 3: every unresolved patrol case (acknowledged ones stay until resolved); Missed Today narrows to missed windows.
+    if (metricFocus === 'patrol-cases')  return urgentOperationalItems.filter((i) => i.category === 'patrol');
+    if (metricFocus === 'patrol-missed') return urgentOperationalItems.filter((i) => i.category === 'patrol' && i.patrolCase?.type === 'patrol_missed' && i.patrolCase.kind === 'exception');
     if (metricFocus === 'not-booked') {
       const notBookedShiftIds = new Set(
         liveOperationEnrichedRows
@@ -1756,6 +1814,8 @@ export function CompanyLiveOperationsWorkspace({
         metricFocus={metricFocus}
         onMetricPress={handleMetricPress}
         sources={sources}
+        patrolIndicators={patrolIndicators}
+        stacked={stacked}
       />
 
       {/* ── Filter toolbar ───────────────────────────────────────────────── */}
@@ -1772,6 +1832,9 @@ export function CompanyLiveOperationsWorkspace({
 
       {/* ── Metric focus hint ────────────────────────────────────────────── */}
       <MetricFocusHint metricFocus={metricFocus} onClear={() => setMetricFocus('all')} />
+      {metricFocus === 'patrol-missed' && onOpenPatrolCase ? (
+        <PatrolMissedTodayList view={patrolMissedToday ?? null} unavailable={sources.patrolCases === 'error'} onOpenCase={onOpenPatrolCase} />
+      ) : null}
 
       {/* ── Command workspace ────────────────────────────────────────────── */}
       <View style={[styles.workspaceRow, stacked ? styles.workspaceRowStacked : null]} onLayout={(e: any) => onBoardLayout(e.nativeEvent.layout.y)}>
@@ -2459,6 +2522,8 @@ const styles = StyleSheet.create({
   feedbackTextError:     { color: colors.danger },
 
   // ── Operational state bar ─────────────────────────────────────────────────
+  statusBarWrap: { flexWrap: 'wrap' },
+  statusMetricWrapped: { flexBasis: '25%', flexGrow: 0, minWidth: 0, paddingVertical: 8 },
   statusBar: {
     flexDirection: 'row',
     // A minimum, not a fixed height (Phase 3): at phone width "NOT BOOKED ON" and "NO BOOK OFF" wrap to

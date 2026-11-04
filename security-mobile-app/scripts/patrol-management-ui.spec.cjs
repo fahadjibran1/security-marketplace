@@ -2053,6 +2053,260 @@ test('PM-49-S3-LIVE-OPERATIONS-REFRESHES-AFTER-A-409-WITH-A-PLAIN-MESSAGE', () =
   assert.ok(workspace.includes('{patrolMayAct && acknowledged ? ('), 'Resolve only once acknowledged');
 });
 
+// ═══ S3 Stage 3: Live Operations patrol cases and the investigation panel ═══
+
+const OPS = loadSource('src/components/patrols/patrolOperationsPresentation.ts');
+const { LiveOpsStatusBar } = loadSource('src/components/company/CompanyLiveOperationsWorkspace.tsx');
+const { PatrolMissedTodayList } = loadSource('src/components/patrols/PatrolMissedTodayList.tsx');
+const { PatrolInvestigationPanel } = loadSource('src/components/patrols/PatrolInvestigationPanel.tsx');
+const LONDON_SITE = { id: 10, name: 'Alpha Site', clientId: 3, clientName: 'Harbour Estates', timeZone: 'Europe/London' };
+function patrolCase(over = {}) {
+  return {
+    caseKey: 'exception:40', kind: 'exception', exceptionId: 40, alertId: 501, type: 'patrol_missed', alertType: 'patrol_missed', status: 'open',
+    exceptionStatus: 'open', stateMismatch: false, priority: 'high', message: 'Patrol missed at Alpha Site', site: LONDON_SITE, siteDate: LONDON_TODAY,
+    shiftId: 71, guardId: 11, guardName: 'Ava Guard', runId: null, windowKey: 'w9', scopeKey: 'sh71', windowStart: iso(NOW - 90 * MIN), windowEnd: iso(NOW - 60 * MIN),
+    raisedAt: iso(NOW - 55 * MIN), acknowledgedAt: null, acknowledgedByName: null, lateEvidence: false, reconciliationRunId: null, affectedWindows: null, ...over,
+  };
+}
+const SUMMARY = patrolCase({ caseKey: 'alert:777', kind: 'reconciliation_summary', exceptionId: null, alertId: 777, shiftId: null, guardId: null, guardName: null,
+  windowKey: null, scopeKey: null, windowStart: null, windowEnd: null, siteDate: null, exceptionStatus: null, reconciliationRunId: 4,
+  affectedWindows: { total: 3, open: 2 }, message: '3 patrol windows were missed at Alpha Site during an outage' });
+function attention(over = {}) {
+  return {
+    generatedAt: iso(NOW), dateBasis: 'site_local', limit: 200,
+    counts: { patrolAlerts: 3, openPatrolAlerts: 3, acknowledged: 1, stateMismatches: 0, missedToday: 3, missedTodayOpen: 2, missedTodayResolved: 1 },
+    cases: [
+      patrolCase(),
+      patrolCase({ caseKey: 'exception:41', exceptionId: 41, alertId: 502, status: 'acknowledged', exceptionStatus: 'acknowledged', acknowledgedByName: 'Cara Control', windowStart: iso(NOW - 30 * MIN) }),
+      SUMMARY,
+    ],
+    more: false,
+    resolvedMissedToday: { more: false, items: [{ exceptionId: 39, alertId: 500, site: LONDON_SITE, siteDate: LONDON_TODAY, shiftId: 71, guardId: 11, guardName: 'Ava Guard',
+      windowKey: 'w8', scopeKey: 'sh71', windowStart: iso(NOW - 150 * MIN), windowEnd: iso(NOW - 120 * MIN), resolution: 'guard_contacted', resolvedAt: iso(NOW - 100 * MIN),
+      resolvedByName: 'Ben Controller', acknowledgedByName: 'Ben Controller', reconciliationRunId: null }] },
+    ...over,
+  };
+}
+function investigation(over = {}) {
+  return {
+    generatedAt: iso(NOW),
+    exception: { ...exc({ status: 'acknowledged', acknowledgedAt: iso(NOW - 20 * MIN), acknowledgedByName: 'Cara Control' }), resolvedByName: null },
+    alert: { id: 501, type: 'patrol_missed', status: 'acknowledged', priority: 'high', message: 'Patrol missed', raisedAt: iso(NOW - 55 * MIN), acknowledgedAt: iso(NOW - 20 * MIN),
+      acknowledgedByName: 'Cara Control', closedAt: null, closedByName: null, resolutionReason: null, resolutionNote: null, patrolLateSyncAt: null, patrolAnnotation: null },
+    site: LONDON_SITE, siteDate: LONDON_TODAY,
+    shift: { id: 71, start: iso(NOW - 4 * 60 * MIN), end: iso(NOW + 4 * 60 * MIN), status: 'in_progress', guardId: 11, guardName: 'Ava Guard' },
+    guard: { id: 11, name: 'Ava Guard' },
+    scheduledWindow: { scheduleId: 1, windowKey: 'w9', scopeKey: 'sh71', start: iso(NOW - 90 * MIN), end: iso(NOW - 60 * MIN) },
+    run: {
+      id: 5, guardId: 11, shiftId: 71, status: 'completed', verificationStatus: 'unverified', lateStart: true, windowStart: iso(NOW - 90 * MIN), windowEnd: iso(NOW - 60 * MIN),
+      startedAtServer: iso(NOW - 58 * MIN), startedAtDevice: iso(NOW - 70 * MIN), completedAtServer: iso(NOW - 50 * MIN),
+      checkpoints: { required: 2, verified: 1, scans: 1, repeatScans: 0, flaggedScans: 0, qrRuleMissing: false }, photos: { taken: 2, verified: 1, missing: 1 },
+      guardName: 'Ava Guard', windowKey: 'w9', scopeKey: 'sh71', unscheduled: false, syncedLate: true, syncFlags: ['synced_after_window'],
+      verificationExplanation: { code: 'checkpoint_not_scanned', text: 'Not verified: the checkpoint Roof was not scanned.', deadline: null },
+      missingCheckpoints: [{ id: 8, label: 'Roof' }],
+    },
+    evidence: { restricted: false, counts: { total: 2, verified: 1, pending: 1, rejected: 0 }, items: [evidence({ id: 900, runId: 5 }), evidence({ id: 901, runId: 5, uploadStatus: 'uploaded' })] },
+    delayedEvidence: { exceptionLateEvidenceAt: iso(NOW - 40 * MIN), alertLateSyncAt: null, runSyncedLate: true, receivedAfterWindow: 1 },
+    relatedPatrols: [{ id: 6, guardId: 11, shiftId: 71, status: 'completed', verificationStatus: 'verified', lateStart: false, windowStart: null, windowEnd: null,
+      startedAtServer: iso(NOW - 45 * MIN), startedAtDevice: iso(NOW - 45 * MIN), completedAtServer: iso(NOW - 40 * MIN),
+      checkpoints: { required: null, verified: null, scans: 0, repeatScans: 0, flaggedScans: 0, qrRuleMissing: false }, photos: { taken: 3, verified: 3, missing: 0 },
+      guardName: 'Ava Guard', windowKey: null, scopeKey: 'site', unscheduled: true, syncedLate: false, syncFlags: [], verificationExplanation: null }],
+    otherCasesForWindow: [{ exceptionId: 42, type: 'checkpoint_missed', status: 'open', alertId: 503, alertStatus: 'open' }],
+    ...over,
+  };
+}
+const opsCtx = (role, width = 1440) => ({
+  companyKey: 'co-1:live-operations', companyName: null, permissions: perms(role), layout: P.patrolLayout(width), siteId: null, sites: [], policies: null,
+  siteName: () => 'Alpha Site', siteZone: () => 'Europe/London', routes: [], holds: null, reloadPolicies() {}, reloadRoutes() {}, reloadHolds() {}, openRun() {}, openException() {},
+});
+async function mountPanel(props) {
+  let renderer;
+  await act(async () => { renderer = TestRenderer.create(h(PatrolInvestigationPanel, { onClose() {}, onChanged() {}, ...props })); });
+  await settle();
+  return renderer;
+}
+
+test('PM-50-S3-CASE-WORDS-AND-MISSED-TODAY-VIEW', () => {
+  assert.equal(OPS.patrolCaseTitle(SUMMARY), 'Reconciliation required');
+  assert.equal(OPS.patrolCaseTitle(patrolCase()), 'Patrol missed');
+  assert.equal(OPS.patrolCaseStatusLabel(patrolCase()), 'Open');
+  assert.equal(OPS.patrolCaseStatusLabel(patrolCase({ status: 'acknowledged', acknowledgedByName: 'Cara Control' })), 'Acknowledged by Cara Control');
+  assert.equal(OPS.patrolCaseStatusLabel(patrolCase({ status: 'closed', stateMismatch: true })), 'Data inconsistency');
+  assert.deepEqual(OPS.patrolCaseNotes(SUMMARY), ['3 patrol windows affected (2 still open)', OPS.RECONCILIATION_NOTE]);
+  assert.match(OPS.RECONCILIATION_NOTE, /does not resolve the patrol windows/);
+  assert.deepEqual(OPS.patrolCaseNotes(patrolCase({ affectedWindows: null, kind: 'reconciliation_summary' })), [OPS.RECONCILIATION_NOTE], 'the horizon summary has no count');
+  assert.ok(OPS.patrolCaseNotes(patrolCase({ stateMismatch: true })).includes(OPS.INCONSISTENCY_NOTE));
+  const yesterday = patrolCase({ caseKey: 'exception:30', exceptionId: 30, siteDate: '2000-01-01' });
+  const view = OPS.missedTodayView(attention({ cases: [...attention().cases, yesterday] }), new Date(NOW));
+  assert.deepEqual(view.rows.map((r) => [r.state, r.statusLabel]), [
+    ['acknowledged', 'Acknowledged by Cara Control'], ['open', 'Open'], ['resolved', 'Resolved by Ben Controller · Guard contacted'],
+  ], 'today only, newest first, the summary is not a window');
+  assert.deepEqual([view.total, view.open, view.resolved, view.openWithoutCase], [3, 2, 1, 0]);
+  assert.equal(OPS.missedTodayView(attention({ counts: { ...attention().counts, missedTodayOpen: 5 } }), new Date(NOW)).openWithoutCase, 3, 'windows found by reconciliation');
+});
+
+test('PM-51-S3-LIVE-OPERATIONS-PATROL-INDICATORS', async () => {
+  const pressed = [];
+  const bar = (props) => h(LiveOpsStatusBar, { liveShiftsCount: 0, guardsNotBookedOnCount: 0, overdueBookOffCount: 0, activePanicAlertsCount: 0, openIncidentsCount: 0,
+    missedCheckCallsCount: 0, metricFocus: 'all', onMetricPress: (f) => pressed.push(f), sources: {}, ...props });
+  let r;
+  await act(async () => { r = TestRenderer.create(bar({ patrolIndicators: null })); });
+  assert.equal(textOf(r.root).includes('Open patrol cases'), false, 'hidden without patrols.view');
+  await act(async () => { r.update(bar({ patrolIndicators: { openCases: 3, missedToday: 3, missedTodayOpen: 2 } })); });
+  const text = textOf(r.root);
+  assert.ok(text.includes('Open patrol cases') && text.includes('Missed today') && text.includes('2 open'));
+  assert.ok(text.includes('Panic alerts') && text.includes('Missed checks'), 'the existing indicators stay');
+  await pressByText(r.root, '3Open patrol cases').catch(() => undefined);
+  const presses = r.root.findAll((n) => n.props && typeof n.props.onPress === 'function' && /Open patrol cases|Missed today/.test(textOf(n)));
+  for (const p of presses) await act(async () => { p.props.onPress(); });
+  assert.ok(pressed.includes('patrol-cases') && pressed.includes('patrol-missed'), 'each filters Attention Now');
+  await act(async () => { r.update(bar({ patrolIndicators: { openCases: 0, missedToday: 0, missedTodayOpen: 0 }, sources: { patrolCases: 'error' } })); });
+  assert.ok(textOf(r.root).includes('—'), 'a failed read is never shown as 0');
+  await act(async () => { r.update(bar({ patrolIndicators: { openCases: 3, missedToday: 3, missedTodayOpen: 2 }, stacked: true })); });
+  const style = [].concat(r.root.findAll((n) => typeof n.type !== 'string' && n.props?.style && JSON.stringify(n.props.style).includes('"flexWrap":"wrap"')).length);
+  assert.ok(style[0] > 0, 'the indicators wrap at phone width');
+  act(() => r.unmount());
+});
+
+test('PM-52-S3-ATTENTION-NOW-ACKNOWLEDGED-BY-RECONCILIATION-AND-INCONSISTENCY', async () => {
+  const toItem = (c, canAct = true) => ({ id: `patrol-${c.caseKey}`, alertId: c.alertId, shiftId: c.shiftId, status: c.status, siteName: 'Alpha Site', guardName: c.guardName || 'Outage reconciliation',
+    category: 'patrol', issueType: OPS.patrolCaseTitle(c), message: c.message, occurredAt: c.raisedAt, patrolTarget: null, canAct: canAct && !c.stateMismatch,
+    patrolCase: c, acknowledgedByName: c.acknowledgedByName, patrolNotes: OPS.patrolCaseNotes(c), patrolInconsistent: c.stateMismatch });
+  const acked = patrolCase({ caseKey: 'exception:41', exceptionId: 41, alertId: 502, status: 'acknowledged', exceptionStatus: 'acknowledged', acknowledgedByName: 'Cara Control' });
+  const odd = patrolCase({ caseKey: 'exception:43', exceptionId: 43, alertId: 504, status: 'closed', stateMismatch: true });
+  let rail;
+  await act(async () => {
+    rail = TestRenderer.create(h(LiveOpsAttentionRail, {
+      items: [toItem(acked), toItem(SUMMARY), toItem(odd)], metricFocus: 'all', urgentActionItemId: null, resolveShiftZone: () => 'Europe/London',
+      onOpenUrgentDetail() {}, onOpenUrgentShift() {}, onUrgentIncidentFollowUp: async () => {}, onUrgentAlertFollowUp: async () => {}, onOpenIncidentResolution() {}, nextUp: [],
+    }));
+  });
+  const text = textOf(rail.root);
+  assert.ok(text.includes('Acknowledged by Cara Control'), 'Acknowledged by, kept until resolved');
+  assert.doesNotMatch(text, /Handling|Case owner/);
+  assert.ok(text.includes('Reconciliation required') && text.includes('3 patrol windows affected (2 still open)') && text.includes(OPS.RECONCILIATION_NOTE));
+  assert.ok(text.includes('Data inconsistency') && text.includes(OPS.INCONSISTENCY_NOTE));
+  act(() => rail.unmount());
+  // The inconsistent item alone: no one-click Acknowledge / Resolve (it is investigated, never repaired automatically).
+  await act(async () => {
+    rail = TestRenderer.create(h(LiveOpsAttentionRail, {
+      items: [toItem(odd)], metricFocus: 'all', urgentActionItemId: null, resolveShiftZone: () => 'Europe/London',
+      onOpenUrgentDetail() {}, onOpenUrgentShift() {}, onUrgentIncidentFollowUp: async () => {}, onUrgentAlertFollowUp: async () => {}, onOpenIncidentResolution() {}, nextUp: [],
+    }));
+  });
+  assert.equal(has(rail.root, 'Acknowledge') || has(rail.root, 'Resolve'), false);
+  act(() => rail.unmount());
+});
+
+test('PM-53-S3-LIVE-OPERATIONS-READS-THE-BOUNDED-CASE-ENDPOINT', () => {
+  const screen = stripComments(read('src/screens/CompanyDashboardScreen.tsx'));
+  assert.match(screen, /\.\.\.\(patrolPermissions\.canView\s*\?\s*\[\{ label: 'patrol cases', run: getPatrolOperationsAttention,/, 'read with the section, patrols.view only');
+  assert.match(screen, /if \(patrolAttention\) \{\s*patrolAttention\.cases\.forEach\(\(c\) => \{/, 'patrol items are the cases');
+  assert.match(screen, /\} else actionablePatrolAlerts\(outstandingAlerts\)\.forEach/, 'the alert-derived items only stand in until the cases are read');
+  assert.match(screen, /if \(item\.patrolCase\) \{\s*setInvestigationCase\(item\.patrolCase\);\s*return;/, 'a case opens its investigation');
+  assert.match(screen, /canAct: patrolPermissions\.canActOnAlerts && !c\.stateMismatch,/);
+  assert.doesNotMatch(screen, /listPatrolRuns|listPatrolRunEvidence|getPatrolOverview|listPatrolExceptions/, 'no routine patrol data or history');
+  const apiSrc = read('src/services/api.ts');
+  assert.match(apiSrc, /request<PatrolOperationsAttention>\('\/patrols\/operations\/attention'\)/);
+  assert.match(apiSrc, /request<PatrolInvestigation>\(`\/patrols\/exceptions\/\$\{exceptionId\}\/investigation`\)/);
+});
+
+test('PM-54-S3-MISSED-TODAY-LIST-OPEN-ACKNOWLEDGED-RESOLVED', async () => {
+  const opened = [];
+  let r;
+  await act(async () => { r = TestRenderer.create(h(PatrolMissedTodayList, { view: OPS.missedTodayView(attention(), new Date(NOW)), unavailable: false, onOpenCase: (c) => opened.push(c.caseKey) })); });
+  const text = textOf(r.root);
+  assert.ok(text.includes('Missed today: 3') && text.includes('2 open · 1 resolved'));
+  assert.ok(text.includes('Acknowledged by Cara Control') && text.includes('Open') && text.includes('Resolved by Ben Controller · Guard contacted'));
+  const rows = r.root.findAll((n) => typeof n.type !== 'string' && n.props && typeof n.props.onPress === 'function' && /^Missed patrol/.test(n.props.accessibilityLabel ?? '') && !n.parent?.props?.accessibilityLabel?.startsWith?.('Missed patrol'));
+  assert.equal(rows.length, 2, 'open and acknowledged windows open their investigation; a resolved one is history');
+  for (const row of rows) await act(async () => { row.props.onPress(); });
+  assert.deepEqual(opened.sort(), ['exception:40', 'exception:41']);
+  await act(async () => { r.update(h(PatrolMissedTodayList, { view: OPS.missedTodayView(attention({ counts: { ...attention().counts, missedTodayOpen: 4 } }), new Date(NOW)), unavailable: false, onOpenCase() {} })); });
+  assert.ok(textOf(r.root).includes('2 open windows were found by outage reconciliation and are listed under Reconciliation required.'));
+  await act(async () => { r.update(h(PatrolMissedTodayList, { view: null, unavailable: true, onOpenCase() {} })); });
+  assert.ok(textOf(r.root).includes('Patrol cases are unavailable right now.'));
+  act(() => r.unmount());
+});
+
+test('PM-55-S3-INVESTIGATION-PANEL-CONTENT-AND-AUDITED-PHOTOS', async () => {
+  answers = baseAnswers({ getPatrolExceptionInvestigation: () => investigation() });
+  calls.length = 0;
+  const r = await mountPanel({ ctx: opsCtx('control_room'), patrolCase: patrolCase({ status: 'acknowledged', acknowledgedByName: 'Cara Control' }) });
+  assert.deepEqual(calls.filter(([k]) => k === 'getPatrolExceptionInvestigation').map(([, a]) => a), [[40]]);
+  const text = textOf(r.root);
+  for (const want of ['Harbour Estates', 'Alpha Site', 'Ava Guard', 'Shift 71', 'Scheduled window', 'Not verified: the checkpoint Roof was not scanned.',
+    '1 of 2 verified', 'Missing checkpoints', 'Roof', '2 taken · 1 verified · 1 missing', 'Late or offline evidence', 'Photos received after the window',
+    'Patrols near this window', 'Ad-hoc', 'Other cases for this window', 'Acknowledged by Cara Control']) {
+    assert.ok(text.includes(want), `shows ${want}`);
+  }
+  assert.ok(!calls.some(([k]) => k === 'getPatrolEvidenceLink'), 'no photo link until a person asks, with a reason');
+  assert.ok(has(r.root, 'View original') || text.includes('View photos as') || text.includes('Why are you viewing these photos?'), 'the existing audited viewer');
+  assert.ok(has(r.root, 'Resolve'), 'acknowledged: Resolve, through the existing exception actions');
+  assert.doesNotMatch(JSON.stringify(r.toJSON()), /https?:\/\//, 'no link in the panel');
+  act(() => r.unmount());
+  // Open and not yet acknowledged: Acknowledge first.
+  answers = baseAnswers({ getPatrolExceptionInvestigation: () => investigation({ exception: { ...exc(), resolvedByName: null }, alert: { ...investigation().alert, status: 'open', acknowledgedAt: null, acknowledgedByName: null } }) });
+  const fresh = await mountPanel({ ctx: opsCtx('control_room'), patrolCase: patrolCase() });
+  assert.ok(has(fresh.root, 'Acknowledge') && !has(fresh.root, 'Resolve'), 'acknowledge before resolve');
+  act(() => fresh.unmount());
+});
+
+test('PM-56-S3-INVESTIGATION-EVIDENCE-GATING-AND-409', async () => {
+  answers = baseAnswers({ getPatrolExceptionInvestigation: () => investigation({ evidence: { restricted: true, counts: { total: 2, verified: 1, pending: 1, rejected: 0 }, items: null } }) });
+  calls.length = 0;
+  const viewer = await mountPanel({ ctx: opsCtx('viewer'), patrolCase: patrolCase() });
+  const text = textOf(viewer.root);
+  assert.ok(text.includes('Viewing photographs needs the patrol evidence permission.') && text.includes('2 recorded · 1 received and checked'));
+  assert.equal(has(viewer.root, 'View original'), false);
+  assert.ok(!calls.some(([k]) => /Evidence/.test(k)), 'no evidence request at all for a Viewer');
+  assert.equal(has(viewer.root, 'Acknowledge') || has(viewer.root, 'Resolve'), false, 'a Viewer has no action');
+  act(() => viewer.unmount());
+  // Another controller acknowledged first: the panel re-reads, says who, and tells Live Operations to refresh.
+  let state = investigation({ exception: { ...exc(), resolvedByName: null }, alert: { ...investigation().alert, status: 'open', acknowledgedAt: null, acknowledgedByName: null } });
+  let changedCalls = 0;
+  answers = baseAnswers({
+    getPatrolExceptionInvestigation: () => state,
+    acknowledgePatrolException: async () => {
+      state = investigation();
+      throw Object.assign(new Error('conflict'), { status: 409, body: { code: 'PATROL_ALERT_ALREADY_ACKNOWLEDGED', message: 'This patrol alert has already been acknowledged by Cara Control. Showing the latest state.' } });
+    },
+  });
+  calls.length = 0;
+  const r = await mountPanel({ ctx: opsCtx('control_room'), patrolCase: patrolCase(), onChanged: () => { changedCalls += 1; } });
+  await pressByText(r.root, 'Acknowledge');
+  await settle();
+  assert.ok(textOf(r.root).includes('This patrol alert has already been acknowledged by Cara Control. Showing the latest state.'), 'plain English');
+  assert.ok(calls.filter(([k]) => k === 'getPatrolExceptionInvestigation').length >= 2, 're-read');
+  assert.ok(changedCalls >= 1, 'Live Operations refreshes');
+  assert.ok(has(r.root, 'Resolve'), 'the latest state: acknowledged, ready to resolve');
+  act(() => r.unmount());
+});
+
+test('PM-57-S3-RECONCILIATION-SUMMARY-PANEL-AND-PHONE-LAYOUT', async () => {
+  const acked = [];
+  const resolved = [];
+  answers = baseAnswers({});
+  calls.length = 0;
+  let r = await mountPanel({ ctx: opsCtx('control_room', 375), patrolCase: SUMMARY,
+    summaryActions: { canAct: true, onAcknowledge: async (c) => { acked.push(c.alertId); }, onResolve: (c) => resolved.push(c.alertId) } });
+  const text = textOf(r.root);
+  assert.ok(text.includes('Reconciliation required') && text.includes('3 patrol windows affected (2 still open)') && text.includes(OPS.RECONCILIATION_NOTE));
+  assert.ok(!calls.some(([k]) => k === 'getPatrolExceptionInvestigation'), 'a summary has no patrol record to read');
+  assert.equal(has(r.root, 'Resolve'), false, 'acknowledge first');
+  await pressByText(r.root, 'Acknowledge');
+  assert.deepEqual(acked, [777]);
+  act(() => r.unmount());
+  r = await mountPanel({ ctx: opsCtx('control_room', 375), patrolCase: { ...SUMMARY, status: 'acknowledged', acknowledgedByName: 'Cara Control' },
+    summaryActions: { canAct: true, onAcknowledge: async () => {}, onResolve: (c) => resolved.push(c.alertId) } });
+  await pressByText(r.root, 'Resolve');
+  assert.deepEqual(resolved, [777], 'through the existing resolve dialog');
+  const drawer = r.root.findAll((n) => n.props && n.props.width === 10_000);
+  assert.ok(drawer.length > 0, 'full width at phone size');
+  assert.equal(P.patrolLayout(1440).detailFullScreen, false);
+  act(() => r.unmount());
+});
+
 (async () => {
   for (const [name, fn] of pending) {
     try {

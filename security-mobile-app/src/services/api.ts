@@ -173,6 +173,8 @@ import type {
   PatrolWindowsDay,
   PatrolMonitorSite,
   PatrolMonitorSummary,
+  PatrolInvestigation,
+  PatrolOperationsAttention,
   GuardEvidenceUploadIntent,
   GuardPatrolPlan,
   GuardPatrolRun,
@@ -2048,6 +2050,19 @@ export function getPatrolWindowsDay(params: { siteId?: number | null; date?: str
  */
 export function getPatrolMonitorSummary(params: { date?: string | null; clientId?: number | null; siteId?: number | null } = {}) {
   return request<PatrolMonitorSummary>(`/patrols/monitor/summary${patrolQuery(params)}`);
+}
+
+/**
+ * S3 Control Room: the unresolved actionable patrol cases (newest 200, `more` when capped), their counts and today's missed
+ * windows (site-local days, resolved included). Bounded and read-only: Live Operations reads this, never the alert history.
+ */
+export function getPatrolOperationsAttention() {
+  return request<PatrolOperationsAttention>('/patrols/operations/attention');
+}
+
+/** S3 Control Room: one patrol case for the investigation panel (photo metadata only with patrols.evidence). Read-only. */
+export function getPatrolExceptionInvestigation(exceptionId: number) {
+  return request<PatrolInvestigation>(`/patrols/exceptions/${exceptionId}/investigation`);
 }
 
 /** S4 Patrol Monitor: one site's lanes × hours for its site-local day (today by default), read only when its card is expanded. */

@@ -901,3 +901,123 @@ export interface PatrolMonitorSite {
   }>;
   exceptions: Record<string, { id: number; type: string; status: string; runId: number | null; alertId: number | null; alertStatus: string | null }>;
 }
+
+// ─── S3 Control Room patrol operations (GET /patrols/operations/attention, GET /patrols/exceptions/:id/investigation) ───
+
+export interface PatrolCaseSite { id: number; name: string; clientId: number | null; clientName: string | null; timeZone: string }
+
+/** One unresolved actionable patrol case: an exception with its linked alert, or a reconciliation summary alert. */
+export interface PatrolAttentionCase {
+  caseKey: string;
+  kind: 'exception' | 'reconciliation_summary';
+  exceptionId: number | null;
+  alertId: number;
+  type: string;
+  alertType: string;
+  /** The action state: open / acknowledged (closed only on a state mismatch). */
+  status: 'open' | 'acknowledged' | 'closed';
+  exceptionStatus: string | null;
+  /** The alert and its patrol exception disagree (a record from before S3 Stage 1). Never repaired automatically. */
+  stateMismatch: boolean;
+  priority: string;
+  message: string | null;
+  site: PatrolCaseSite | null;
+  siteDate: string | null;
+  shiftId: number | null;
+  guardId: number | null;
+  guardName: string | null;
+  runId: number | null;
+  windowKey: string | null;
+  scopeKey: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  raisedAt: string | null;
+  acknowledgedAt: string | null;
+  acknowledgedByName: string | null;
+  lateEvidence: boolean;
+  reconciliationRunId: number | null;
+  /** Reconciliation summaries: the patrol windows it covers (its exceptions), null for the unjudged-horizon alert. */
+  affectedWindows: { total: number; open: number } | null;
+}
+
+export interface PatrolResolvedMissedWindow {
+  exceptionId: number;
+  alertId: number | null;
+  site: PatrolCaseSite | null;
+  siteDate: string | null;
+  shiftId: number | null;
+  guardId: number | null;
+  guardName: string | null;
+  windowKey: string;
+  scopeKey: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  resolution: string | null;
+  resolvedAt: string | null;
+  resolvedByName: string | null;
+  acknowledgedByName: string | null;
+  reconciliationRunId: number | null;
+}
+
+export interface PatrolOperationsAttention {
+  generatedAt: string;
+  dateBasis: 'site_local';
+  limit: number;
+  counts: {
+    patrolAlerts: number;
+    openPatrolAlerts: number;
+    acknowledged: number;
+    stateMismatches: number;
+    missedToday: number;
+    missedTodayOpen: number;
+    missedTodayResolved: number;
+  };
+  cases: PatrolAttentionCase[];
+  more: boolean;
+  resolvedMissedToday: { items: PatrolResolvedMissedWindow[]; more: boolean };
+}
+
+export interface PatrolInvestigationRun {
+  id: number;
+  guardId: number;
+  shiftId: number;
+  status: string;
+  verificationStatus: string;
+  lateStart: boolean;
+  windowStart: string | null;
+  windowEnd: string | null;
+  startedAtServer: string;
+  startedAtDevice: string;
+  completedAtServer: string | null;
+  checkpoints: { required: number | null; verified: number | null; scans: number; repeatScans: number; flaggedScans: number; qrRuleMissing: boolean };
+  photos: { taken: number; verified: number; missing: number };
+  guardName: string | null;
+  windowKey: string | null;
+  scopeKey: string | null;
+  unscheduled: boolean;
+  syncedLate: boolean;
+  syncFlags: string[];
+  verificationExplanation: { code: string; text: string; deadline: string | null } | null;
+  missingCheckpoints?: Array<{ id: number; label: string | null }>;
+}
+
+export interface PatrolInvestigation {
+  generatedAt: string;
+  exception: PatrolException & { acknowledgedByName: string | null; resolvedByName: string | null; acknowledgedByUserId?: number | null };
+  alert: {
+    id: number; type: string; status: string; priority: string; message: string | null; raisedAt: string | null;
+    acknowledgedAt: string | null; acknowledgedByName: string | null; closedAt: string | null; closedByName: string | null;
+    resolutionReason: string | null; resolutionNote: string | null; patrolLateSyncAt: string | null; patrolAnnotation: string | null;
+  } | null;
+  site: PatrolCaseSite | null;
+  siteDate: string | null;
+  shift: { id: number; start: string | null; end: string | null; status: string; guardId: number | null; guardName: string | null } | null;
+  guard: { id: number; name: string | null } | null;
+  scheduledWindow: { scheduleId: number | null; windowKey: string | null; scopeKey: string | null; start: string | null; end: string | null };
+  run: PatrolInvestigationRun | null;
+  /** Photo counts for patrols.view; per-photo metadata (`items`) only with patrols.evidence — never a file or a link. */
+  evidence: { restricted: boolean; counts: { total: number; verified: number; pending: number; rejected: number } | null; items: PatrolEvidence[] | null };
+  delayedEvidence: { exceptionLateEvidenceAt: string | null; alertLateSyncAt: string | null; runSyncedLate: boolean | null; receivedAfterWindow: number | null };
+  relatedPatrols: PatrolInvestigationRun[];
+  otherCasesForWindow: Array<{ exceptionId: number; type: string; status: string; alertId: number | null; alertStatus: string | null }>;
+}
