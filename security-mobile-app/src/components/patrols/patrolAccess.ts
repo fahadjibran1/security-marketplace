@@ -150,6 +150,29 @@ export function classifyPatrolFailure(error: unknown): PatrolFailureKind {
   return 'error';
 }
 
+/** The 409s a patrol alert / exception action can meet when someone else acted first, or the alert is not yet acknowledged. */
+const PATROL_CONFLICT_CODES = [
+  'PATROL_ALERT_NOT_ACKNOWLEDGED',
+  'PATROL_ALERT_ALREADY_ACKNOWLEDGED',
+  'PATROL_ALERT_ALREADY_RESOLVED',
+  'PATROL_EXCEPTION_ALREADY_RESOLVED',
+] as const;
+
+/**
+ * S3 Stage 1: when a patrol alert action is refused because the record moved on (someone else acknowledged or resolved
+ * it first) or it must be acknowledged first, the plain-English sentence to show — the server's own, which names who
+ * acted. Null for any other failure. The caller re-reads the server state either way.
+ */
+export function patrolConflictMessage(error: unknown): string | null {
+  const status = (error as { status?: unknown })?.status;
+  const body = (error as { body?: { code?: unknown; message?: unknown } })?.body;
+  if (status !== 409 || !body || !(PATROL_CONFLICT_CODES as readonly unknown[]).includes(body.code)) return null;
+  if (typeof body.message === 'string' && body.message.trim()) return body.message;
+  return body.code === 'PATROL_ALERT_NOT_ACKNOWLEDGED'
+    ? 'Acknowledge this patrol alert before resolving it.'
+    : 'Someone else has already acted on this patrol alert. Showing the latest state.';
+}
+
 export function patrolFailureMessage(error: unknown, fallback: string): string {
   switch (classifyPatrolFailure(error)) {
     case 'not_enabled':

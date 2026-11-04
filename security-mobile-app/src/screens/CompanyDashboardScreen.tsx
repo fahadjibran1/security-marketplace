@@ -33,7 +33,7 @@ import { formatElapsedSinceEnd } from '../components/company/operationsTimeline'
 import { alertTypeLabel, missingBookOffSummary, resolutionFamilyForAlertRecord } from '../components/company/alertResolution';
 import { CompanyPatrolsWorkspace } from '../components/patrols/CompanyPatrolsWorkspace';
 import { PatrolsSummaryCard } from '../components/patrols/PatrolsSummaryCard';
-import { resolvePatrolPermissions, withPatrolNavEntry } from '../components/patrols/patrolAccess';
+import { patrolConflictMessage, resolvePatrolPermissions, withPatrolNavEntry } from '../components/patrols/patrolAccess';
 import type { PatrolNavTarget } from '../components/patrols/patrolContext';
 import { actionablePatrolAlerts, patrolAlertTitle, patrolRecordTarget } from '../components/patrols/patrolPresentation';
 import { siteDefaultFromSetup } from '../components/patrols/patrolSetupText';
@@ -1503,7 +1503,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [reviewingApplicationId, setReviewingApplicationId] = React.useState<number | null>(null);
   const [shiftOffersFeedback, setShiftOffersFeedback] = React.useState<ShiftOffersFeedback | null>(null);
   const [liveOperationsFeedback, setLiveOperationsFeedback] = React.useState<{
-    tone: 'success' | 'error';
+    tone: 'success' | 'error' | 'info';
     message: string;
   } | null>(null);
   const [urgentActionItemId, setUrgentActionItemId] = React.useState<string | null>(null);
@@ -3261,6 +3261,15 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           : `${resolveTarget.title} resolved.`,
       });
     } catch (resolveFailure) {
+      // S3 Stage 1: another controller resolved it first, or it must be acknowledged first — close the dialog, re-read and
+      // say so in plain English (the server's sentence names who acted). Anything else stays in the dialog as before.
+      const conflict = patrolConflictMessage(resolveFailure);
+      if (conflict) {
+        setResolveTarget(null);
+        setLiveOperationsFeedback({ tone: 'info', message: conflict });
+        await loadData(true);
+        return;
+      }
       setResolveError(formatApiErrorMessage(resolveFailure, 'Unable to resolve this item right now.'));
     } finally {
       setResolvingItem(false);
@@ -4251,6 +4260,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
               } was closed successfully.`,
       });
     } catch (followUpError) {
+      // S3 Stage 1: someone else acknowledged or resolved this patrol alert first — re-read and say so, without a page error.
+      const conflict = patrolConflictMessage(followUpError);
+      if (conflict) {
+        setLiveOperationsFeedback({ tone: 'info', message: conflict });
+        await loadData(true);
+        return;
+      }
       setError(formatApiErrorMessage(followUpError, 'Unable to update this safety item right now.'));
       setLiveOperationsFeedback({
         tone: 'error',

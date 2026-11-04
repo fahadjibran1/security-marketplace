@@ -1256,6 +1256,8 @@ async function main() {
       const reasons = await api('GET', `/alerts/${exception.safetyAlertId}/resolution-reasons`, owner);
       assert.deepEqual(reasons.body.reasons.find((x: any) => x.value === 'patrol_completed_late_sync'), { value: 'patrol_completed_late_sync', noteRequired: false },
         'now offered, for a person to confirm');
+      // S3 Stage 1: a patrol alert is acknowledged before it is resolved.
+      expect(await api('PATCH', `/alerts/${exception.safetyAlertId}/ack`, owner), 200);
       expect(await api('PATCH', `/alerts/${exception.safetyAlertId}/close`, owner, { resolutionReason: 'patrol_completed_late_sync' }), 200);
       assert.deepEqual(Object.values(await one(`SELECT status, resolution FROM patrol_exceptions WHERE id = $1`, [exception.id])), ['resolved', 'patrol_completed_late_sync']);
       await bookOff(shift.id, rg.id, new Date(nowMs() - MIN));

@@ -281,7 +281,8 @@ export type CompanyLiveOperationsWorkspaceProps = {
   // Urgent queue
   urgentOperationalItems: UrgentOperationalItem[];
   urgentActionItemId: string | null;
-  liveOperationsFeedback: { tone: 'success' | 'error'; message: string } | null;
+  /** 'info': nothing was changed because the record had moved on (S3 Stage 1 — someone else acted first). */
+  liveOperationsFeedback: { tone: 'success' | 'error' | 'info'; message: string } | null;
   // Board
   liveOperationEnrichedRows: LiveBoardRow[];
   selectedShiftId: number | null;
@@ -1193,7 +1194,8 @@ function AttentionItem({
             <Text style={styles.aBtnSecondaryText}>Acknowledge</Text>
           </Pressable>
         ) : null}
-        {patrolMayAct ? (
+        {/* S3 Stage 1: a patrol alert is resolved only once acknowledged (the backend enforces it). */}
+        {patrolMayAct && acknowledged ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Resolve"
@@ -1720,12 +1722,12 @@ export function CompanyLiveOperationsWorkspace({
       {liveOperationsFeedback ? (
         <View style={[
           styles.feedbackBanner,
-          liveOperationsFeedback.tone === 'error' ? styles.feedbackBannerError : styles.feedbackBannerSuccess,
+          liveOperationsFeedback.tone === 'success' ? styles.feedbackBannerSuccess : styles.feedbackBannerError,
         ]}>
-          <Text style={[styles.feedbackTitle, liveOperationsFeedback.tone === 'error' ? styles.feedbackTitleError : styles.feedbackTitleSuccess]}>
-            {liveOperationsFeedback.tone === 'error' ? 'Action failed' : 'Action completed'}
+          <Text style={[styles.feedbackTitle, liveOperationsFeedback.tone === 'success' ? styles.feedbackTitleSuccess : styles.feedbackTitleError]}>
+            {liveOperationsFeedback.tone === 'error' ? 'Action failed' : liveOperationsFeedback.tone === 'info' ? 'No change made' : 'Action completed'}
           </Text>
-          <Text style={[styles.feedbackText, liveOperationsFeedback.tone === 'error' ? styles.feedbackTextError : styles.feedbackTextSuccess]}>
+          <Text style={[styles.feedbackText, liveOperationsFeedback.tone === 'success' ? styles.feedbackTextSuccess : styles.feedbackTextError]}>
             {liveOperationsFeedback.message}
           </Text>
         </View>

@@ -11,7 +11,7 @@ import {
   validateResolution,
   type ResolutionFamily,
 } from '../company/alertResolution';
-import { patrolFailureMessage } from './patrolAccess';
+import { patrolConflictMessage, patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
 import { exceptionStatusLabel, formatPatrolDateTime } from './patrolPresentation';
 import { ChipSelect, KeyValue, Notice, TextField, ui } from './patrolUi';
@@ -51,6 +51,9 @@ export function PatrolExceptionActions({ ctx, exception, onChanged }: { ctx: Pat
   React.useEffect(() => { if (exception.status === 'resolved') setResolving(false); }, [exception.status]);
 
   const canAct = ctx.permissions.canActOnExceptions && exception.status !== 'resolved';
+  // S3 Stage 1: an exception with a Live Operations alert is acknowledged before it is resolved (the backend enforces it).
+  // An exception with no alert (not actionable under the policy) keeps its direct resolution.
+  const mustAcknowledgeFirst = Boolean(exception.safetyAlertId) && exception.status === 'open';
 
   const act = async (fn: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -59,9 +62,13 @@ export function PatrolExceptionActions({ ctx, exception, onChanged }: { ctx: Pat
       setNotice({ tone: 'success', message: success });
       setResolving(false);
     } catch (error) {
+      const conflict = patrolConflictMessage(error);
       setNotice(isAlreadyResolved(error)
         ? { tone: 'info', message: 'This exception was already resolved. Showing the latest decision.' }
-        : { tone: 'error', message: patrolFailureMessage(error, 'Unable to update this exception.') });
+        : conflict
+          ? { tone: 'info', message: conflict }
+          : { tone: 'error', message: patrolFailureMessage(error, 'Unable to update this exception.') });
+      if (conflict) setResolving(false);
     } finally {
       setBusy(false);
       onChanged(); // always re-read the server's state
@@ -90,9 +97,10 @@ export function PatrolExceptionActions({ ctx, exception, onChanged }: { ctx: Pat
       {canAct && !resolving ? (
         <View style={ui.actions}>
           {exception.status === 'open' ? <Button label="Acknowledge" size="sm" variant="secondary" loading={busy} onPress={() => { void acknowledge(); }} /> : null}
-          <Button label="Resolve" size="sm" disabled={busy} onPress={() => { setNotice(null); setResolving(true); }} />
+          {mustAcknowledgeFirst ? null : <Button label="Resolve" size="sm" disabled={busy} onPress={() => { setNotice(null); setResolving(true); }} />}
         </View>
       ) : null}
+      {canAct && mustAcknowledgeFirst ? <Text style={ui.muted}>Acknowledge this patrol alert first, then investigate and record the outcome.</Text> : null}
       {canAct && resolving ? (
         <View style={{ gap: 8 }}>
           <ChipSelect label="Resolution reason" options={resolutionOptions(family).map((o) => ({ value: o.value, label: o.label }))} value={reason} onChange={(v) => setReason(String(v))} />

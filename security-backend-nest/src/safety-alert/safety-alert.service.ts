@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpStatus, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, IsNull, MoreThan, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import {
@@ -18,6 +18,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { ResolveSafetyAlertDto } from './dto/resolve-safety-alert.dto';
 import { alertRequiresResolutionNote, alertResolutionReasons, PATROL_LATE_SYNC_RESOLUTION } from './resolution-reasons';
 import { syncPatrolExceptionFromAlert } from '../patrol/patrol-alert-link';
+import { PatrolErrorCode, patrolError } from '../patrol/patrol-constants';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
 import { DailyLog } from '../daily-log/entities/daily-log.entity';
@@ -213,10 +214,10 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * as before; patrol alerts get them here (patrolExceptionId, patrolRunId, patrolWindowKey — what the web links to —
    * plus the late-sync marker and annotation). One query, only when the list holds a patrol alert.
    */
-  async attachPatrolLinks<T extends SafetyAlert | null>(alerts: T[]): Promise<T[]> {
+  async attachPatrolLinks<T extends SafetyAlert | null>(alerts: T[], runner: Pick<EntityManager, 'query'> = this.dataSource): Promise<T[]> {
     const patrol = alerts.filter((alert): alert is NonNullable<T> => Boolean(alert) && isPatrolAlertType(alert!.type));
     if (!patrol.length) return alerts;
-    const rows = await this.dataSource.query(
+    const rows = await runner.query(
       `SELECT "id", "patrolExceptionId", "patrolRunId", "patrolWindowKey", "patrolLateSyncAt", "patrolAnnotation" FROM "safety_alerts" WHERE "id" = ANY($1::int[])`,
       [patrol.map((alert) => alert!.id)],
     );
@@ -1203,7 +1204,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     }
     if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
-    return this.acknowledge(alert, userId, actor.owner ? actor.company : alert.company);
+    return this.acknowledge(alert.id, userId, actor.owner ? actor.company : alert.company);
   }
 
   /**
@@ -1214,19 +1215,19 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   async acknowledgePatrolAlert(userId: number, companyId: number, alertId: number): Promise<SafetyAlert> {
     const alert = await this.loadAlert(alertId);
     if (!alert || alert.company.id !== companyId || !isPatrolAlertType(alert.type)) throw new NotFoundException('Safety alert not found');
-    return this.acknowledge(alert, userId, alert.company);
+    return this.acknowledge(alert.id, userId, alert.company);
   }
 
   async closePatrolAlert(userId: number, companyId: number, alertId: number, resolution: ResolveSafetyAlertDto): Promise<SafetyAlert> {
     const alert = await this.loadAlert(alertId);
     if (!alert || alert.company.id !== companyId || !isPatrolAlertType(alert.type)) throw new NotFoundException('Safety alert not found');
-    return this.close(alert, userId, alert.company, resolution);
+    return this.close(alert.id, userId, alert.company, resolution);
   }
 
   async acknowledgeAsAdmin(userId: number, alertId: number): Promise<SafetyAlert> {
     const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
-    return this.acknowledge(alert, userId, alert.company);
+    return this.acknowledge(alert.id, userId, alert.company);
   }
 
   async closeForCompany(
@@ -1243,7 +1244,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     }
     if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
-    return this.close(alert, userId, actor.owner ? actor.company : alert.company, resolution);
+    return this.close(alert.id, userId, actor.owner ? actor.company : alert.company, resolution);
   }
 
   async closeAsAdmin(
@@ -1253,7 +1254,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   ): Promise<SafetyAlert> {
     const alert = await this.loadAlert(alertId);
     if (!alert) throw new NotFoundException('Safety alert not found');
-    return this.close(alert, userId, alert.company, resolution);
+    return this.close(alert.id, userId, alert.company, resolution);
   }
 
   /**
@@ -1368,85 +1369,148 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * again would overwrite who resolved it and why; neither is allowed. This also covers the per-window
    * missed Welfare Check evidence, which is written closed as permanent history and is never itself
    * the item a controller acts on — the shift's welfare summary is.
+   *
+   * A patrol alert answers with the patrol API's error shape (code + plain-English message naming who resolved it), so a
+   * dashboard that lost a race can say what happened and re-read.
    */
-  private assertNotClosed(alert: SafetyAlert) {
-    if (alert.status === SafetyAlertStatus.CLOSED) {
-      throw new ConflictException(
-        alert.type === SafetyAlertType.MISSED_CHECKCALL && alert.welfareWindowIndex != null
-          ? 'This is a permanent record of a missed Welfare Check window. Act on the shift’s welfare alert instead.'
-          : 'This alert is already closed.',
-      );
+  private async assertNotClosed(runner: Pick<EntityManager, 'query'>, alert: SafetyAlert) {
+    if (alert.status !== SafetyAlertStatus.CLOSED) return;
+    if (isPatrolAlertType(alert.type)) {
+      const by = await this.actorName(runner, alert.closedByUserId);
+      throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ALERT_ALREADY_RESOLVED,
+        `This patrol alert has already been resolved${by ? ` by ${by}` : ''}. Showing the latest decision.`,
+        { resolvedByName: by, resolvedAt: alert.closedAt ?? null });
     }
+    throw new ConflictException(
+      alert.type === SafetyAlertType.MISSED_CHECKCALL && alert.welfareWindowIndex != null
+        ? 'This is a permanent record of a missed Welfare Check window. Act on the shift’s welfare alert instead.'
+        : 'This alert is already closed.',
+    );
   }
 
-  private async acknowledge(alert: SafetyAlert, userId: number, company: SafetyAlert['company']) {
-    this.assertNotClosed(alert);
-    const beforeData = this.transitionBefore(alert);
-    alert.status = SafetyAlertStatus.ACKNOWLEDGED;
-    alert.acknowledgedAt = new Date();
-    alert.acknowledgedByUserId = userId;
-    const saved = await this.safetyAlertRepo.save(alert);
-    // Patrols (Migration 69): the alert's patrol exception follows it, audited (patrol-alert-link.ts).
-    await syncPatrolExceptionFromAlert(this.dataSource, this.auditLogService, saved, 'acknowledged', userId);
-    await this.auditLogService.log({
-      company,
-      user: { id: userId },
-      action: 'safety_alert.acknowledged',
-      entityType: 'safety_alert',
-      entityId: saved.id,
-      // The previous status, so the transition itself is auditable rather than only its outcome.
-      beforeData,
-      afterData: {
-        type: saved.type,
-        status: saved.status,
-        acknowledgedAt: saved.acknowledgedAt,
-        acknowledgedByUserId: saved.acknowledgedByUserId,
-      },
+  /** A person's display name (first and last name, never an email); null when there is no such user. */
+  private async actorName(runner: Pick<EntityManager, 'query'>, userId: number | null | undefined): Promise<string | null> {
+    if (userId == null) return null;
+    const [row] = await runner.query(`SELECT "firstName", "lastName" FROM "users" WHERE "id" = $1`, [userId]);
+    if (!row) return null;
+    return [row.firstName, row.lastName].map((p: string | null) => (p ?? '').trim()).filter(Boolean).join(' ') || 'Staff member';
+  }
+
+  /**
+   * S3 Stage 1 (owner-approved 4 Nov 2026): every acknowledge / close is ONE transaction. The alert row (and, for a patrol
+   * alert, its patrol exception) is locked FOR UPDATE and re-read; the state checks run on that locked row; the alert
+   * update, the exception mirror and both audit entries commit or roll back together. A second controller acting at the
+   * same moment waits for the first, then sees the settled state and is refused (409): nothing the first one did is
+   * overwritten, and a failure part-way leaves the alert, the exception and the audit trail exactly as they were.
+   *
+   * Lock order: the patrol exception first, then the alert — the order the late-evidence path (recordLateEvidence, run
+   * inside a Guard's sync) updates them in, so the two never deadlock.
+   */
+  private lockedTransition<T>(alertId: number, work: (manager: EntityManager, alert: SafetyAlert) => Promise<T>): Promise<T> {
+    return this.dataSource.transaction(async (manager) => {
+      const [link] = await manager.query(`SELECT "patrolExceptionId" FROM "safety_alerts" WHERE "id" = $1`, [alertId]);
+      if (!link) throw new NotFoundException('Safety alert not found');
+      if (link.patrolExceptionId != null) {
+        await manager.query(`SELECT "id" FROM "patrol_exceptions" WHERE "id" = $1 FOR UPDATE`, [link.patrolExceptionId]);
+      }
+      await manager.query(`SELECT "id" FROM "safety_alerts" WHERE "id" = $1 FOR UPDATE`, [alertId]);
+      const [alert] = await this.attachPatrolLinks([await manager.getRepository(SafetyAlert).findOne({ where: { id: alertId } })], manager);
+      if (!alert) throw new NotFoundException('Safety alert not found');
+      return work(manager, alert);
+    });
+  }
+
+  /** Audit writes inside the transition's transaction, in the shape syncPatrolExceptionFromAlert expects. */
+  private auditIn(manager: EntityManager): Pick<AuditLogService, 'log'> {
+    return { log: (input) => this.auditLogService.logInTransaction(manager, input) };
+  }
+
+  private async acknowledge(alertId: number, userId: number, company: SafetyAlert['company']) {
+    return this.lockedTransition(alertId, async (manager, alert) => {
+      await this.assertNotClosed(manager, alert);
+      // S3 Stage 1 (decision B): a patrol alert keeps its FIRST acknowledger. Acknowledging it again — a second controller,
+      // or the same one twice — is refused and changes nothing. Other alert types keep their existing lifecycle.
+      if (isPatrolAlertType(alert.type) && (alert.status === SafetyAlertStatus.ACKNOWLEDGED || alert.acknowledgedAt)) {
+        const by = await this.actorName(manager, alert.acknowledgedByUserId);
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ALERT_ALREADY_ACKNOWLEDGED,
+          `This patrol alert has already been acknowledged${by ? ` by ${by}` : ''}. Showing the latest state.`,
+          { acknowledgedByName: by, acknowledgedAt: alert.acknowledgedAt ?? null });
+      }
+      const beforeData = this.transitionBefore(alert);
+      alert.status = SafetyAlertStatus.ACKNOWLEDGED;
+      alert.acknowledgedAt = new Date();
+      alert.acknowledgedByUserId = userId;
+      const saved = await manager.getRepository(SafetyAlert).save(alert);
+      // Patrols (Migration 69): the alert's patrol exception follows it, audited (patrol-alert-link.ts), in this transaction.
+      await syncPatrolExceptionFromAlert(manager, this.auditIn(manager), saved, 'acknowledged', userId);
+      await this.auditLogService.logInTransaction(manager, {
+        company,
+        user: { id: userId },
+        action: 'safety_alert.acknowledged',
+        entityType: 'safety_alert',
+        entityId: saved.id,
+        // The previous status, so the transition itself is auditable rather than only its outcome.
+        beforeData,
+        afterData: {
+          type: saved.type,
+          status: saved.status,
+          acknowledgedAt: saved.acknowledgedAt,
+          acknowledgedByUserId: saved.acknowledgedByUserId,
+        },
     });
     return saved;
+    });
   }
 
   private async close(
-    alert: SafetyAlert,
+    alertId: number,
     userId: number,
     company: SafetyAlert['company'],
     resolution?: ResolveSafetyAlertDto,
   ) {
-    // Validated before anything is mutated: a refused resolution must leave the alert exactly as it
-    // was, still open and still in the queue.
-    this.assertNotClosed(alert);
-    const { reason, note } = this.resolveEvidence(alert, resolution);
-    const beforeData = this.transitionBefore(alert);
+    return this.lockedTransition(alertId, async (manager, alert) => {
+      // Validated before anything is mutated: a refused resolution must leave the alert exactly as it
+      // was, still open and still in the queue.
+      await this.assertNotClosed(manager, alert);
+      const { reason, note } = this.resolveEvidence(alert, resolution);
+      // S3 Stage 1 (decision A): a patrol alert is resolved only after it has been acknowledged — someone has taken it up,
+      // investigated and is now recording the outcome. Other alert types keep their existing lifecycle.
+      if (isPatrolAlertType(alert.type) && !alert.acknowledgedAt) {
+        throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ALERT_NOT_ACKNOWLEDGED, 'Acknowledge this patrol alert before resolving it.');
+      }
+      const beforeData = this.transitionBefore(alert);
 
-    if (!alert.acknowledgedAt) {
-      alert.acknowledgedAt = new Date();
-      alert.acknowledgedByUserId = userId;
-    }
-    alert.status = SafetyAlertStatus.CLOSED;
-    alert.closedAt = new Date();
-    alert.closedByUserId = userId;
-    if (reason) alert.resolutionReason = reason;
-    if (note) alert.resolutionNote = note;
+      if (!alert.acknowledgedAt) {
+        alert.acknowledgedAt = new Date();
+        alert.acknowledgedByUserId = userId;
+      }
+      alert.status = SafetyAlertStatus.CLOSED;
+      alert.closedAt = new Date();
+      alert.closedByUserId = userId;
+      if (reason) alert.resolutionReason = reason;
+      if (note) alert.resolutionNote = note;
 
-    const saved = await this.safetyAlertRepo.save(alert);
-    // Patrols (Migration 69): resolving the alert resolves its patrol exception, with the same reason, audited.
-    await syncPatrolExceptionFromAlert(this.dataSource, this.auditLogService, saved, 'resolved', userId, { reason, note });
-    await this.auditLogService.log({
-      company,
-      user: { id: userId },
-      action: 'safety_alert.closed',
-      entityType: 'safety_alert',
-      entityId: saved.id,
-      beforeData,
-      afterData: {
-        type: saved.type,
-        status: saved.status,
-        closedAt: saved.closedAt,
-        closedByUserId: saved.closedByUserId,
-        resolutionReason: saved.resolutionReason ?? null,
-        resolutionNote: saved.resolutionNote ?? null,
-      },
+      const saved = await manager.getRepository(SafetyAlert).save(alert);
+      // Patrols (Migration 69): resolving the alert resolves its patrol exception, with the same reason, audited, in this
+      // transaction. A reconciliation summary alert has no exception and resolves none (owner decision, 4 Nov 2026).
+      await syncPatrolExceptionFromAlert(manager, this.auditIn(manager), saved, 'resolved', userId, { reason, note });
+      await this.auditLogService.logInTransaction(manager, {
+        company,
+        user: { id: userId },
+        action: 'safety_alert.closed',
+        entityType: 'safety_alert',
+        entityId: saved.id,
+        beforeData,
+        afterData: {
+          type: saved.type,
+          status: saved.status,
+          closedAt: saved.closedAt,
+          closedByUserId: saved.closedByUserId,
+          resolutionReason: saved.resolutionReason ?? null,
+          resolutionNote: saved.resolutionNote ?? null,
+        },
     });
     return saved;
+    });
   }
 }

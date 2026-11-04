@@ -475,6 +475,8 @@ async function main() {
       const listed = alerts.body.find((a: any) => a.id === Number(summary.id));
       assert.ok(listed && listed.type === 'patrol_missed' && listed.patrolExceptionId === null && listed.patrolWindowKey === `reconciliation:site:${s.sites[0].id}`);
       const openBefore = await count(`SELECT count(*) FROM patrol_exceptions WHERE "companyId" = $1 AND status <> 'resolved'`, [s.co]);
+      // S3 Stage 1: a patrol alert (the summary too) is acknowledged before it is resolved.
+      expect(await api('PATCH', `/alerts/${summary.id}/ack`, token), 200, 'acknowledge summary');
       expect(await api('PATCH', `/alerts/${summary.id}/close`, token, { resolutionReason: 'guard_contacted', resolutionNote: 'Reviewed the outage list' }), 200, 'close summary');
       assert.equal(await count(`SELECT count(*) FROM patrol_exceptions WHERE "companyId" = $1 AND status <> 'resolved'`, [s.co]), openBefore, 'no exception changed');
       // Audit trail.

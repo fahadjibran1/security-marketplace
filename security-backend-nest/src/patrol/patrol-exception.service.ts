@@ -287,7 +287,9 @@ export class PatrolExceptionService {
     }
     if (exception.safetyAlertId) {
       const [alert] = await this.dataSource.query(`SELECT "status" FROM "safety_alerts" WHERE "id" = $1`, [exception.safetyAlertId]);
-      if (alert && alert.status === SafetyAlertStatus.OPEN) {
+      // S3 Stage 1: any live alert goes through the alert's locked lifecycle, which keeps the first acknowledger and refuses
+      // a second acknowledgement (409) instead of silently answering with the current state.
+      if (alert && alert.status !== SafetyAlertStatus.CLOSED) {
         await this.safetyAlertService.acknowledgePatrolAlert(actor.userId, actor.companyId, Number(exception.safetyAlertId));
         return serializeException(await this.row(actor.companyId, id));
       }

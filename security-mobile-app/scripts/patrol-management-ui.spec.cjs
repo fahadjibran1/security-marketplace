@@ -702,7 +702,7 @@ test('PM-11-LIVE-OPERATIONS-ONLY-ACTIONABLE-PATROL-ALERTS-EACH-LINKED', async ()
   assert.doesNotMatch(screen, /listPatrolRuns|listPatrolRunEvidence|getPatrolOverview/, 'the dashboard reads no routine patrol data itself');
 
   // The real rail: a Viewer sees the item and its link, no action; alerts.manage acknowledges and resolves.
-  const item = (canAct) => ({ id: 'patrol-2', alertId: 2, shiftId: null, status: 'open', siteName: 'Alpha Site', guardName: 'Ava Guard', category: 'patrol',
+  const item = (canAct, status = 'open') => ({ id: 'patrol-2', alertId: 2, shiftId: null, status, siteName: 'Alpha Site', guardName: 'Ava Guard', category: 'patrol',
     issueType: 'Patrol abandoned', message: 'Started, not completed.', occurredAt: iso(NOW), patrolTarget: { kind: 'run', runId: 5, exceptionId: 41 }, canAct });
   for (const canAct of [false, true]) {
     const opened = [];
@@ -719,6 +719,17 @@ test('PM-11-LIVE-OPERATIONS-ONLY-ACTIONABLE-PATROL-ALERTS-EACH-LINKED', async ()
     await pressByText(rail.root, 'Open patrol record');
     assert.deepEqual(opened.map((i) => i.patrolTarget), [{ kind: 'run', runId: 5, exceptionId: 41 }], 'links to its run');
     assert.equal(has(rail.root, 'Acknowledge'), canAct, `acknowledge only with alerts.manage (${canAct})`);
+    // S3 Stage 1: an open patrol alert is acknowledged first; Resolve appears once it is acknowledged.
+    assert.equal(has(rail.root, 'Resolve'), false, `no Resolve before acknowledgement (${canAct})`);
+    act(() => rail.unmount());
+    await act(async () => {
+      rail = TestRenderer.create(h(LiveOpsAttentionRail, {
+        items: [item(canAct, 'acknowledged')], metricFocus: 'all', urgentActionItemId: null, resolveShiftZone: () => 'Europe/London',
+        onOpenUrgentDetail: (i) => opened.push(i), onOpenUrgentShift() {}, onUrgentIncidentFollowUp: async () => {},
+        onUrgentAlertFollowUp: async (i, a) => { followUps.push(a); }, onOpenIncidentResolution() {}, nextUp: [],
+      }));
+    });
+    assert.equal(has(rail.root, 'Acknowledge'), false, 'acknowledged once');
     assert.equal(has(rail.root, 'Resolve'), canAct, `resolve only with alerts.manage (${canAct})`);
     if (canAct) {
       await pressByText(rail.root, 'Resolve');
@@ -1110,9 +1121,14 @@ test('PM-32-EXCEPTION-ACTIONS-ARE-GATED-BY-PERMISSION', async () => {
     const renderer = await mount({ permissions: p, target: EXC_TARGET });
     const root = renderer.root;
     assert.equal(has(root, 'Acknowledge'), p.canActOnExceptions, `${role}: acknowledge`);
-    assert.equal(has(root, 'Resolve'), p.canActOnExceptions, `${role}: resolve`);
+    assert.equal(has(root, 'Resolve'), false, `${role}: no Resolve before acknowledgement (S3 Stage 1)`);
+    if (p.canActOnExceptions) assert.ok(textOf(root).includes('Acknowledge this patrol alert first, then investigate and record the outcome.'), `${role}: told the order`);
     if (!p.canActOnExceptions) assert.ok(textOf(root).includes('needs the alerts or patrol management permission'), `${role}: told why`);
     act(() => renderer.unmount());
+    answers = baseAnswers({ listPatrolExceptions: [exc({ status: 'acknowledged', acknowledgedAt: iso(NOW - MIN), acknowledgedByName: 'Cara Control' })] });
+    const acked = await mount({ permissions: p, target: EXC_TARGET });
+    assert.equal(has(acked.root, 'Resolve'), p.canActOnExceptions, `${role}: resolve once acknowledged`);
+    act(() => acked.unmount());
   }
   // A resolved exception offers no action to anyone.
   answers = baseAnswers({ listPatrolExceptions: [exc({ status: 'resolved', resolution: 'guard_contacted', resolvedAt: iso(NOW - MIN), resolvedByName: 'Rae Resolver' })] });
@@ -1128,7 +1144,8 @@ test('PM-32-EXCEPTION-ACTIONS-ARE-GATED-BY-PERMISSION', async () => {
 });
 
 test('PM-33-RESOLUTION-REASONS-NOTE-RULES-AND-LATE-SYNC-ONLY-WITH-LATE-EVIDENCE', async () => {
-  let list = [exc()];
+  const ACKED = { status: 'acknowledged', acknowledgedAt: iso(NOW - 2 * MIN), acknowledgedByName: 'Cara Control' };
+  let list = [exc(ACKED)];
   answers = baseAnswers({ listPatrolExceptions: () => list, resolvePatrolException: async (id, body) => { list = [exc({ status: 'resolved', resolution: body.resolutionReason, resolvedAt: iso(NOW), resolvedByName: 'Ola Owner' })]; return list[0]; } });
   calls.length = 0;
   let renderer = await mount({ permissions: perms('owner'), target: EXC_TARGET });
@@ -1151,7 +1168,7 @@ test('PM-33-RESOLUTION-REASONS-NOTE-RULES-AND-LATE-SYNC-ONLY-WITH-LATE-EVIDENCE'
   assert.ok(textOf(renderer.root).includes('by Ola Owner'));
   act(() => renderer.unmount());
   // With late evidence: "Patrol completed — late sync" is offered and needs no note.
-  list = [exc({ lateEvidenceAt: iso(NOW - 5 * MIN) })];
+  list = [exc({ ...ACKED, lateEvidenceAt: iso(NOW - 5 * MIN) })];
   calls.length = 0;
   renderer = await mount({ permissions: perms('control_room'), target: EXC_TARGET });
   await pressByText(renderer.root, 'Resolve');
@@ -1976,6 +1993,64 @@ test('PM-46-AN-EXCUSED-GUARD-NOTE-IS-SHOWN-ON-THE-PATROL-RECORD', async () => {
   await pressByText(r.root, 'Open P-5 Ava Guard');
   assert.ok(/Guard's note\s*Camera would not focus\./.test(textOf(r.root)), 'the Guard\'s words are visible to reviewers');
   act(() => r.unmount());
+});
+
+test('PM-47-S3-ACKNOWLEDGE-BEFORE-RESOLVE-AND-NO-ALERT-EXCEPTIONS-UNCHANGED', async () => {
+  // An exception with no Live Operations alert (not actionable under the policy) keeps its direct resolution.
+  answers = baseAnswers({ listPatrolExceptions: [exc({ safetyAlertId: null, alertStatus: null })] });
+  const quiet = await mount({ permissions: perms('owner'), target: EXC_TARGET });
+  assert.equal(has(quiet.root, 'Resolve'), true, 'no alert: resolve directly, as before');
+  assert.equal(textOf(quiet.root).includes('Acknowledge this patrol alert first'), false);
+  act(() => quiet.unmount());
+  // Acknowledged shows who acknowledged it ("Acknowledged ... by"), never "Handling" or "Case owner".
+  answers = baseAnswers({ listPatrolExceptions: [exc({ status: 'acknowledged', acknowledgedAt: iso(NOW - MIN), acknowledgedByName: 'Cara Control' })] });
+  const acked = await mount({ permissions: perms('control_room'), target: EXC_TARGET });
+  const text = textOf(acked.root);
+  assert.ok(text.includes('Acknowledged') && text.includes('by Cara Control'));
+  assert.doesNotMatch(text, /Handling|Case owner/);
+  act(() => acked.unmount());
+});
+
+test('PM-48-S3-CONFLICTS-REREAD-AND-SAY-WHO-ACTED', async () => {
+  const conflict = (code, message) => Object.assign(new Error('conflict'), { status: 409, body: { statusCode: 409, code, message } });
+  const A = loadSource('src/components/patrols/patrolAccess.ts');
+  assert.equal(A.patrolConflictMessage(conflict('PATROL_ALERT_ALREADY_RESOLVED', 'This patrol alert has already been resolved by Ben Controller. Showing the latest decision.')),
+    'This patrol alert has already been resolved by Ben Controller. Showing the latest decision.');
+  assert.equal(A.patrolConflictMessage(conflict('PATROL_ALERT_NOT_ACKNOWLEDGED')), 'Acknowledge this patrol alert before resolving it.');
+  assert.equal(A.patrolConflictMessage(conflict('PATROL_ALERT_ALREADY_ACKNOWLEDGED')), 'Someone else has already acted on this patrol alert. Showing the latest state.');
+  assert.equal(A.patrolConflictMessage(Object.assign(new Error('x'), { status: 409, body: { message: 'This alert is already closed.' } })), null, 'not a patrol conflict');
+  assert.equal(A.patrolConflictMessage(Object.assign(new Error('x'), { status: 400, body: { code: 'PATROL_ALERT_NOT_ACKNOWLEDGED' } })), null);
+  // Someone else acknowledged it first: the panel re-reads, says who, and offers Resolve on the acknowledged record.
+  let list = [exc()];
+  answers = baseAnswers({
+    listPatrolExceptions: () => list,
+    acknowledgePatrolException: async () => {
+      list = [exc({ status: 'acknowledged', acknowledgedAt: iso(NOW), acknowledgedByName: 'Ava Controller' })];
+      throw conflict('PATROL_ALERT_ALREADY_ACKNOWLEDGED', 'This patrol alert has already been acknowledged by Ava Controller. Showing the latest state.');
+    },
+  });
+  calls.length = 0;
+  const r = await mount({ permissions: perms('control_room'), target: EXC_TARGET });
+  const reads = () => calls.filter(([k]) => k === 'listPatrolExceptions').length;
+  const before = reads();
+  await pressByText(r.root, 'Acknowledge');
+  assert.ok(reads() > before, 're-read after the 409');
+  const text = textOf(r.root);
+  assert.ok(text.includes('This patrol alert has already been acknowledged by Ava Controller. Showing the latest state.'), 'plain English, names who');
+  assert.ok(text.includes('by Ava Controller') && has(r.root, 'Resolve'), 'the latest state is shown');
+  assert.equal(text.includes('Unable to update this exception.'), false, 'not shown as a failure');
+  act(() => r.unmount());
+});
+
+test('PM-49-S3-LIVE-OPERATIONS-REFRESHES-AFTER-A-409-WITH-A-PLAIN-MESSAGE', () => {
+  const screen = stripComments(read('src/screens/CompanyDashboardScreen.tsx'));
+  // Acknowledge: a patrol conflict re-reads and shows the server's sentence, without a page error.
+  assert.match(screen, /catch \(followUpError\) \{\s*const conflict = patrolConflictMessage\(followUpError\);\s*if \(conflict\) \{\s*setLiveOperationsFeedback\(\{ tone: 'info', message: conflict \}\);\s*await loadData\(true\);\s*return;/);
+  // Resolve: the dialog closes, the data is re-read, the sentence is shown.
+  assert.match(screen, /catch \(resolveFailure\) \{\s*const conflict = patrolConflictMessage\(resolveFailure\);\s*if \(conflict\) \{\s*setResolveTarget\(null\);\s*setLiveOperationsFeedback\(\{ tone: 'info', message: conflict \}\);\s*await loadData\(true\);\s*return;/);
+  const workspace = read('src/components/company/CompanyLiveOperationsWorkspace.tsx');
+  assert.ok(workspace.includes("liveOperationsFeedback.tone === 'info' ? 'No change made'"), 'a conflict reads "No change made", not "Action failed"');
+  assert.ok(workspace.includes('{patrolMayAct && acknowledged ? ('), 'Resolve only once acknowledged');
 });
 
 (async () => {

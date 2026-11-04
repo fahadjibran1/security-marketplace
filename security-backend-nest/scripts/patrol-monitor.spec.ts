@@ -594,6 +594,8 @@ async function main() {
       assert.ok(missedWindows >= 7, 'Quay 1 + Yard 4 + Depot 1 + Gate 2');
       // Resolve Quay's missed window: Live Operations drops it, the Monitor keeps it as history.
       const missed = await one(`SELECT * FROM patrol_exceptions WHERE "companyId" = $1 AND "windowKey" = $2 AND type = 'patrol_missed'`, [A.id, slotKey(quaySched, 2)]);
+      // S3 Stage 1: a patrol alert is acknowledged before it is resolved.
+      expect(await api('POST', `/patrols/exceptions/${missed.id}/acknowledge`, tokControlA), 200, undefined, 'acknowledge');
       expect(await api('POST', `/patrols/exceptions/${missed.id}/resolve`, tokControlA, { resolutionReason: 'guard_contacted', resolutionNote: 'spoken to' }), 200, undefined, 'resolve');
       const after = await monitor.summary(A.user, {}, Z(at('14:45')));
       assert.deepEqual([after.liveOps.openPatrolAlerts, after.liveOps.missedToday, after.liveOps.missedTodayOpen],

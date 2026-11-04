@@ -219,6 +219,12 @@ export enum PatrolErrorCode {
   RESOLUTION_INVALID = 'PATROL_RESOLUTION_INVALID',
   /** P1-B: the exception is already resolved (a settled record). */
   EXCEPTION_RESOLVED = 'PATROL_EXCEPTION_ALREADY_RESOLVED',
+  /** S3 Stage 1: a patrol alert is resolved only after someone has acknowledged it. */
+  ALERT_NOT_ACKNOWLEDGED = 'PATROL_ALERT_NOT_ACKNOWLEDGED',
+  /** S3 Stage 1: the patrol alert was already acknowledged; the first acknowledger is kept. */
+  ALERT_ALREADY_ACKNOWLEDGED = 'PATROL_ALERT_ALREADY_ACKNOWLEDGED',
+  /** S3 Stage 1: the patrol alert was already resolved (a settled record). */
+  ALERT_ALREADY_RESOLVED = 'PATROL_ALERT_ALREADY_RESOLVED',
   /** P1-C: private patrol evidence storage is not configured / not reachable (the feature fails closed). */
   EVIDENCE_STORAGE_UNAVAILABLE = 'PATROL_EVIDENCE_STORAGE_UNAVAILABLE',
   /** P1-C: the declared content type is not an allowed photo type. */
