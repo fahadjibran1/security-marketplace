@@ -39,6 +39,9 @@ const DAYS = Number(process.env.PERF_DAYS ?? 365);
 const OPEN_PER_SITE = Number(process.env.PERF_OPEN_PER_SITE ?? 6);
 const HISTORY_PER_SITE = Number(process.env.PERF_ALERT_HISTORY_PER_SITE ?? 4000);
 const ITERATIONS = Number(process.env.PERF_ITERATIONS ?? 20);
+/** S3 Stage 4: the existing GET /alerts/company read Live Operations still polls (owner account: every alert of the company). */
+const ALERT_ITERATIONS = Number(process.env.PERF_ALERT_ITERATIONS ?? 5);
+const SKIP_CANDIDATES = Boolean(process.env.PERF_SKIP_CANDIDATES);
 const SCALES = [10, 25, 50];
 const CANDIDATES: Array<{ name: string; sql: string }> = [
   { name: 'cand_exceptions_missed_day', sql: `CREATE INDEX cand_exceptions_missed_day ON patrol_exceptions ("companyId", "windowStart") WHERE type = 'patrol_missed'` },
@@ -73,6 +76,7 @@ async function main() {
   app.get(PatrolSweepService).onModuleDestroy();
   app.get(SafetyAlertService).onModuleDestroy();
   const operations = app.get(PatrolOperationsService);
+  const alertService = app.get(SafetyAlertService);
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   const companies: Array<{ sites: number; companyId: number; ownerId: number }> = [];
@@ -207,6 +211,10 @@ async function main() {
       const inv: number[] = [];
       let invBody: any = null;
       for (const { id } of sample) { const t = process.hrtime.bigint(); invBody = await operations.investigation(user, Number(id)); inv.push(ms(t)); }
+      const al: number[] = [];
+      let alertBody: any[] = [];
+      for (let i = 0; i < ALERT_ITERATIONS; i += 1) { const t = process.hrtime.bigint(); alertBody = await alertService.findForCompany(c.ownerId); al.push(ms(t)); }
+      console.log(`[${tag}] ${c.sites} sites: existing /alerts/company ${JSON.stringify(stats(al))} ms, ${alertBody.length} alerts, ${(Buffer.byteLength(JSON.stringify(alertBody)) / 1e6).toFixed(1)} MB`);
       console.log(`[${tag}] ${c.sites} sites: attention ${JSON.stringify(stats(at))} ms, ${Buffer.byteLength(JSON.stringify(body))} bytes, ${body.cases.length}/${body.counts.patrolAlerts} cases, missedToday ${body.counts.missedToday}`
         + ` | investigation ${JSON.stringify(stats(inv))} ms, ${Buffer.byteLength(JSON.stringify(invBody))} bytes`);
       if (c.sites === 50) {
@@ -229,7 +237,7 @@ async function main() {
   const big = companies.find((c) => c.sites === 50)!;
   await explain('existing liveOps openPatrolAlerts', [{ sql: `SELECT count(*)::int AS n FROM "safety_alerts" WHERE "companyId" = $1 AND "type"::text = ANY($2::text[]) AND "status"::text <> 'closed'`,
     params: [big.companyId, ['patrol_missed', 'patrol_abandoned', 'patrol_incomplete', 'checkpoint_missed', 'patrol_unverified']] }]);
-  for (const cand of CANDIDATES) {
+  for (const cand of SKIP_CANDIDATES ? [] : CANDIDATES) {
     await q(cand.sql);
     await q('ANALYZE patrol_exceptions');
     await measure(cand.name);

@@ -2307,6 +2307,27 @@ test('PM-57-S3-RECONCILIATION-SUMMARY-PANEL-AND-PHONE-LAYOUT', async () => {
   act(() => r.unmount());
 });
 
+test('PM-58-S4-NO-FULL-RESOLUTION-PHOTO-UNTIL-ASKED', async () => {
+  // Live Operations itself never requests a photo, a preview or a link.
+  const screen = stripComments(read('src/screens/CompanyDashboardScreen.tsx'));
+  assert.doesNotMatch(screen, /getPatrolEvidenceLink|getPatrolEvidenceThumbnails|getPatrolEvidenceStampedImage/);
+  // Opening a case: the investigation read, then at most one preview grant (small thumbnails, audited 'browse'); the
+  // full-resolution photo only after 'View photo' — a person's explicit request, with a reason.
+  answers = baseAnswers({ getPatrolExceptionInvestigation: () => investigation(), getPatrolEvidenceLink: () => ({ evidenceId: 900, method: 'GET', url: SIGNED_URL, expiresAt: iso(Date.now() + 60_000) }) });
+  calls.length = 0;
+  const r = await mountPanel({ ctx: opsCtx('control_room'), patrolCase: patrolCase({ status: 'acknowledged', acknowledgedByName: 'Cara Control' }) });
+  const evidenceCalls = () => calls.filter(([k]) => /Evidence/.test(k)).map(([k]) => k);
+  assert.ok(evidenceCalls().every((k) => k === 'getPatrolEvidenceThumbnails'), 'only previews on opening: ' + evidenceCalls().join(','));
+  assert.ok(evidenceCalls().length <= 1, 'one preview grant for the page');
+  const view = r.root.findAll((n) => typeof n.type !== 'string' && n.props && typeof n.props.onPress === 'function' && /^View (photo|original)/.test(textOf(n).trim()));
+  assert.ok(view.length > 0, 'a View photo button per photo');
+  await act(async () => { view[0].props.onPress(); });
+  await settle();
+  assert.equal(calls.filter(([k]) => k === 'getPatrolEvidenceLink').length, 1, 'the full photo only when asked');
+  assert.equal(calls.find(([k]) => k === 'getPatrolEvidenceLink')[1][1], 'review', 'with the chosen reason');
+  act(() => r.unmount());
+});
+
 (async () => {
   for (const [name, fn] of pending) {
     try {
