@@ -280,15 +280,7 @@ export class PatrolMonitorService {
       )
       : [];
     const runs: MonitorRun[] = runRows
-      .map((r: any) => ({
-        id: Number(r.id), siteId: Number(r.siteId), routeId: r.routeId == null ? null : Number(r.routeId), scheduleId: r.scheduleId == null ? null : Number(r.scheduleId),
-        windowKey: r.windowKey ?? null, scopeKey: r.scopeKey ?? null,
-        windowStart: r.windowStart ? new Date(r.windowStart) : null, windowEnd: r.windowEnd ? new Date(r.windowEnd) : null,
-        status: String(r.status), verificationStatus: String(r.verificationStatus), lateStart: r.lateStart === true,
-        startedAtDevice: new Date(r.startedAtDevice), startedAtServer: new Date(r.startedAtServer),
-        completedAtServer: r.completedAtServer ? new Date(r.completedAtServer) : null,
-        guardId: Number(r.guardId), shiftId: Number(r.shiftId), syncFlags: Array.isArray(r.syncFlags) ? r.syncFlags.map(String) : [],
-      }))
+      .map(monitorRunFromRow)
       .filter((r: any) => {
         const range = ranges.get(r.siteId)!;
         const at = (r.windowStart ?? r.startedAtServer).getTime();
@@ -369,7 +361,12 @@ export class PatrolMonitorService {
   }
 
   /** Per run: checkpoint progress and photo counts (the sweep's own requirement rule; counts only, no evidence object). */
-  private async runSummaries(companyId: number, runs: MonitorRun[], policy: ReturnType<typeof resolvePolicy>) {
+  /**
+   * Per run: checkpoint progress and photo counts. Also read by the S3 investigation panel (PatrolOperationsService), which
+   * asks for `detail`: the ids of the required checkpoints not yet verified (the same rule's set). Counts only, never an
+   * evidence object.
+   */
+  async runSummaries(companyId: number, runs: MonitorRun[], policy: ReturnType<typeof resolvePolicy>, options: { detail?: boolean } = {}) {
     const out = new Map<number, any>();
     if (!runs.length) return out;
     const ctx = await loadRunEvaluationContext(this.dataSource, companyId, runs);
@@ -414,6 +411,7 @@ export class PatrolMonitorService {
           verified: evidence.filter((e: any) => e.uploadStatus === 'verified' && ['active', 'claimed'].includes(e.retentionStatus ?? 'active')).length,
           missing: req.missingRunPhotos + req.missingCheckpointPhotos,
         },
+        ...(options.detail ? { missingCheckpointIds: [...req.missingCheckpointIds].map(Number) } : {}),
       });
     }
     return out;
@@ -424,6 +422,19 @@ export class PatrolMonitorService {
     const rows = await this.dataSource.query(`SELECT "id", "fullName" FROM "guard_profiles" WHERE "id" = ANY($1::int[])`, [ids]);
     return new Map(rows.map((r: any) => [Number(r.id), r.fullName]));
   }
+}
+
+/** A patrol_runs row (any SELECT with these columns) as the model's run. */
+export function monitorRunFromRow(r: any): MonitorRun {
+  return {
+    id: Number(r.id), siteId: Number(r.siteId), routeId: r.routeId == null ? null : Number(r.routeId), scheduleId: r.scheduleId == null ? null : Number(r.scheduleId),
+    windowKey: r.windowKey ?? null, scopeKey: r.scopeKey ?? null,
+    windowStart: r.windowStart ? new Date(r.windowStart) : null, windowEnd: r.windowEnd ? new Date(r.windowEnd) : null,
+    status: String(r.status), verificationStatus: String(r.verificationStatus), lateStart: r.lateStart === true,
+    startedAtDevice: new Date(r.startedAtDevice), startedAtServer: new Date(r.startedAtServer),
+    completedAtServer: r.completedAtServer ? new Date(r.completedAtServer) : null,
+    guardId: Number(r.guardId), shiftId: Number(r.shiftId), syncFlags: Array.isArray(r.syncFlags) ? r.syncFlags.map(String) : [],
+  };
 }
 
 function emptyCounts(): MonitorCounts {

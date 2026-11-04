@@ -28,6 +28,8 @@ import { PatrolWindowService } from './patrol-window.service';
 import { PatrolWindowsDayService } from './patrol-windows-day.service';
 import { PatrolMonitorController } from './patrol-monitor.controller';
 import { PatrolMonitorService } from './patrol-monitor.service';
+import { PatrolOperationsController } from './patrol-operations.controller';
+import { PatrolOperationsService } from './patrol-operations.service';
 
 /**
  * Patrol Management, S4 Patrols Phase 1 package P1-A (Migration 68): the data model, the per-company switch, the
@@ -49,12 +51,12 @@ import { PatrolMonitorService } from './patrol-monitor.service';
  */
 @Module({
   imports: [TypeOrmModule.forFeature(patrolEntities), CompanyMembershipModule, AuditLogModule, OperationsModule, SafetyAlertModule],
-  controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController, PatrolEvidenceController, PatrolEvidenceGuardController, PatrolMonitorController],
+  controllers: [PatrolConfigController, PatrolGuardController, PatrolAdminController, PatrolEvidenceController, PatrolEvidenceGuardController, PatrolMonitorController, PatrolOperationsController],
   providers: [
     PatrolAccessService, PatrolConfigService, PatrolQueryService, PatrolGuardService, PatrolAdminService,
     PatrolWindowService, PatrolWindowsDayService, PatrolExceptionService, PatrolSweepService,
     PatrolObjectStore, PatrolEvidenceLifecycleService, PatrolEvidenceService, PatrolEvidenceExportService, PatrolEvidenceMaintenanceService,
-    PatrolRecoveryGrantService, PatrolSetupService, PatrolEvidenceReadService, PatrolMonitorService,
+    PatrolRecoveryGrantService, PatrolSetupService, PatrolEvidenceReadService, PatrolMonitorService, PatrolOperationsService,
   ],
   exports: [PatrolAccessService, PatrolConfigService, PatrolSweepService],
 })
