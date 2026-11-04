@@ -28,7 +28,8 @@ export function runStatusLabel(status: string | null | undefined): string {
 export function verificationLabel(status: string | null | undefined): string {
   switch (status) {
     case 'pending': return 'Awaiting verification';
-    case 'verified': return 'Verified';
+    // Owner terminology (4 Nov 2026): S4's rules, checked automatically — never a person's review.
+    case 'verified': return 'Patrol verified automatically';
     case 'unverified': return 'Unverified';
     case 'flagged': return 'Flagged';
     default: return status ? String(status) : 'Unknown';
@@ -335,12 +336,27 @@ export function evidenceStatus(e: Pick<PatrolEvidence, 'uploadStatus' | 'retenti
 export function evidenceStatusLabel(status: EvidenceStatus): string {
   switch (status) {
     case 'pending': return 'Pending upload';
-    case 'uploaded': return 'Uploaded — verifying';
-    case 'verified': return 'Verified';
+    // The file arrived and passed S4's technical checks (size, type, SHA-256): not a person's review of the photo.
+    case 'uploaded': return 'Photo uploaded — checking';
+    case 'verified': return 'Photo received';
     case 'rejected': return 'Rejected';
     case 'quarantined': return 'Quarantined';
     case 'deleted': return 'Deleted';
   }
+}
+
+/**
+ * The evidence words, one set everywhere (owner, 4 Nov 2026):
+ *   Photo received                 the file arrived and passed S4's technical checks
+ *   Patrol verified automatically  the site's configured patrol rules were met
+ *   Human reviewed                 ONLY when an authorised person's review has been recorded (humanReviewLabel)
+ */
+export const EVIDENCE_TERMS_NOTE = 'Photo received: the file arrived and passed S4\'s technical checks. Patrol verified automatically: the site\'s patrol rules were met. Neither is a person\'s review.';
+
+/** "Human reviewed by …" only for a recorded review by a named person; nothing otherwise (S4 records no photo review yet). */
+export function humanReviewLabel(review: { reviewedAt?: string | null; reviewerName?: string | null } | null | undefined): string | null {
+  if (!review?.reviewedAt || !review.reviewerName) return null;
+  return `Human reviewed by ${review.reviewerName}`;
 }
 
 export function evidenceStatusTone(status: EvidenceStatus): PatrolTone {

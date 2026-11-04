@@ -26,8 +26,8 @@ export type MonitorTone = PatrolTone | 'blank';
 export type MonitorStateInfo = { label: string; symbol: string; tone: MonitorTone; description: string };
 
 export const MONITOR_STATE_INFO: Record<PatrolMonitorCellState, MonitorStateInfo> = {
-  verified: { label: 'Verified', symbol: '✓', tone: 'success', description: 'Started on time and verified by S4.' },
-  late_verified: { label: 'Late · Verified', symbol: '◷', tone: 'warning', description: 'Verified by S4, but started after the start deadline.' },
+  verified: { label: 'Verified', symbol: '✓', tone: 'success', description: 'Started on time; the patrol was verified automatically by S4.' },
+  late_verified: { label: 'Late · Verified', symbol: '◷', tone: 'warning', description: 'Verified automatically by S4, but started after the start deadline.' },
   awaiting_verification: { label: 'Awaiting verification', symbol: '…', tone: 'warning', description: 'Completed; S4 has not finished verifying it yet.' },
   incomplete: { label: 'Incomplete', symbol: '◐', tone: 'warning', description: 'Started but not completed in time.' },
   flagged: { label: 'Needs review', symbol: '⚑', tone: 'warning', description: 'Completed with a flagged scan. Review the patrol record.' },
@@ -80,9 +80,90 @@ export function monitorCountWords(c: { verified: number; owed: number; later?: n
   return parts.join(', ');
 }
 
-/** The site card's Verified chip and its hint, on the same basis as the cells: verified of those due; how many later. */
-export function monitorCardVerified(counts: Pick<PatrolMonitorCounts, 'verified' | 'owed' | 'future'>): { label: string; hint: string | null } {
-  return { label: `Verified ${counts.verified}/${counts.owed}`, hint: counts.future > 0 ? `${counts.future} later` : null };
+/**
+ * The site card's patrol counts, on the same basis as the cells (usability update, 4 Nov 2026): verified of the patrols
+ * due so far, and — a separate chip — the windows still to come. Ad-hoc patrols are never in either number.
+ */
+export function monitorCardVerified(counts: Pick<PatrolMonitorCounts, 'verified' | 'owed' | 'future'>): { label: string; hint: string | null; later: string | null } {
+  return {
+    label: `Due: ${counts.verified}/${counts.owed} verified`,
+    hint: null,
+    later: counts.future > 0 ? `Later: ${counts.future}` : null,
+  };
+}
+
+/**
+ * Row titles for a site's lanes. A Guard with more than one shift row that day gets the shift's times AND reference
+ * ("Shift 77") on every one of their rows, in the row and in what a screen reader hears, so rows are never confused.
+ */
+export function monitorLaneLabels(
+  lanes: ReadonlyArray<Pick<PatrolMonitorLane, 'key' | 'kind' | 'guardName' | 'guardId' | 'shiftId' | 'shiftStart' | 'shiftEnd' | 'requirement'>>,
+  timeZone: string,
+  day: string | null,
+): Map<string, { title: string; sub: string; spoken: string }> {
+  const titles = lanes.filter((l) => l.kind === 'shift').map((l) => monitorLaneTitle(l));
+  const repeated = new Set(titles.filter((t, i) => titles.indexOf(t) !== i));
+  const out = new Map<string, { title: string; sub: string; spoken: string }>();
+  for (const lane of lanes) {
+    const title = monitorLaneTitle(lane);
+    if (lane.kind === 'site') { out.set(lane.key, { title, sub: 'Any Guard on duty', spoken: title }); continue; }
+    const times = lane.requirement && !lane.requirement.effectiveRequired ? 'No patrols required' : monitorShiftTimes(lane, timeZone, day);
+    const ref = repeated.has(title) && lane.shiftId != null ? `Shift ${lane.shiftId}` : null;
+    out.set(lane.key, { title, sub: [times, ref].filter(Boolean).join(' · '), spoken: ref ? `${title} (${ref})` : title });
+  }
+  return out;
+}
+
+const STATE_PHRASES: Record<string, string> = {
+  verified: 'verified automatically',
+  late_verified: 'verified automatically, but started late',
+  awaiting_verification: 'completed, awaiting automatic verification',
+  incomplete: 'incomplete',
+  flagged: 'needs review (a scan was flagged)',
+  not_verified: 'needs review (not verified automatically)',
+  overdue: 'overdue: no patrol has started',
+  awaiting_check: 'start deadline passed, awaiting S4\'s missed-patrol check',
+  missed: 'missed (confirmed by S4)',
+  in_progress: 'in progress',
+  due: 'due now',
+  future: 'not open yet',
+  not_on_duty: 'no Guard on duty',
+  not_judged: 'not assessed',
+};
+
+/**
+ * One plain-English sentence for an opened hour cell, from data already on screen, e.g.
+ * "1 patrol in this hour: 14:35–15:05 verified automatically (Ava Thompson, started 14:35, 2 photos)."
+ */
+export function monitorCellSummary(input: {
+  windows: ReadonlyArray<Pick<PatrolMonitorWindow, 'start' | 'end' | 'state' | 'runId'>>;
+  runs: Record<string, Pick<PatrolMonitorRun, 'guardName' | 'guardId' | 'startedAtDevice' | 'photos'> | undefined>;
+  laneGuard: string | null;
+  adHoc: number;
+  timeZone: string;
+  day: string | null;
+}): string {
+  const { windows, runs, timeZone, day } = input;
+  const extra = input.adHoc ? `${input.adHoc} additional patrol${input.adHoc === 1 ? '' : 's'} not counted` : '';
+  if (!windows.length) return extra ? `No scheduled patrol in this hour; ${extra}.` : 'No scheduled patrol in this hour.';
+  const items = windows.map((w) => {
+    const run = w.runId != null ? runs[String(w.runId)] : undefined;
+    const when = `${monitorClockOnDay(w.start, timeZone, day)}–${monitorClockOnDay(w.end, timeZone, day)}`;
+    const phrase = STATE_PHRASES[w.state] ?? monitorStateInfo(w.state).label.toLowerCase();
+    if (!run) return `${when} ${phrase}`;
+    const who = run.guardName ?? input.laneGuard ?? `Guard #${run.guardId}`;
+    const photos = run.photos.taken ? `, ${run.photos.taken} photo${run.photos.taken === 1 ? '' : 's'}` : '';
+    return `${when} ${phrase} (${who}, started ${monitorClock(run.startedAtDevice, timeZone)}${photos})`;
+  });
+  const head = `${windows.length} patrol${windows.length === 1 ? '' : 's'} in this hour: `;
+  return `${head}${items.join('; ')}${extra ? `; plus ${extra}` : ''}.`;
+}
+
+/** Ad-hoc patrols per hour for the Additional patrols row: hour index → count. */
+export function monitorAdHocByHour(otherRuns: ReadonlyArray<{ hour?: number | null }>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const o of otherRuns) if (o.hour != null) out.set(o.hour, (out.get(o.hour) ?? 0) + 1);
+  return out;
 }
 
 /**

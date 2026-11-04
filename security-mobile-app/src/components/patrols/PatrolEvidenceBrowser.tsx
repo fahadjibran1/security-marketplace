@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Image, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { getPatrolEvidenceLink, getPatrolEvidencePatrols, getPatrolEvidenceStampedImage, getPatrolEvidenceTree } from '../../services/api';
 import { colors } from '../../theme';
 import {
@@ -10,7 +10,7 @@ import {
   type PatrolEvidenceTreeSite,
 } from '../../types/patrols';
 import { Button } from '../ui/Button';
-import { AppModal } from '../ui/Modal';
+import { PatrolPhotoViewer } from './PatrolPhotoViewer';
 import { patrolFailureMessage } from './patrolAccess';
 import { DEFAULT_SITE_ZONE, type PatrolPageContext } from './patrolContext';
 import {
@@ -22,6 +22,7 @@ import {
   scanFlagLabel,
   signedLinkLifetimeMs,
   signedLinkUsable,
+  EVIDENCE_TERMS_NOTE,
   siteTodayKey,
   verificationLabel,
   type PatrolTone,
@@ -258,6 +259,7 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
         <Text style={ui.muted}>No photos in this patrol.</Text>
       ) : (
         <View style={{ gap: 8 }}>
+          <Text style={ui.muted} accessibilityLabel="What the photo words mean">{EVIDENCE_TERMS_NOTE}</Text>
           <ChipSelect label="View photos as" options={[{ value: 'original', label: 'Original' }, { value: 'stamped', label: 'Stamped' }]} value={view} onChange={(v) => { setView(v as EvidenceView); setViewing(null); }} />
           <Text style={ui.muted}>
             {view === 'original'
@@ -273,7 +275,7 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
               <View style={ui.actions}>
                 <Text style={ui.rowTitle}>{photo.kind === 'checkpoint_photo' ? 'Checkpoint photo' : 'Patrol photo'} #{photo.id}</Text>
                 {/* The upload's integrity check, not a person's review of the photo. */}
-                <Badge label={photo.viewable ? 'Received complete' : photo.uploadStatus === 'pending' ? 'Waiting for upload' : 'Not viewable'} tone={photo.viewable ? 'success' : 'pending'} />
+                <Badge label={photo.viewable ? 'Photo received' : photo.uploadStatus === 'pending' ? 'Waiting for upload' : 'Not viewable'} tone={photo.viewable ? 'success' : 'pending'} />
                 {photo.viewable ? (
                   <Button label={view === 'stamped' ? 'View stamped' : 'View original'} size="sm" variant="secondary" loading={opening === photo.id} onPress={() => { void open(photo); }} />
                 ) : null}
@@ -290,16 +292,13 @@ export function PatrolEvidenceRecord({ ctx, card, timeZone, siteName }: { ctx: P
         </View>
       )}
 
-      <AppModal visible={Boolean(viewing)} onClose={() => setViewing(null)} title={viewing ? `Photo #${viewing.evidenceId} · ${viewing.view === 'stamped' ? 'Stamped' : 'Original'}` : 'Photo'}
-        subtitle={viewing?.view === 'stamped' ? 'Stamped copy made on request. Not stored.' : 'Short-lived link. Viewing is recorded in the audit log.'} size="large">
-        {viewing ? (
-          <Image
-            accessibilityLabel={`Patrol photo ${viewing.evidenceId} (${viewing.view})`}
-            source={{ uri: viewing.uri, cache: 'reload' } as any}
-            style={{ width: '100%', height: 460, resizeMode: 'contain', backgroundColor: '#0B1F33' } as any}
-          />
-        ) : null}
-      </AppModal>
+      <PatrolPhotoViewer
+        uri={viewing?.uri ?? null}
+        title={viewing ? `Photo #${viewing.evidenceId} · ${viewing.view === 'stamped' ? 'Stamped' : 'Original'}` : 'Photo'}
+        subtitle={viewing?.view === 'stamped' ? 'Stamped copy made on request. Not stored.' : 'Short-lived link. Viewing is recorded in the audit log.'}
+        accessibilityLabel={viewing ? `Patrol photo ${viewing.evidenceId} (${viewing.view})` : 'Patrol photo'}
+        onClose={() => setViewing(null)}
+      />
     </PatrolPanel>
   );
 }

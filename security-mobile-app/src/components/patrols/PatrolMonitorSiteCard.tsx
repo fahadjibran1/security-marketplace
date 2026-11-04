@@ -4,7 +4,7 @@ import { getPatrolMonitorSite } from '../../services/api';
 import { colors, radii, spacing, typography } from '../../theme';
 import type { PatrolMonitorCell, PatrolMonitorHour, PatrolMonitorLane, PatrolMonitorSite, PatrolMonitorSummarySite } from '../../types/patrols';
 import type { PatrolPageContext } from './patrolContext';
-import { PatrolMonitorCellDetail, type MonitorCellSelection } from './PatrolMonitorCellDetail';
+import { MonitorAdHocDetail, PatrolMonitorCellDetail, type MonitorCellSelection } from './PatrolMonitorCellDetail';
 import { monitorPalette } from './PatrolMonitorMarks';
 import {
   monitorCellA11yLabel,
@@ -14,7 +14,8 @@ import {
   monitorGridLayout,
   monitorHourLabel,
   monitorHourOffsetShown,
-  monitorLaneTitle,
+  monitorAdHocByHour,
+  monitorLaneLabels,
   monitorCardVerified,
   monitorNeedsReview,
   monitorNextWindowLabel,
@@ -57,10 +58,12 @@ export function PatrolMonitorSiteCard({ ctx, site, expanded, live, onToggle }: {
   const statusPalette = monitorPalette(status.tone);
   const title = `${site.siteName}${site.clientName ? `, ${site.clientName}` : ''}`;
   const wide = ctx.layout.mode !== 'mobile';
-  // Exactly what a collapsed card owes the reader: verified of those due, missed, needs review, the next window.
+  // Exactly what a collapsed card owes the reader: verified of those due (later windows apart), missed, needs review,
+  // the next window. Additional (ad-hoc) patrols are listed once the site is open; they are never counted.
   const chips = (
     <>
-      <Chip symbol="✓" label={verified.label} tone="neutral" hint={verified.hint ?? undefined} />
+      <Chip symbol="✓" label={verified.label} tone="neutral" />
+      {verified.later ? <Chip symbol="○" label={verified.later} tone="neutral" /> : null}
       <Chip symbol="✕" label={`Missed ${c.missed}`} tone={c.missed > 0 ? 'danger' : 'neutral'} />
       <Chip symbol="⚑" label={`Needs review ${review}`} tone={review > 0 ? 'warning' : 'neutral'} />
       <Chip symbol="○" label={monitorNextWindowLabel(site.nextWindowStart, site.timeZone, site.date)} tone="neutral" />
@@ -93,7 +96,7 @@ export function PatrolMonitorSiteCard({ ctx, site, expanded, live, onToggle }: {
       {expanded ? (
         <View style={styles.body} testID={`patrol-monitor-detail-${site.siteId}`}>
           {ResourceState({ resource: detail, empty: false, emptyMessage: '', what: `${title} patrols` })}
-          {detail.data ? <MonitorSiteDetail site={detail.data} layout={ctx.layout} onOpenCell={setSelection} /> : null}
+          {detail.data ? <MonitorSiteDetail ctx={ctx} site={detail.data} layout={ctx.layout} onOpenCell={setSelection} /> : null}
         </View>
       ) : null}
       <PatrolMonitorCellDetail ctx={ctx} site={detail.data} selection={expanded ? selection : null} onClose={() => setSelection(null)} />
@@ -110,9 +113,10 @@ function Chip({ symbol, label, tone, hint }: { symbol: string; label: string; to
   );
 }
 
-function MonitorSiteDetail({ site, layout, onOpenCell }: { site: PatrolMonitorSite; layout: PatrolLayout; onOpenCell: (s: MonitorCellSelection) => void }) {
+function MonitorSiteDetail({ ctx, site, layout, onOpenCell }: { ctx: PatrolPageContext; site: PatrolMonitorSite; layout: PatrolLayout; onOpenCell: (s: MonitorCellSelection) => void }) {
   const day = site.range.date;
-  const other = site.otherRuns.length;
+  const [showExtra, setShowExtra] = React.useState(false);
+  const extra = [...site.otherRuns].sort((a, b) => String(a.startedAt ?? '').localeCompare(String(b.startedAt ?? '')) || a.runId - b.runId);
   return (
     <View style={{ gap: spacing.sm }}>
       <Text style={ui.muted}>
@@ -120,17 +124,34 @@ function MonitorSiteDetail({ site, layout, onOpenCell }: { site: PatrolMonitorSi
         {site.sweep.judgedThrough ? `Missed patrols checked by S4 up to ${monitorClockOnDay(site.sweep.judgedThrough, site.timeZone, day)}.` : 'Missed patrols not yet checked by S4.'}
         {site.policy.requirementScope === 'site' ? ' Site-wide patrols: any Guard on duty can complete them.' : ' Each Guard on duty owes their own patrols.'}
       </Text>
-      {site.lanes.length ? <MonitorGrid site={site} layout={layout} onOpenCell={onOpenCell} /> : <Text style={ui.muted}>No patrol rows for this day.</Text>}
-      {other ? <Text style={ui.muted}>{other} other patrol{other === 1 ? '' : 's'} (unscheduled or an extra patrol in a window already covered) not counted above.</Text> : null}
+      {site.lanes.length
+        ? <MonitorGrid site={site} layout={layout} onOpenCell={onOpenCell} extraOpen={showExtra} onToggleExtra={() => setShowExtra((v) => !v)} />
+        : <Text style={ui.muted}>No patrol rows for this day.</Text>}
+      {showExtra && extra.length ? (
+        <View style={{ gap: spacing.sm }} testID="patrol-monitor-additional-list">
+          <Text style={ui.muted}>Additional patrols are recorded with their photos but count towards no scheduled patrol.</Text>
+          {extra.map((o) => <MonitorAdHocDetail key={o.runId} ctx={ctx} site={site} other={o} onLeave={() => undefined} />)}
+        </View>
+      ) : null}
     </View>
   );
 }
 
-function MonitorGrid({ site, layout, onOpenCell }: { site: PatrolMonitorSite; layout: PatrolLayout; onOpenCell: (s: MonitorCellSelection) => void }) {
+function MonitorGrid({ site, layout, onOpenCell, extraOpen, onToggleExtra }: {
+  site: PatrolMonitorSite;
+  layout: PatrolLayout;
+  onOpenCell: (s: MonitorCellSelection) => void;
+  extraOpen: boolean;
+  onToggleExtra: () => void;
+}) {
   const { nameWidth, cellSize } = monitorGridLayout(layout);
   const rowHeight = cellSize + 4;
   const day = site.range.date;
   const hours = site.hours;
+  // 3. A Guard's repeated rows carry the shift's times and reference.
+  const labels = monitorLaneLabels(site.lanes, site.timeZone, day);
+  const extra = site.otherRuns.length;
+  const extraByHour = monitorAdHocByHour(site.otherRuns);
   // Open on the current hour (with the hour before it in view), once per site and day — never on a refresh, so a
   // person's own scrolling is kept.
   const scroller = React.useRef<any>(null);
@@ -145,16 +166,27 @@ function MonitorGrid({ site, layout, onOpenCell }: { site: PatrolMonitorSite; la
       <View style={{ width: nameWidth, flexShrink: 0 }} testID="patrol-monitor-lane-names">
         <View style={[styles.headerCell, { height: HEADER_HEIGHT, alignItems: 'flex-start' }]}><Text style={styles.hourOffset}>Hour</Text></View>
         {site.lanes.map((lane) => {
-          const sub = lane.kind === 'site'
-            ? 'Any Guard on duty'
-            : lane.requirement && !lane.requirement.effectiveRequired ? 'No patrols required' : monitorShiftTimes(lane, site.timeZone, day);
+          const label = labels.get(lane.key)!;
           return (
-            <View key={lane.key} style={[styles.laneName, { height: rowHeight }]} accessibilityLabel={`${monitorLaneTitle(lane)}${sub ? `, ${sub}` : ''}`}>
-              <Text style={[styles.laneTitle, lane.kind === 'site' ? { color: colors.primaryNavy } : null]} numberOfLines={1}>{monitorLaneTitle(lane)}</Text>
-              {sub ? <Text style={styles.laneSub} numberOfLines={1}>{sub}</Text> : null}
+            <View key={lane.key} style={[styles.laneName, { height: rowHeight }]} accessibilityLabel={`${label.title}${label.sub ? `, ${label.sub}` : ''}`}>
+              <Text style={[styles.laneTitle, lane.kind === 'site' ? { color: colors.primaryNavy } : null]} numberOfLines={1}>{label.title}</Text>
+              {label.sub ? <Text style={styles.laneSub} numberOfLines={1}>{label.sub}</Text> : null}
             </View>
           );
         })}
+        {extra ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${extraOpen ? 'Hide' : 'Show'} additional patrols (${extra})`}
+            accessibilityState={{ expanded: extraOpen }}
+            onPress={onToggleExtra}
+            style={[styles.laneName, styles.extraName, { height: rowHeight }, WEB_PTR]}
+            testID="patrol-monitor-additional-row"
+          >
+            <Text style={[styles.laneTitle, { color: colors.info }]} numberOfLines={1}>{extraOpen ? '▾' : '▸'} Additional patrols ({extra})</Text>
+            <Text style={styles.laneSub} numberOfLines={1}>Not counted</Text>
+          </Pressable>
+        ) : null}
       </View>
       <ScrollView ref={scroller} horizontal style={{ flex: 1, minWidth: 0 }} showsHorizontalScrollIndicator testID="patrol-monitor-hours">
         <View>
@@ -172,22 +204,36 @@ function MonitorGrid({ site, layout, onOpenCell }: { site: PatrolMonitorSite; la
               <View key={lane.key} style={{ flexDirection: 'row', height: rowHeight }}>
                 {hours.map((h) => {
                   const cell = byHour.get(h.index) ?? { hour: h.index, state: 'none' as const, total: 0, owed: 0, verified: 0, windowKeys: [] };
-                  return <MonitorCellView key={h.index} lane={lane} cell={cell} hour={h} size={cellSize} onOpen={onOpenCell} />;
+                  return <MonitorCellView key={h.index} lane={lane} spoken={labels.get(lane.key)!.spoken} cell={cell} hour={h} size={cellSize} onOpen={onOpenCell} />;
                 })}
               </View>
             );
           })}
+          {extra ? (
+            <View style={{ flexDirection: 'row', height: rowHeight }} testID="patrol-monitor-additional-hours">
+              {hours.map((h) => {
+                const n = extraByHour.get(h.index) ?? 0;
+                return (
+                  <View key={h.index} style={{ width: cellSize, height: rowHeight, padding: 2 }} accessibilityLabel={n ? `Additional patrols, ${h.label}:00: ${n}` : undefined}>
+                    <View style={[styles.cell, n ? styles.extraCell : styles.extraEmpty]}>
+                      {n ? <Text style={[styles.cellSymbol, { color: colors.info }]}>◇{n > 1 ? n : ''}</Text> : null}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </View>
   );
 }
 
-function MonitorCellView({ lane, cell, hour, size, onOpen }: { lane: PatrolMonitorLane; cell: PatrolMonitorCell; hour: PatrolMonitorHour; size: number; onOpen: (s: MonitorCellSelection) => void; key?: number }) {
+function MonitorCellView({ lane, spoken, cell, hour, size, onOpen }: { lane: PatrolMonitorLane; spoken: string; cell: PatrolMonitorCell; hour: PatrolMonitorHour; size: number; onOpen: (s: MonitorCellSelection) => void; key?: number }) {
   const info = monitorStateInfo(cell.state);
   const p = monitorPalette(info.tone);
   const count = monitorCellCount(cell);
-  const label = monitorCellA11yLabel(monitorLaneTitle(lane), hour, cell);
+  const label = monitorCellA11yLabel(spoken, hour, cell);
   const face = (
     <View style={[styles.cell, { backgroundColor: p.bg, borderColor: hour.current ? colors.primaryNavy : p.border }]}>
       {info.symbol ? <Text style={[styles.cellSymbol, { color: p.fg }]}>{info.symbol}</Text> : null}
@@ -236,5 +282,8 @@ const styles = {
   cell: { flex: 1, borderWidth: 1, borderRadius: 6, alignItems: 'center' as const, justifyContent: 'center' as const },
   cellSymbol: { fontSize: 14, fontWeight: '700' as const, lineHeight: 16 },
   cellCount: { fontSize: 10, fontWeight: '700' as const, lineHeight: 12 },
+  extraName: { borderTopWidth: 1, borderTopColor: colors.border },
+  extraCell: { backgroundColor: colors.infoSurface, borderColor: colors.infoBorder, borderStyle: 'dashed' as const },
+  extraEmpty: { backgroundColor: colors.card, borderColor: colors.surfaceSubtle },
   cellAdHoc: { position: 'absolute' as const, top: 1, right: 3, fontSize: 9, fontWeight: '700' as const, color: colors.info },
 };

@@ -7,6 +7,7 @@ import { Drawer } from '../ui/Drawer';
 import type { PatrolPageContext } from './patrolContext';
 import {
   monitorAdHocExplanation,
+  monitorCellSummary,
   monitorCellWindows,
   monitorClock,
   monitorClockOnDay,
@@ -51,7 +52,12 @@ export function PatrolMonitorCellDetail({ ctx, site, selection, onClose }: {
       width={ctx.layout.detailFullScreen ? 10_000 : 520}
     >
       <View style={{ gap: spacing.md }} testID="patrol-monitor-cell-detail">
-        {lane && lane.kind === 'shift' ? <Text style={ui.muted}>Shift {monitorShiftTimes(lane, zone, day)}{lane.requirement?.summary ? ` · ${lane.requirement.summary}` : ''}</Text> : null}
+        {selection && site ? (
+          <Text style={styles.summary} accessibilityRole="header" testID="patrol-monitor-cell-summary">
+            {monitorCellSummary({ windows, runs: site.runs, laneGuard: lane && lane.kind === 'shift' ? laneTitle : null, adHoc: adHoc.length, timeZone: zone, day })}
+          </Text>
+        ) : null}
+        {lane && lane.kind === 'shift' ? <Text style={ui.muted}>Shift {lane.shiftId != null ? `${lane.shiftId} · ` : ''}{monitorShiftTimes(lane, zone, day)}{lane.requirement?.summary ? ` · ${lane.requirement.summary}` : ''}</Text> : null}
         {lane && lane.kind === 'site' ? <Text style={ui.muted}>Site-wide patrol: any Guard on duty at the site can complete it.</Text> : null}
         {windows.length > 1 ? <Text style={ui.muted}>{selection!.cell.later == null ? `${selection!.cell.verified} of ${windows.length} patrols in this hour verified.` : `${monitorCountWords(selection!.cell)}.`}</Text> : null}
         {windows.map((w) => <MonitorWindowDetail key={w.key} ctx={ctx} site={site!} lane={lane!} window={w} onLeave={onClose} />)}
@@ -122,7 +128,7 @@ function MonitorWindowDetail({ ctx, site, lane, window: w, onLeave }: { ctx: Pat
 }
 
 /** An ad-hoc patrol: when, who, its counts, and why it counts towards no scheduled window. Counts only; no photo or link. */
-function MonitorAdHocDetail({ ctx, site, other, onLeave }: { ctx: PatrolPageContext; site: PatrolMonitorSite; other: PatrolMonitorSite['otherRuns'][number]; onLeave: () => void; key?: number }) {
+export function MonitorAdHocDetail({ ctx, site, other, onLeave }: { ctx: PatrolPageContext; site: PatrolMonitorSite; other: PatrolMonitorSite['otherRuns'][number]; onLeave: () => void; key?: number }) {
   const zone = site.timeZone;
   const day = site.range.date;
   const run = site.runs[String(other.runId)] ?? null;
@@ -153,6 +159,7 @@ function MonitorAdHocDetail({ ctx, site, other, onLeave }: { ctx: PatrolPageCont
 const styles = {
   window: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm, padding: spacing.md, gap: spacing.xs, backgroundColor: colors.card },
   windowHead: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const, gap: spacing.sm, flexWrap: 'wrap' as const },
+  summary: { fontSize: 15, lineHeight: 21, fontWeight: '600' as const, color: colors.textPrimary },
   adHocMark: { borderWidth: 1, borderColor: colors.infoBorder, backgroundColor: colors.infoSurface, borderRadius: radii.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   adHocMarkText: { fontSize: 12, fontWeight: '600' as const, color: colors.info },
 };

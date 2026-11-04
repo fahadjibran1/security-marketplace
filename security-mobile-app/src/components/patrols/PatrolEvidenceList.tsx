@@ -3,7 +3,7 @@ import { Image, Platform, Text, View } from 'react-native';
 import { getPatrolEvidenceLink, getPatrolEvidenceThumbnails } from '../../services/api';
 import { PATROL_EVIDENCE_ACCESS_PURPOSES, type PatrolEvidence, type PatrolEvidenceAccessPurpose, type PatrolRun } from '../../types/patrols';
 import { Button } from '../ui/Button';
-import { AppModal } from '../ui/Modal';
+import { PatrolPhotoViewer } from './PatrolPhotoViewer';
 import { patrolFailureMessage } from './patrolAccess';
 import type { PatrolPageContext } from './patrolContext';
 import {
@@ -13,6 +13,7 @@ import {
   evidencePage,
   evidenceStatus,
   evidenceStatusLabel,
+  EVIDENCE_TERMS_NOTE,
   evidenceStatusTone,
   formatBytes,
   formatPatrolDateTime,
@@ -140,6 +141,7 @@ export function PatrolEvidenceList({ ctx, run, evidence }: { ctx: PatrolPageCont
         <ChipSelect label="Why are you viewing these photos?" options={PATROL_EVIDENCE_ACCESS_PURPOSES.map((p) => ({ value: p, label: PURPOSE_LABELS[p] }))} value={purpose} onChange={setPurpose} scroll />
       ) : <Text style={ui.muted}>No photos were recorded for this patrol.</Text>}
       {evidence.length ? <Text style={ui.rowMeta}>Previews of this page are recorded once in the audit log. Opening a photo records it with your reason.</Text> : null}
+      {evidence.length ? <Text style={ui.muted} accessibilityLabel="What the photo words mean">{EVIDENCE_TERMS_NOTE}</Text> : null}
       {previewState === 'expired' ? (
         <View style={ui.actions}>
           <Notice tone="info" message="Photo previews expired and were discarded." />
@@ -199,15 +201,13 @@ export function PatrolEvidenceList({ ctx, run, evidence }: { ctx: PatrolPageCont
           <Button label="Next photos" size="sm" variant="secondary" disabled={page.page >= page.totalPages} onPress={() => setPage(page.page + 1)} />
         </View>
       ) : null}
-      <AppModal visible={Boolean(viewer)} onClose={() => setViewer(null)} title={viewer ? `Photo #${viewer.evidenceId}` : 'Photo'} subtitle="Short-lived link. Viewing is recorded in the audit log." size="large">
-        {viewer ? (
-          <Image
-            accessibilityLabel={`Patrol photo ${viewer.evidenceId}`}
-            source={{ uri: viewer.url, cache: 'reload' } as any}
-            style={{ width: '100%', height: 420, resizeMode: 'contain', backgroundColor: '#0B1F33' } as any}
-          />
-        ) : null}
-      </AppModal>
+      <PatrolPhotoViewer
+        uri={viewer?.url ?? null}
+        title={viewer ? `Photo #${viewer.evidenceId}` : 'Photo'}
+        subtitle="Short-lived link. Viewing is recorded in the audit log."
+        accessibilityLabel={viewer ? `Patrol photo ${viewer.evidenceId}` : 'Patrol photo'}
+        onClose={() => setViewer(null)}
+      />
     </View>
   );
 }

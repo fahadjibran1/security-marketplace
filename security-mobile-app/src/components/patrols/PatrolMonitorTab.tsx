@@ -33,6 +33,7 @@ export function PatrolMonitorTab({ ctx }: { ctx: PatrolPageContext; key?: string
   const [clientId, setClientId] = React.useState<number | null>(null);
   const [status, setStatus] = React.useState<MonitorStatusFilter>('all');
   const [expanded, setExpanded] = React.useState<ReadonlySet<number>>(() => new Set());
+  const [guide, setGuide] = React.useState(false);
   const live = date == null;
   const phone = ctx.layout.mode === 'mobile';
 
@@ -43,7 +44,10 @@ export function PatrolMonitorTab({ ctx }: { ctx: PatrolPageContext; key?: string
   );
   // Every site's card is the site list itself (the page's site picker is hidden here); read once per company and day.
   const data = summary.data && Array.isArray(summary.data.sites) ? summary.data : null;
-  const today = data?.date && live ? data.date : siteTodayKey(DEFAULT_SITE_ZONE);
+  // "Today" is the site-local day the last live summary answered with (the sites' own day); London's only before one.
+  const [liveDay, setLiveDay] = React.useState<string | null>(null);
+  React.useEffect(() => { if (live && data?.date) setLiveDay(data.date); }, [live, data?.date]);
+  const today = (live ? data?.date : null) ?? liveDay ?? siteTodayKey(DEFAULT_SITE_ZONE);
   const shown = date ?? today;
 
   const allSites = data ? data.sites : [];
@@ -92,6 +96,20 @@ export function PatrolMonitorTab({ ctx }: { ctx: PatrolPageContext; key?: string
         />
       ) : null}
 
+      {/* The Status guide: hidden by default, one press away (usability update, 4 Nov 2026). */}
+      {data && allSites.length ? (
+        <View style={{ gap: spacing.xs }}>
+          <Button
+            label={guide ? 'Hide status guide' : 'Status guide'}
+            accessibilityLabel={guide ? 'Hide status guide' : 'Status guide'}
+            variant="tertiary"
+            size="sm"
+            onPress={() => setGuide((g) => !g)}
+          />
+          {guide ? <MonitorLegend /> : null}
+        </View>
+      ) : null}
+
       {ResourceState({
         resource: summary,
         empty: Boolean(data) && sites.length === 0,
@@ -112,8 +130,6 @@ export function PatrolMonitorTab({ ctx }: { ctx: PatrolPageContext; key?: string
         );
       })}
 
-      {/* The key to the hour cells, once, whenever a site's hours are open. */}
-      {expanded.size ? <MonitorLegend /> : null}
     </View>
   );
 }

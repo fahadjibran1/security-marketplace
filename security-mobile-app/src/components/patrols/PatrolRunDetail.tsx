@@ -90,7 +90,7 @@ export function PatrolRunDetail({ ctx, runId, onClose }: { ctx: PatrolPageContex
                 <RowCard key={v.id}>
                   <View style={ui.actions}>
                     <Text style={ui.rowTitle}>{v.checkpointLabel || (v.checkpointPublicId ? 'Unknown checkpoint' : 'Unidentified label')}</Text>
-                    <Badge label={v.result === 'verified' ? 'Verified' : v.result === 'flagged' ? 'Flagged' : 'Unverified'} tone={v.result === 'verified' ? 'success' : v.result === 'flagged' ? 'danger' : 'pending'} />
+                    <Badge label={v.result === 'verified' ? 'Verified scan' : v.result === 'flagged' ? 'Flagged scan' : 'Unverified scan'} tone={v.result === 'verified' ? 'success' : v.result === 'flagged' ? 'danger' : 'pending'} />
                     {v.provisional ? <Badge label="Provisional" tone="pending" /> : null}
                     {v.syncedLate ? <Badge label="Late sync" tone="info" /> : null}
                   </View>

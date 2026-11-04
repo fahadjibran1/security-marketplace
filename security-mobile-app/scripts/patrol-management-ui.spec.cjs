@@ -509,7 +509,8 @@ test('PM-10-A-PHOTO-LINK-IS-FETCHED-ON-DEMAND-NEVER-LOGGED-OR-KEPT', async () =>
   await pressByText(renderer.root, 'Live Patrols');
   await pressByText(renderer.root, 'Open patrol 5');
   assert.ok(!calls.some(([k]) => k === 'getPatrolEvidenceLink'), 'no link until asked');
-  assert.ok(textOf(renderer.root).includes('Verified'), 'verification status shown');
+  // Owner terminology (4 Nov 2026): a photo's upload check reads "Photo received" — never a person's review.
+  assert.ok(textOf(renderer.root).includes('Photo received'), 'the photo\'s status shown');
   assert.ok(textOf(renderer.root).includes('Retention: until'), 'retention expiry shown');
   await pressByText(renderer.root, 'Why are you viewing these photos?: Investigation');
   await pressByText(renderer.root, 'View photo');
