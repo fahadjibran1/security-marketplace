@@ -10,7 +10,7 @@
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
   "marketingVersion": "1.2.1",
-  "buildNumber": "21",
+  "buildNumber": "22",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
@@ -30,49 +30,23 @@
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "preparedArtefact": {
-    "status": "uploaded-to-app-store-connect",
+    "status": "prepared-not-built",
     "marketingVersion": "1.2.1",
-    "buildNumber": "21",
-    "easBuildId": "b5a46d30-b24f-4c5e-a11e-85ea9257123b",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b5a46d30-b24f-4c5e-a11e-85ea9257123b",
+    "buildNumber": "22",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
-    "sourceFixCommit": "63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0",
-    "gitCommit": "5d749fa1bd5797ff69fa16c4432ee13a2437b602",
-    "ipaFilename": "s4-1.2.1-ios21-b5a46d30.ipa",
-    "ipaSha256": "e5e4d4be5eea07684573e6d29676628ffe921d4b6d289b5a1678eec196a9a47a",
-    "ipaSizeBytes": 12868425,
-    "certifiedOn": "2026-11-01",
+    "sourceBranch": "fix/ios-patrol-photo-camera-forward",
+    "sourceFixCommit": "c82c4426d9ef9174ab0a752dd505657614206a56",
+    "sourceBase": "2c72b01 (release/s4-pilot-rc1, the production backend and dashboard)",
     "requiredSigning": {
       "credentials": "EAS-managed (remote), unchanged",
       "teamId": "SXH4TLU2B5",
       "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
       "distributionCertificateSerial": "3933E4689FD03762FE3029E42A6BC3B5",
-      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17, 18, 19 and 20",
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17, 18, 19, 20 and 21",
       "apsEnvironment": "production"
     },
-    "verified": {
-      "bundleIdentifier": "com.sfour.s4",
-      "marketingVersion": "1.2.1",
-      "buildNumber": "21",
-      "provisioningProfileUuid": "1f19cdf5-67cd-4e7b-af8b-131c87c13964",
-      "teamId": "SXH4TLU2B5",
-      "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
-      "apsEnvironment": "production",
-      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "stagingApiUrls": 0,
-      "productionApiUrls": 1
-    },
-    "note": "S4 1.2.1 (21), the same commit as Android 1.2.1 (24) (5d749fa): 1.2.0 (20) plus Package A (patrol correctness and Guard app visibility: the patrol plan refreshed while the shift is in progress and kept when offline, an active patrol keeps its own route, photos required yes / no with a reason when one is missing, photo-only patrols, a QR site without a route shown as a configuration problem, patrol exceptions acknowledged and resolved from the dashboard). The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (b5a46d30, production profile, STORE) with the existing EAS-managed credentials and verified (coordinator-verified 1 Nov 2026): profile UUID 1f19cdf5..., team SXH4TLU2B5, distribution certificate c1f9c5b6..., aps-environment production. Uploaded to App Store Connect by EAS Submit (below) on 1 Nov 2026. Apple processing is not yet confirmed; S4 assigned it to no TestFlight group and it is not submitted for App Store review. 1.1.0 (17) stays the distributed iOS build and 1.1.2 (19) stays uploaded to App Store Connect. The IPA is kept outside Git.",
-    "testFlightUpload": {
-      "easSubmissionId": "fa9fafd1-1a41-468b-8ce9-caca7bec6b44",
-      "ascAppId": "6820632995",
-      "ascApiKeyId": "468TT6N8RB",
-      "uploadedOn": "2026-11-01",
-      "appleProcessing": "unconfirmed",
-      "note": "EAS Submit uploaded 1.2.1 (21) from EAS build b5a46d30 (not rebuilt) to the existing S4 App Store Connect app. Apple processing not yet confirmed; no TestFlight group assignment by S4; not submitted for App Store review."
-    }
+    "note": "S4 1.2.1 (22), iOS only: the iPhone Photo Patrol fix (the patrol camera opens from inside the patrol modal; GPAT-35) on top of production 2c72b01, verified by the complete S4 Mobile Release Gate on PR #115 (run 42110413070). Prepared, not built: no EAS build, file, hash, upload or store fact yet. Same bundle identifier com.sfour.s4, Expo project, EAS-managed signing and production API as 21. Android is unchanged: 1.2.1 (24) stays as recorded. 1.2.1 (21) is superseded by 22 and kept as recorded; 1.1.0 (17) stays the distributed iOS build."
   },
   "submittedArtefact": {
     "status": "uploaded-to-testflight",
@@ -199,6 +173,53 @@
     }
   },
   "supersededArtefacts": [
+    {
+      "status": "uploaded-to-app-store-connect",
+      "marketingVersion": "1.2.1",
+      "buildNumber": "21",
+      "easBuildId": "b5a46d30-b24f-4c5e-a11e-85ea9257123b",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/b5a46d30-b24f-4c5e-a11e-85ea9257123b",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
+      "sourceFixCommit": "63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0",
+      "gitCommit": "5d749fa1bd5797ff69fa16c4432ee13a2437b602",
+      "ipaFilename": "s4-1.2.1-ios21-b5a46d30.ipa",
+      "ipaSha256": "e5e4d4be5eea07684573e6d29676628ffe921d4b6d289b5a1678eec196a9a47a",
+      "ipaSizeBytes": 12868425,
+      "certifiedOn": "2026-11-01",
+      "requiredSigning": {
+        "credentials": "EAS-managed (remote), unchanged",
+        "teamId": "SXH4TLU2B5",
+        "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+        "distributionCertificateSerial": "3933E4689FD03762FE3029E42A6BC3B5",
+        "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17, 18, 19 and 20",
+        "apsEnvironment": "production"
+      },
+      "verified": {
+        "bundleIdentifier": "com.sfour.s4",
+        "marketingVersion": "1.2.1",
+        "buildNumber": "21",
+        "provisioningProfileUuid": "1f19cdf5-67cd-4e7b-af8b-131c87c13964",
+        "teamId": "SXH4TLU2B5",
+        "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+        "apsEnvironment": "production",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "productionApiUrls": 1
+      },
+      "note": "S4 1.2.1 (21), the same commit as Android 1.2.1 (24) (5d749fa): 1.2.0 (20) plus Package A (patrol correctness and Guard app visibility: the patrol plan refreshed while the shift is in progress and kept when offline, an active patrol keeps its own route, photos required yes / no with a reason when one is missing, photo-only patrols, a QR site without a route shown as a configuration problem, patrol exceptions acknowledged and resolved from the dashboard). The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (b5a46d30, production profile, STORE) with the existing EAS-managed credentials and verified (coordinator-verified 1 Nov 2026): profile UUID 1f19cdf5..., team SXH4TLU2B5, distribution certificate c1f9c5b6..., aps-environment production. Uploaded to App Store Connect by EAS Submit (below) on 1 Nov 2026. Apple processing is not yet confirmed; S4 assigned it to no TestFlight group and it is not submitted for App Store review. 1.1.0 (17) stays the distributed iOS build and 1.1.2 (19) stays uploaded to App Store Connect. The IPA is kept outside Git.",
+      "testFlightUpload": {
+        "easSubmissionId": "fa9fafd1-1a41-468b-8ce9-caca7bec6b44",
+        "ascAppId": "6820632995",
+        "ascApiKeyId": "468TT6N8RB",
+        "uploadedOn": "2026-11-01",
+        "appleProcessing": "unconfirmed",
+        "note": "EAS Submit uploaded 1.2.1 (21) from EAS build b5a46d30 (not rebuilt) to the existing S4 App Store Connect app. Apple processing not yet confirmed; no TestFlight group assignment by S4; not submitted for App Store review."
+      },
+      "supersededBy": "22",
+      "supersededReason": "iOS Photo Patrol defect: \"Take patrol photo\" did nothing on iPhone (the patrol camera was presented beside the open patrol modal; UIKit refused it). Fixed in 22."
+    },
     {
       "status": "built-not-submitted",
       "marketingVersion": "1.2.0",
