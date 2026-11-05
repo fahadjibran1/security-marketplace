@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { SafetyAlertStatus, SafetyAlertType } from './entities/safety-alert.entity';
-import { HISTORY_MAX_PAGE_SIZE, OPERATIONAL_MAX_WINDOW_MS, SafetyAlertScopeQuery } from './safety-alert.service';
+import { HISTORY_MAX_PAGE_SIZE, OPERATIONAL_MAX_WINDOW_MS, SafetyAlertScopeQuery, SHIFT_MAX_PAGE_SIZE } from './safety-alert.service';
 
 /** The raw query string values of GET /alerts/company (each read on its own: unknown keys keep being ignored). */
 export type RawAlertScopeQuery = {
@@ -78,10 +78,10 @@ export function parseAlertScopeQuery(raw: RawAlertScopeQuery): SafetyAlertScopeQ
     };
   }
   if (scope === 'shift') {
-    refuse(['shiftId']);
+    refuse(['shiftId', 'page', 'pageSize']);
     const shiftId = positiveInt(raw.shiftId, 'shiftId');
     if (!shiftId) throw new BadRequestException('"shiftId" is required for scope=shift.');
-    return { scope, shiftId };
+    return { scope, shiftId, page: positiveInt(raw.page, 'page', 100_000), pageSize: positiveInt(raw.pageSize, 'pageSize', SHIFT_MAX_PAGE_SIZE) };
   }
   throw new BadRequestException(`"${scope}" is not an alert scope (operational, history or shift).`);
 }

@@ -16,6 +16,10 @@
  *   ACS-09  invalid input: unknown scope, a parameter of another scope, bad numbers and dates — 400 with the reason
  *   ACS-10  scoped reads write nothing
  *   ACS-11  the alert lifecycle is unchanged: acknowledging and closing are reflected, counts follow
+ *   ACS-12  the WHOLE operational response is strictly bounded (unresolved + board + recent <= 2520) with thousands of
+ *           each; a panic or critical alert is never left out for routine ones; every unresolved alert is listed or
+ *           counted as omitted, per type; explicit more flags
+ *   ACS-13  one shift's record is complete across pages (paginated, at most 500 per page)
  *
  * Needs ALERTS_COMPANY_SCOPE_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -212,7 +216,8 @@ async function main() {
     assert.equal(got.size, r.alerts.length, 'no alert twice');
     const order = r.alerts.map((a: any) => [new Date(a.createdAt).getTime(), a.id]);
     for (let i = 1; i < order.length; i += 1) assert.ok(order[i - 1][0] > order[i][0] || (order[i - 1][0] === order[i][0] && order[i - 1][1] > order[i][1]), 'newest first, id tie-break');
-    assert.deepEqual(r.counts, { unresolved: 6, unresolvedByType: { compliance_lapse: 1, late_checkin: 1, missed_checkcall: 1, other: 1, patrol_missed: 1, site_request: 1 } }, 'complete unresolved counts');
+    assert.deepEqual([r.counts.unresolved, r.counts.unresolvedByType], [6, { compliance_lapse: 1, late_checkin: 1, missed_checkcall: 1, other: 1, patrol_missed: 1, site_request: 1 }], 'complete unresolved counts');
+    assert.deepEqual([r.counts.unresolvedListed, r.counts.unresolvedOmittedByType, r.returned], [6, {}, r.alerts.length], 'all listed, nothing omitted');
     assert.deepEqual(r.more, { unresolved: false, window: false });
     const plain = ok(await api('GET', '/alerts/company', tok.owner));
     for (const a of r.alerts) assert.deepEqual(a, plain.find((p: any) => p.id === a.id), `alert ${a.id}: the same item as the unscoped list`);
@@ -270,7 +275,7 @@ async function main() {
   await test('ACS-06-ONE-SHIFT-RECORD', async () => {
     const r = ok(await api('GET', `/alerts/company?scope=shift&shiftId=${oldShift}`, tok.owner));
     assert.deepEqual(idsOf(r.alerts).sort(), [ids.oldOpen, ids.oldAcked, ids.oldClosed, ids.oldEvidence].sort(), 'the whole record of an old shift');
-    assert.equal(r.more, false);
+    assert.deepEqual([r.more, r.total, r.page, r.pageSize], [false, 4, 1, 100]);
     const bShift = Number((await one(`SELECT "shiftId" FROM safety_alerts WHERE id = $1`, [ids.bOpen])).shiftId);
     assert.equal((await api('GET', `/alerts/company?scope=shift&shiftId=${bShift}`, tok.owner)).status, 404, 'another company\'s shift');
     assert.equal((await api('GET', '/alerts/company?scope=shift&shiftId=99999', tok.owner)).status, 404);
@@ -292,7 +297,8 @@ async function main() {
       }
       assert.equal((await api('GET', `/alerts/company?scope=${s}`, tok.finance)).status, 404, `Finance, ${s}: as without a scope`);
     }
-    assert.deepEqual(ok(await operational(tok.hr)).counts, { unresolved: 1, unresolvedByType: { compliance_lapse: 1 } }, 'counts only of what the member may see');
+    const hrCounts = ok(await operational(tok.hr)).counts;
+    assert.deepEqual([hrCounts.unresolved, hrCounts.unresolvedByType], [1, { compliance_lapse: 1 }], 'counts only of what the member may see');
     await q(`UPDATE companies SET "patrolsEnabled" = false WHERE id = $1`, [A.id]);
     const off = ok(await operational(tok.viewer));
     assert.ok(off.alerts.length > 0 && off.alerts.every((a: any) => a.type === 'compliance_lapse'), 'Patrols off: a Viewer keeps compliance lapses, loses patrol alerts, as without a scope');
@@ -339,6 +345,63 @@ async function main() {
     r = ok(await operational(tok.owner));
     assert.equal(r.counts.unresolved, 5, 'resolved: out of the unresolved count');
     assert.equal(r.alerts.find((a: any) => a.id === ids.upcomingOpen)?.status, 'closed', 'still in its board shift\'s record');
+  });
+
+  await test('ACS-12-THE-WHOLE-OPERATIONAL-RESPONSE-IS-STRICTLY-BOUNDED-AND-NOTHING-SAFETY-CRITICAL-IS-DROPPED', async () => {
+    const D = await mkCompany('delta');
+    const sd = await mkSite(D.id);
+    const gd = await mkGuard('dee');
+    const boardShift = await mkShift(D.id, sd, gd, -6, -2, 'completed');
+    const oldShiftD = await mkShift(D.id, sd, gd, -800, -790, 'completed');
+    // 1,200 routine unresolved alerts (newest), 2,300 closed records on a board shift, and — oldest of all — 3 open
+    // panics and 2 critical Missing Book Off alerts.
+    await q(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,message,status,"createdAt","updatedAt")
+      SELECT $1, $2, $3, 'other', 'medium', 'routine', 'open', now() - (s || ' seconds')::interval, now() FROM generate_series(1, 1200) s`, [D.id, gd, oldShiftD]);
+    await q(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,message,status,"createdAt","updatedAt","closedAt","welfareWindowIndex")
+      SELECT $1, $2, $3, 'missed_checkcall', 'medium', 'window', 'closed', now() - interval '1 hour' - (s || ' seconds')::interval, now(), now(), s FROM generate_series(1, 2300) s`, [D.id, gd, boardShift]);
+    const panics: number[] = [];
+    for (let i = 0; i < 3; i += 1) panics.push(await mkAlert({ companyId: D.id, guardId: gd, shiftId: oldShiftD, type: 'panic', createdH: -700 - i, extra: { priority: 'critical' } }));
+    const criticals: number[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const sh = await mkShift(D.id, sd, gd, -600 - i * 20, -590 - i * 20, 'completed');
+      criticals.push(await mkAlert({ companyId: D.id, guardId: gd, shiftId: sh, type: 'missing_book_off', createdH: -580 - i, extra: { priority: 'critical' } }));
+    }
+    const r = ok(await operational(await login(D.ownerEmail)));
+    assert.ok(r.alerts.length <= r.limits.total && r.limits.total === 2520, `strict bound: ${r.alerts.length} <= ${r.limits.total}`);
+    assert.equal(r.returned, r.alerts.length);
+    assert.equal(new Set(idsOf(r.alerts)).size, r.alerts.length, 'no alert twice');
+    const got = new Set(idsOf(r.alerts));
+    for (const id of [...panics, ...criticals]) assert.ok(got.has(id), `safety-critical alert ${id} is listed although it is the oldest`);
+    assert.deepEqual([r.counts.unresolved, r.counts.unresolvedByType], [1205, { missing_book_off: 2, other: 1200, panic: 3 }], 'complete counts');
+    const omitted = Object.values(r.counts.unresolvedOmittedByType as Record<string, number>).reduce((n, v) => n + v, 0);
+    assert.equal(r.counts.unresolvedListed + omitted, r.counts.unresolved, 'every unresolved alert is listed or counted as omitted');
+    assert.deepEqual(Object.keys(r.counts.unresolvedOmittedByType), ['other'], 'only routine alerts were left out');
+    assert.equal(r.alerts.filter((a: any) => a.status !== 'closed').length, r.counts.unresolvedListed);
+    assert.deepEqual([r.more.unresolved, r.more.window], [true, true], 'explicit more flags');
+    assert.ok(r.alerts.filter((a: any) => a.shift?.id === boardShift).length <= 2000, 'the board part is capped');
+  });
+
+  await test('ACS-13-ONE-SHIFT-RECORD-IS-COMPLETE-ACROSS-PAGES', async () => {
+    const E = await mkCompany('echo');
+    const se = await mkSite(E.id);
+    const ge = await mkGuard('eve');
+    const long = await mkShift(E.id, se, ge, -900, -880, 'completed');
+    await q(`INSERT INTO safety_alerts ("companyId","guardId","shiftId",type,priority,message,status,"createdAt","updatedAt","closedAt","welfareWindowIndex")
+      SELECT $1, $2, $3, 'missed_checkcall', 'medium', 'window', 'closed', now() - interval '880 hours' - (s || ' seconds')::interval, now(), now(), s FROM generate_series(1, 650) s`, [E.id, ge, long]);
+    const t = await login(E.ownerEmail);
+    let seen: number[] = [];
+    let page = 1;
+    let last: any = null;
+    do {
+      last = ok(await api('GET', `/alerts/company?scope=shift&shiftId=${long}&page=${page}&pageSize=100`, t));
+      seen = seen.concat(idsOf(last.alerts));
+      page += 1;
+    } while (last.more && page < 20);
+    const all = (await q(`SELECT id FROM safety_alerts WHERE "shiftId" = $1 ORDER BY "createdAt" DESC, id DESC`, [long])).map((x: any) => Number(x.id));
+    assert.deepEqual([last.total, seen.length], [650, 650]);
+    assert.deepEqual(seen, all, 'every alert of the shift, in order, none repeated or skipped');
+    assert.equal(ok(await api('GET', `/alerts/company?scope=shift&shiftId=${long}&pageSize=500`, t)).alerts.length, 500);
+    assert.equal((await api('GET', `/alerts/company?scope=shift&shiftId=${long}&pageSize=501`, t)).status, 400, 'at most 500 per page');
   });
 
   await app.close();

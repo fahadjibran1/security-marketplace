@@ -75,14 +75,30 @@ export const OPERATIONAL_UNRESOLVED_LIMIT = 500;
 export const OPERATIONAL_WINDOW_LIMIT = 2000;
 /** Enough newest alerts for Recent activity (the dashboard shows its top 8 across every feed). */
 export const OPERATIONAL_RECENT_LIMIT = 20;
+/**
+ * The strict upper bound of one operational response: the three parts are capped independently and de-duplicated, so
+ * the list never exceeds their sum, however many unresolved, board or recent alerts exist.
+ */
+export const OPERATIONAL_TOTAL_LIMIT = OPERATIONAL_UNRESOLVED_LIMIT + OPERATIONAL_WINDOW_LIMIT + OPERATIONAL_RECENT_LIMIT;
 export const HISTORY_DEFAULT_PAGE_SIZE = 50;
 export const HISTORY_MAX_PAGE_SIZE = 100;
-export const SHIFT_ALERT_LIMIT = 500;
+/** One shift's record, paginated (complete across pages). */
+export const SHIFT_DEFAULT_PAGE_SIZE = 100;
+export const SHIFT_MAX_PAGE_SIZE = 500;
 
 export type SafetyAlertScopeQuery =
   | { scope: 'operational'; since?: Date; until?: Date }
   | { scope: 'history'; page?: number; pageSize?: number; from?: Date; to?: Date; type?: string; status?: string }
-  | { scope: 'shift'; shiftId: number };
+  | { scope: 'shift'; shiftId: number; page?: number; pageSize?: number };
+
+/**
+ * Which unresolved alerts the operational list keeps first when there are more than its cap: an emergency (panic),
+ * then by the alert's own priority (critical, high, medium, low), then the newest. So the cap can never leave out a
+ * panic or a critical alert in favour of routine ones; what is left out is counted, per type.
+ */
+const UNRESOLVED_SAFETY_ORDER = `CASE WHEN a."type"::text = 'panic' THEN 0 ELSE 1 END,
+  CASE a."priority"::text WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+  a."createdAt" DESC, a."id" DESC`;
 
 /** A Book Off is late, not missing, until the shift has been over for a quarter of an hour. */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
@@ -1219,8 +1235,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       const until = query.until ?? new Date(now.getTime() + OPERATIONAL_LOOKAHEAD_MS);
       const since = query.since ?? new Date(now.getTime() - OPERATIONAL_LOOKBACK_MS);
       const unresolved = await this.dataSource.query(
-        `SELECT a."id" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."status" <> 'closed'
-          ORDER BY a."createdAt" DESC, a."id" DESC LIMIT ${OPERATIONAL_UNRESOLVED_LIMIT + 1}`, [companyId, typeList]);
+        `SELECT a."id", a."type"::text AS "type" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."status" <> 'closed'
+          ORDER BY ${UNRESOLVED_SAFETY_ORDER} LIMIT ${OPERATIONAL_UNRESOLVED_LIMIT + 1}`, [companyId, typeList]);
       const board = await this.dataSource.query(
         `SELECT a."id" FROM "safety_alerts" a JOIN "shifts" s ON s."id" = a."shiftId"
           WHERE a."companyId" = $1 AND ${TYPE} AND ((s."end" >= $3 AND s."start" <= $4) OR s."status"::text = 'in_progress')
@@ -1238,16 +1254,31 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       ])];
       const alerts = (await this.hydrateAlerts(ids))
         .sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime() || y.id - x.id);
+      // Every unresolved alert is either in the list or counted as omitted, per type: nothing is left out silently.
+      const byType: Record<string, number> = Object.fromEntries(counted.map((r: any) => [r.type, Number(r.n)]));
+      const listedIds = new Set(alerts.map((a) => a.id));
+      const listedByType: Record<string, number> = {};
+      for (const a of alerts) if (a.status !== SafetyAlertStatus.CLOSED) listedByType[a.type] = (listedByType[a.type] ?? 0) + 1;
+      const omittedByType: Record<string, number> = {};
+      for (const [type, n] of Object.entries(byType)) if (n > (listedByType[type] ?? 0)) omittedByType[type] = n - (listedByType[type] ?? 0);
+      const unresolvedTotal = Object.values(byType).reduce((n, v) => n + v, 0);
       return {
         scope: 'operational' as const,
         generatedAt: now.toISOString(),
         window: { since: since.toISOString(), until: until.toISOString() },
         counts: {
-          unresolved: counted.reduce((n: number, r: any) => n + Number(r.n), 0),
-          unresolvedByType: Object.fromEntries(counted.map((r: any) => [r.type, Number(r.n)])),
+          unresolved: unresolvedTotal,
+          unresolvedByType: byType,
+          unresolvedListed: Object.values(listedByType).reduce((n, v) => n + v, 0),
+          unresolvedOmittedByType: omittedByType,
         },
-        more: { unresolved: unresolved.length > OPERATIONAL_UNRESOLVED_LIMIT, window: board.length > OPERATIONAL_WINDOW_LIMIT },
-        limits: { unresolved: OPERATIONAL_UNRESOLVED_LIMIT, window: OPERATIONAL_WINDOW_LIMIT, recent: OPERATIONAL_RECENT_LIMIT },
+        more: {
+          unresolved: Object.keys(omittedByType).length > 0,
+          window: board.length > OPERATIONAL_WINDOW_LIMIT,
+          // The full shift record is always available through scope=shift; history through scope=history.
+        },
+        limits: { unresolved: OPERATIONAL_UNRESOLVED_LIMIT, window: OPERATIONAL_WINDOW_LIMIT, recent: OPERATIONAL_RECENT_LIMIT, total: OPERATIONAL_TOTAL_LIMIT },
+        returned: listedIds.size,
         alerts,
       };
     }
@@ -1277,19 +1308,29 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    // shift: one shift's full record. Another company's shift answers exactly as a missing one.
+    // shift: one shift's full record, paginated so it is complete however long. Another company's shift answers exactly
+    // as a missing one.
     const [shift] = await this.dataSource.query(`SELECT "id" FROM "shifts" WHERE "id" = $1 AND "companyId" = $2`, [query.shiftId, companyId]);
     if (!shift) throw new NotFoundException('Shift not found');
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? SHIFT_DEFAULT_PAGE_SIZE;
+    const [{ total }] = await this.dataSource.query(
+      `SELECT count(*)::int AS "total" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."shiftId" = $3`,
+      [companyId, typeList, query.shiftId],
+    );
     const rows = await this.dataSource.query(
       `SELECT a."id" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."shiftId" = $3
-        ORDER BY a."createdAt" DESC, a."id" DESC LIMIT ${SHIFT_ALERT_LIMIT + 1}`,
-      [companyId, typeList, query.shiftId],
+        ORDER BY a."createdAt" DESC, a."id" DESC LIMIT $4 OFFSET $5`,
+      [companyId, typeList, query.shiftId, pageSize, (page - 1) * pageSize],
     );
     return {
       scope: 'shift' as const,
       shiftId: query.shiftId,
-      more: rows.length > SHIFT_ALERT_LIMIT,
-      alerts: await this.hydrateAlerts(rows.slice(0, SHIFT_ALERT_LIMIT).map((r: any) => Number(r.id))),
+      total: Number(total),
+      page,
+      pageSize,
+      more: page * pageSize < Number(total),
+      alerts: await this.hydrateAlerts(rows.map((r: any) => Number(r.id))),
     };
   }
 
