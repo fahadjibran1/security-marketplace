@@ -39,6 +39,9 @@
  *   GPAT-26  an active patrol keeps its own route (snapshot at start) when a refreshed plan drops it; never the whole site
  *   GPAT-27  photos are "required: yes / no"; the reason box appears whenever ANY requirement is unmet (photos too)
  *   GPAT-28  photo-only sites: card visible, no "Scan checkpoint", no checkpoints required, start → photo → complete
+ *   GPAT-35  (1.2.1 iOS hotfix) iOS: the patrol camera is a modal INSIDE the patrol modal (as a sibling, iOS silently refused to present it
+ *            and "Take patrol photo" did nothing); every camera opening happens inside it; a scan turns the open camera
+ *            straight into the checkpoint photo camera instead of closing it and opening another
  *   GPAT-29  QR without a route: the configuration problem is shown plainly; checkpoints are optional, never required
  *   GPAT-30  NFC is offered nowhere in the Guard app
  * S4 1.3.0 B1 (backend only; the app is unchanged)
@@ -1576,6 +1579,47 @@ test('GPAT-23-CAMERA-HARDWARE-IS-OPTIONAL-SO-PLAY-KEEPS-CAMERA-LESS-DEVICES', ()
   assert.ok(!expo.android.blockedPermissions.includes('android.permission.CAMERA'), 'and not blocked');
   assert.ok(!('features' in expo.android) && !('usesFeatures' in expo.android), 'no other feature declaration in app.json');
   assert.match(codeOf('src/components/guard/patrol/GuardPatrolCamera.tsx'), /CameraView\.isAvailableAsync\(\)\.then\(setAvailable\)/, 'a missing camera is detected at run time');
+});
+
+test('GPAT-35-IOS-THE-PATROL-CAMERA-OPENS-FROM-INSIDE-THE-PATROL-MODAL', () => {
+  // iOS presents a modal from the nearest view controller (react-native RCTModalHostView*: [self reactViewController]
+  // presentViewController:). A camera modal rendered NEXT TO the open patrol modal asks the screen, which is already
+  // presenting the patrol modal, and UIKit refuses without an error: on 1.2.1 iOS 21 "Take patrol photo" did nothing.
+  // Android stacks dialogs either way, so only this structure keeps both platforms working.
+  const camera = stripComments(codeOf('src/components/guard/patrol/GuardPatrolCamera.tsx'));
+  assert.match(camera, /return \(\s*<Modal\b/, 'the patrol camera is itself a native modal, so the rule applies to it');
+  const modal = stripComments(codeOf('src/components/ui/Modal.tsx'));
+  assert.match(modal, /<RNModal\b/, 'and so is the patrol modal (AppModal)');
+
+  const panel = stripComments(codeOf('src/components/guard/patrol/GuardPatrolPanel.tsx'));
+  const opens = [...panel.matchAll(/<AppModal\b/g)].map((m) => m.index);
+  assert.equal(opens.length, 1, 'one patrol modal');
+  const start = opens[0];
+  const end = panel.indexOf('</AppModal>', start);
+  assert.ok(end > start, 'the patrol modal is closed');
+  const cameras = [...panel.matchAll(/<GuardPatrolCamera\b/g)].map((m) => m.index);
+  assert.equal(cameras.length, 1, 'one patrol camera');
+  assert.ok(cameras[0] > start && cameras[0] < end, 'the camera is rendered INSIDE the patrol modal, not beside it');
+
+  // Every place that opens the camera is a control inside the patrol modal; nothing else opens it.
+  const openers = [...panel.matchAll(/setCamera\(\{/g)].map((m) => m.index);
+  assert.ok(openers.length >= 2, 'Scan checkpoint and Take patrol photo open the camera');
+  for (const at of openers) assert.ok(at > start && at < end, 'the camera is opened only from inside the patrol modal');
+  assert.match(panel.slice(start, end), /label="Take patrol photo"[^\n]*setCamera\(\{ mode: 'photo', kind: 'run_photo' \}\)/);
+
+  // A scan never closes the camera and opens another one at once (iOS cannot present while dismissing): the scan is
+  // recorded with the camera still open, then the camera becomes the checkpoint photo camera or closes — one change.
+  const onScanned = panel.slice(panel.indexOf('async function onScanned('), panel.indexOf('async function recordScan('));
+  assert.deepEqual([...onScanned.matchAll(/setCamera\(/g)].length, 1, 'onScanned changes the camera exactly once');
+  assert.match(onScanned, /next = await recordScan\(data\);\s*\} finally \{\s*setCamera\(next\);/, 'after the scan is recorded, even if saving it failed');
+  const recordScan = panel.slice(panel.indexOf('async function recordScan('), panel.indexOf('async function onCaptured('));
+  assert.doesNotMatch(recordScan, /setCamera\(/, 'recording a scan leaves the camera alone');
+  assert.match(recordScan, /return needsPhoto \? \{ mode: 'photo', kind: 'checkpoint_photo', clientVisitId, label \} : null;/);
+
+  // The capture path, the outbox and the photo processing are unchanged by this fix.
+  assert.match(panel, /const task = camera;\s*setCamera\(null\);/, 'a captured photo still closes the camera and is queued');
+  assert.match(panel, /processCapturedPhoto\(capture, photoPortsFor\(userId\)/);
+  assert.match(panel, /engine\.enqueuePhoto\(\{/);
 });
 
 (async () => {
