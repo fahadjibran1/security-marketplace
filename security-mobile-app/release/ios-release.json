@@ -30,14 +30,23 @@
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "preparedArtefact": {
-    "status": "prepared-not-built",
+    "status": "testflight-external-testing",
     "marketingVersion": "1.2.1",
     "buildNumber": "22",
+    "easBuildId": "36fa32ee-75e6-4811-9f9c-05edab2c44f0",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/36fa32ee-75e6-4811-9f9c-05edab2c44f0",
     "easBuildProfile": "production",
     "distribution": "STORE",
     "sourceBranch": "fix/ios-patrol-photo-camera-forward",
     "sourceFixCommit": "c82c4426d9ef9174ab0a752dd505657614206a56",
     "sourceBase": "2c72b01 (release/s4-pilot-rc1, the production backend and dashboard)",
+    "gitCommit": "9b9260127ec462cda260da4b801a060d75a261b6",
+    "sourceGate": "S4 Mobile Release Gate run 42113477982 (PR #115), passed on this exact commit",
+    "completedAt": "2026-11-05T21:47:36.395Z",
+    "ipaFilename": "s4-1.2.1-ios22-36fa32ee.ipa",
+    "ipaSha256": "24de3f6f7b4a36fd90fb0187582effd61642076b5f4258c1cc5f4d82bd50e0eb",
+    "ipaSizeBytes": 12952169,
+    "certifiedOn": "2026-11-05",
     "requiredSigning": {
       "credentials": "EAS-managed (remote), unchanged",
       "teamId": "SXH4TLU2B5",
@@ -46,7 +55,42 @@
       "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17, 18, 19, 20 and 21",
       "apsEnvironment": "production"
     },
-    "note": "S4 1.2.1 (22), iOS only: the iPhone Photo Patrol fix (the patrol camera opens from inside the patrol modal; GPAT-35) on top of production 2c72b01, verified by the complete S4 Mobile Release Gate on PR #115 (run 42110413070). Prepared, not built: no EAS build, file, hash, upload or store fact yet. Same bundle identifier com.sfour.s4, Expo project, EAS-managed signing and production API as 21. Android is unchanged: 1.2.1 (24) stays as recorded. 1.2.1 (21) is superseded by 22 and kept as recorded; 1.1.0 (17) stays the distributed iOS build."
+    "verified": {
+      "bundleIdentifier": "com.sfour.s4",
+      "marketingVersion": "1.2.1",
+      "buildNumber": "22",
+      "provisioningProfileUuid": "1f19cdf5-67cd-4e7b-af8b-131c87c13964",
+      "teamId": "SXH4TLU2B5",
+      "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+      "apsEnvironment": "production",
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "productionApiUrls": 1,
+      "source": "embedded.mobileprovision and main.jsbundle read from the downloaded IPA; version and build number from EAS and App Store Connect (the Info.plist is binary)"
+    },
+    "testFlightUpload": {
+      "easSubmissionId": null,
+      "easSubmissionIdNote": "not captured when the upload ran; EAS Submit reported the build successfully uploaded to App Store Connect",
+      "ascAppId": "6820632995",
+      "ascApiKeyId": "468TT6N8RB",
+      "uploadedOn": "2026-11-05",
+      "appleProcessing": "complete",
+      "note": "EAS Submit uploaded 1.2.1 (22) from EAS build 36fa32ee (not rebuilt) to the existing S4 App Store Connect app. Apple processed it (Ready to Submit, then in Testing)."
+    },
+    "testFlightDistribution": {
+      "groups": [
+        "Team (Expo)",
+        "S4 pilot guards"
+      ],
+      "internalGroup": "Team (Expo)",
+      "externalGroup": "S4 pilot guards",
+      "externalTesters": 5,
+      "betaAppReview": "submitted 2026-11-05 (owner-approved) and approved by Apple the same day",
+      "whatToTest": "Photo Patrol, QR checkpoint scan then checkpoint photo, front/back camera switching, offline patrol photo then synchronisation",
+      "status": "Testing",
+      "observedOn": "2026-11-05"
+    },
+    "note": "S4 1.2.1 (22), iOS only: the iPhone Photo Patrol fix (the patrol camera opens from inside the patrol modal; GPAT-35) on top of production 2c72b01. Built by EAS (36fa32ee, production profile, STORE) from 9b92601 with the existing EAS-managed credentials, the same as 21: profile UUID 1f19cdf5..., team SXH4TLU2B5, distribution certificate c1f9c5b6..., aps-environment production, production API only. Uploaded to App Store Connect by EAS Submit on 5 Nov 2026 as an update to the existing S4 app (bundle identifier com.sfour.s4, the same Expo project); in Testing for \"Team (Expo)\" and, after Beta App Review, \"S4 pilot guards\". Awaiting the owner's device test on the affected iPhone; the fix is not merged into release/s4-pilot-rc1. Not submitted for App Store review. 1.2.1 (21) is superseded by 22 and kept as recorded; 1.1.0 (17) stays the record's distributed iOS artefact until the device test confirms 22. Android is unchanged: 1.2.1 (24) stays as recorded. The IPA is kept outside Git."
   },
   "submittedArtefact": {
     "status": "uploaded-to-testflight",
@@ -405,7 +449,7 @@
       "supersededBy": "1.1.0 (14) 7333ba4d"
     }
   ],
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25). 1.1.1 (18) uploaded to App Store Connect 2026-10-26 (EAS Submit 5118fcda); TestFlight group assignment not confirmed. 1.1.2 (19) uploaded to App Store Connect 2026-10-28 (EAS Submit a3234a35) and assigned to the groups \"Team (Expo)\" (internal) and \"S4 pilot guards\" (external); the external group is Waiting for Review (Apple Beta App Review), not available to external testers (owner-confirmed 2026-10-28). 1.2.1 (21) uploaded to App Store Connect 2026-11-01 (EAS Submit fa9fafd1); Apple processing not yet confirmed; no TestFlight group assigned by S4. 1.2.0 (20) was never submitted.",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25). 1.1.1 (18) uploaded to App Store Connect 2026-10-26 (EAS Submit 5118fcda); TestFlight group assignment not confirmed. 1.1.2 (19) uploaded to App Store Connect 2026-10-28 (EAS Submit a3234a35) and assigned to the groups \"Team (Expo)\" (internal) and \"S4 pilot guards\" (external); the external group is Waiting for Review (Apple Beta App Review), not available to external testers (owner-confirmed 2026-10-28). 1.2.1 (21) uploaded to App Store Connect 2026-11-01 (EAS Submit fa9fafd1); Apple processing not yet confirmed; no TestFlight group assigned by S4. 1.2.0 (20) was never submitted. 1.2.1 (22) (EAS build 36fa32ee, from 9b92601) uploaded to App Store Connect 2026-11-05 by EAS Submit; Apple processing complete; in Testing for \"Team (Expo)\" (internal) and, after Beta App Review (submitted and approved 2026-11-05), for \"S4 pilot guards\" (external), available to the external testers. Observed the same day: 1.2.1 (21) in Testing for both groups.",
   "appStore": "NOT SUBMITTED",
   "push": {
     "apnsKeyId": "CXFMNB4HHN",

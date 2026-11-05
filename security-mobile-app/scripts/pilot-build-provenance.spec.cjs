@@ -106,7 +106,7 @@ test('BUILD-01-APP-VERSION-IS-1-2-1-AND-ANDROID-BUILD-24', () => {
   // Connect 26 Oct 2026, EAS Submit 5118fcda), and Guard app 1.1.2 is build 19 (uploaded to App Store Connect 28 Oct
   // 2026, EAS Submit a3234a35; external Beta App Review pending, BUILD-01C).
   // S4 1.2.0 is build 20 (built, never submitted; BUILD-01D); S4 1.2.1 is build 21 (uploaded to App Store Connect;
-  // BUILD-01G), superseded by the prepared iOS-only 1.2.1 build 22, the iPhone Photo Patrol fix (BUILD-01H).
+  // BUILD-01G), superseded by the iOS-only 1.2.1 build 22, the iPhone Photo Patrol fix, in TestFlight testing (BUILD-01H).
   assert.equal(appJson.expo.ios.buildNumber, '22', 'above the uploaded builds 13, 16, 17, 18, 19 and 21 and the built builds 14, 15 and 20');
   assert.ok(Number(appJson.expo.ios.buildNumber) > 21, 'above the uploaded 1.2.1 build 21');
   assert.ok(Number(appJson.expo.ios.buildNumber) > 20, 'above the built 1.2.0 build 20');
@@ -429,7 +429,7 @@ test('BUILD-01C-THE-1-1-2-BUILDS-ANDROID-DISTRIBUTED-IOS-UPLOADED-AWAITING-BETA-
     assert.match(asg.note, /not distributed and not available to the external testers/);
     assert.doesNotMatch(JSON.stringify(pi), /in Testing|distributed to|(?<!not )available to (the )?external testers/i, 'no distribution claim');
     assert.match(pi.note, /not available to the external testers and 1\.1\.0 \(17\) stays the distributed iOS build/);
-    assert.match(ios.testFlight, /1\.1\.2 \(19\) uploaded to App Store Connect 2026-10-28 \(EAS Submit a3234a35\) and assigned to the groups "Team \(Expo\)" \(internal\) and "S4 pilot guards" \(external\); the external group is Waiting for Review \(Apple Beta App Review\), not available to external testers \(owner-confirmed 2026-10-28\)\. 1\.2\.1 \(21\) uploaded to App Store Connect 2026-11-01 \(EAS Submit fa9fafd1\); Apple processing not yet confirmed; no TestFlight group assigned by S4\. 1\.2\.0 \(20\) was never submitted\.$/,
+    assert.match(ios.testFlight, /1\.1\.2 \(19\) uploaded to App Store Connect 2026-10-28 \(EAS Submit a3234a35\) and assigned to the groups "Team \(Expo\)" \(internal\) and "S4 pilot guards" \(external\); the external group is Waiting for Review \(Apple Beta App Review\), not available to external testers \(owner-confirmed 2026-10-28\)\. 1\.2\.1 \(21\) uploaded to App Store Connect 2026-11-01 \(EAS Submit fa9fafd1\); Apple processing not yet confirmed; no TestFlight group assigned by S4\. 1\.2\.0 \(20\) was never submitted\.( |$)/,
       'the 1.1.2 (19) facts are kept exactly, followed by the 1.2.1 (21) upload (owner update, 1 Nov 2026)');
   }
   // No other iOS record may carry an assignment whose external review is pending while claiming distribution.
@@ -691,24 +691,47 @@ test('BUILD-01G-THE-1-2-1-BUILDS-ANDROID-24-BUILT-NOT-UPLOADED-IOS-21-UPLOADED-M
   assert.equal(ios.artefact.buildNumber, '17', 'iOS 17 stays the distributed build');
 });
 
-test('BUILD-01H-IOS-1-2-1-BUILD-22-IS-PREPARED-NOT-BUILT-WITH-THE-PHOTO-PATROL-FIX-ON-PRODUCTION', () => {
+test('BUILD-01H-IOS-1-2-1-BUILD-22-THE-PHOTO-PATROL-FIX-IS-BUILT-VERIFIED-AND-IN-TESTFLIGHT-TESTING', () => {
   // iOS-only S4 1.2.1 (22), 5 Nov 2026: on 1.2.1 (21) "Take patrol photo" did nothing on iPhone (the camera modal was
   // presented beside the open patrol modal and UIKit refused it; GPAT-35). 22 is the fix (c82c442) on top of production
-  // 2c72b01, verified by the complete mobile gate on PR #115. Prepared only: no build, file, hash, upload or store fact.
+  // 2c72b01, verified by the complete mobile gate on PR #115. Built by EAS (36fa32ee) from 9b92601 (gate run 42113477982),
+  // verified from the downloaded IPA, uploaded by EAS Submit and, after Beta App Review, in Testing for both TestFlight
+  // groups (owner-approved 5 Nov 2026). Not merged, not submitted for App Store review; 17 stays the distributed record.
   // Android is unchanged (1.2.1 (24) as recorded in BUILD-01G).
   const android = JSON.parse(read('release/android-signing.json'));
   const ios = JSON.parse(read('release/ios-release.json'));
   const p = ios.preparedArtefact;
   const b21 = ios.supersededArtefacts.find((entry) => entry.buildNumber === '21');
-  assert.deepEqual([p.status, p.marketingVersion, p.buildNumber], ['prepared-not-built', '1.2.1', '22']);
+  assert.deepEqual([p.status, p.marketingVersion, p.buildNumber], ['testflight-external-testing', '1.2.1', '22']);
   assert.deepEqual([p.marketingVersion, p.buildNumber], [appJson.expo.version, appJson.expo.ios.buildNumber], 'app.json carries 22');
   assert.deepEqual([ios.marketingVersion, ios.buildNumber], ['1.2.1', '22'], 'the record header tracks it');
   assert.equal(Number(p.buildNumber), Math.max(...ios.supersededArtefacts.filter((entry) => entry.buildNumber).map((entry) => Number(entry.buildNumber))) + 1, 'one above every iOS build, 21 included');
   assert.deepEqual([b21.status, b21.supersededBy], ['uploaded-to-app-store-connect', '22'], '21 stays uploaded, superseded by 22');
   assert.match(b21.supersededReason, /Take patrol photo/);
-  for (const key of ['easBuildId', 'easBuildUrl', 'gitCommit', 'ipaFilename', 'ipaSha256', 'ipaSizeBytes', 'certifiedOn', 'verified', 'testFlightUpload', 'testFlightAssignment', 'testFlightDistribution', 'appStoreSubmission']) {
-    assert.ok(!(key in p), `the prepared 22 records no ${key}`);
+  // The exact build certified on 5 Nov 2026.
+  assert.equal(p.easBuildId, '36fa32ee-75e6-4811-9f9c-05edab2c44f0');
+  assert.ok(p.easBuildUrl.endsWith(`/builds/${p.easBuildId}`), 'the build URL names the same build');
+  assert.equal(p.gitCommit, '9b9260127ec462cda260da4b801a060d75a261b6', 'the certified source commit');
+  assert.match(p.sourceGate, /42113477982/);
+  assert.equal(p.ipaFilename, 's4-1.2.1-ios22-36fa32ee.ipa');
+  assert.equal(p.ipaSha256, '24de3f6f7b4a36fd90fb0187582effd61642076b5f4258c1cc5f4d82bd50e0eb');
+  assert.equal(p.ipaSizeBytes, 12952169);
+  assert.notEqual(p.ipaSha256, b21.ipaSha256);
+  assert.notEqual(p.easBuildId, b21.easBuildId);
+  assert.equal(p.certifiedOn, '2026-11-05');
+  for (const field of ['bundleIdentifier', 'marketingVersion', 'provisioningProfileUuid', 'teamId', 'distributionCertificateSha256', 'apsEnvironment', 'apiBaseUrl', 'stagingApiUrls', 'productionApiUrls']) {
+    assert.equal(p.verified[field], b21.verified[field], `the same verified ${field} as build 21`);
   }
+  assert.equal(p.verified.buildNumber, '22');
+  const up = p.testFlightUpload;
+  assert.deepEqual([up.ascAppId, up.ascApiKeyId, up.uploadedOn, up.appleProcessing], [b21.testFlightUpload.ascAppId, b21.testFlightUpload.ascApiKeyId, '2026-11-05', 'complete'], 'the same App Store Connect app: an update, not a new app');
+  assert.equal(up.easSubmissionId, null, 'the submission id was not captured; none is invented');
+  const td = p.testFlightDistribution;
+  assert.deepEqual([td.internalGroup, td.externalGroup, td.status], ['Team (Expo)', 'S4 pilot guards', 'Testing']);
+  assert.match(td.betaAppReview, /approved/);
+  assert.ok(!('appStoreSubmission' in p), 'not submitted for App Store review');
+  assert.match(p.note, /not merged into release\/s4-pilot-rc1/);
+  assert.match(ios.testFlight, /1\.2\.1 \(22\) \(EAS build 36fa32ee, from 9b92601\) uploaded to App Store Connect 2026-11-05 by EAS Submit; .*"S4 pilot guards" \(external\), available to the external testers\./);
   assert.deepEqual([p.easBuildProfile, p.distribution, p.sourceBranch], ['production', 'STORE', 'fix/ios-patrol-photo-camera-forward']);
   assert.equal(p.sourceFixCommit, 'c82c4426d9ef9174ab0a752dd505657614206a56', 'the camera fix as verified on PR #115');
   assert.match(p.sourceBase, /^2c72b01 /, 'on top of production 2c72b01');
