@@ -62,6 +62,28 @@ import { SingleFlightJob, SingleFlightOutcome } from '../scheduler/single-flight
 // Shared with shift reconciliation, which waits on the same lock.
 import { WELFARE_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
 
+/**
+ * GET /alerts/company?scope=… (Stage A). The defaults are the owner-approved board window: 48 hours back, 4 hours ahead
+ * (the live board's own horizon); a day-mode board asks for its own [since, until] (the selected day minus 36 hours to
+ * its end). The list caps keep every response bounded; the unresolved COUNTS are always complete.
+ */
+export const OPERATIONAL_LOOKBACK_MS = 48 * 3_600_000;
+export const OPERATIONAL_LOOKAHEAD_MS = 4 * 3_600_000;
+/** The longest window one operational read may ask for. */
+export const OPERATIONAL_MAX_WINDOW_MS = 7 * 86_400_000;
+export const OPERATIONAL_UNRESOLVED_LIMIT = 500;
+export const OPERATIONAL_WINDOW_LIMIT = 2000;
+/** Enough newest alerts for Recent activity (the dashboard shows its top 8 across every feed). */
+export const OPERATIONAL_RECENT_LIMIT = 20;
+export const HISTORY_DEFAULT_PAGE_SIZE = 50;
+export const HISTORY_MAX_PAGE_SIZE = 100;
+export const SHIFT_ALERT_LIMIT = 500;
+
+export type SafetyAlertScopeQuery =
+  | { scope: 'operational'; since?: Date; until?: Date }
+  | { scope: 'history'; page?: number; pageSize?: number; from?: Date; to?: Date; type?: string; status?: string }
+  | { scope: 'shift'; shiftId: number };
+
 /** A Book Off is late, not missing, until the shift has been over for a quarter of an hour. */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
 
@@ -1149,6 +1171,126 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       where: { company: { id: actor.companyId }, type: types.length === 1 ? types[0] : In(types) },
       order: { createdAt: 'DESC' },
     }));
+  }
+
+  /**
+   * The alert types this company actor may read through GET /alerts/company: null for the owner account (every type),
+   * otherwise the member's set — exactly findForCompany's rule, including its 404 for a member who may read none.
+   */
+  private async visibleAlertTypes(actor: Awaited<ReturnType<SafetyAlertService['alertActor']>>): Promise<SafetyAlertType[] | null> {
+    if (actor.owner) return null;
+    const types: SafetyAlertType[] = [];
+    if (hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW)) types.push(SafetyAlertType.COMPLIANCE_LAPSE);
+    if (hasPermission(actor.role, CompanyPermission.PATROLS_VIEW) && (await this.patrolsEnabled(actor.companyId))) types.push(...PATROL_ALERT_TYPES);
+    if (!types.length) throw new NotFoundException('Company not found');
+    return types;
+  }
+
+  /**
+   * The alerts with these ids, in this order, read exactly as GET /alerts/company reads them (the same entity, eager
+   * relations and patrol links), so a scoped response is the same shape row for row. Only the bounded ids are hydrated.
+   */
+  private async hydrateAlerts(ids: number[]): Promise<SafetyAlert[]> {
+    if (!ids.length) return [];
+    const rows = await this.safetyAlertRepo.find({ where: { id: In(ids) } });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return this.attachPatrolLinks(ids.map((id) => byId.get(id)).filter((row): row is SafetyAlert => Boolean(row)));
+  }
+
+  /**
+   * GET /alerts/company?scope=… (owner-approved Stage A, 5 Nov 2026): opt-in bounded reads, so Live Operations never
+   * downloads the whole alert history. Without `scope` nothing changes (findForCompany). Every scope applies the same
+   * company and member visibility rules; nothing here writes.
+   *
+   *   operational  every unresolved alert of any age (complete counts; the list capped with `more`), every alert of the
+   *                shifts the board can show (shifts overlapping [since, until], and every in-progress shift whatever
+   *                its age), and the newest alerts for Recent activity — one de-duplicated list, newest first
+   *   history      every alert raised or closed in [from, to), newest first, paginated (at most 100 per page)
+   *   shift        every alert of one shift of this company (historical shift records), newest first
+   */
+  async scopedForCompany(userId: number, query: SafetyAlertScopeQuery, now: Date = new Date()) {
+    const actor = await this.alertActor(userId);
+    const types = await this.visibleAlertTypes(actor);
+    const companyId = actor.companyId;
+    const typeList = types ? types.map(String) : null;
+    const TYPE = `($2::text[] IS NULL OR a."type"::text = ANY($2::text[]))`;
+
+    if (query.scope === 'operational') {
+      const until = query.until ?? new Date(now.getTime() + OPERATIONAL_LOOKAHEAD_MS);
+      const since = query.since ?? new Date(now.getTime() - OPERATIONAL_LOOKBACK_MS);
+      const unresolved = await this.dataSource.query(
+        `SELECT a."id" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."status" <> 'closed'
+          ORDER BY a."createdAt" DESC, a."id" DESC LIMIT ${OPERATIONAL_UNRESOLVED_LIMIT + 1}`, [companyId, typeList]);
+      const board = await this.dataSource.query(
+        `SELECT a."id" FROM "safety_alerts" a JOIN "shifts" s ON s."id" = a."shiftId"
+          WHERE a."companyId" = $1 AND ${TYPE} AND ((s."end" >= $3 AND s."start" <= $4) OR s."status"::text = 'in_progress')
+          ORDER BY a."createdAt" DESC, a."id" DESC LIMIT ${OPERATIONAL_WINDOW_LIMIT + 1}`, [companyId, typeList, since, until]);
+      const recent = await this.dataSource.query(
+        `SELECT a."id" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE}
+          ORDER BY a."createdAt" DESC, a."id" DESC LIMIT ${OPERATIONAL_RECENT_LIMIT}`, [companyId, typeList]);
+      const counted = await this.dataSource.query(
+        `SELECT a."type"::text AS "type", count(*)::int AS "n" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."status" <> 'closed'
+          GROUP BY 1 ORDER BY 1`, [companyId, typeList]);
+      const ids = [...new Set([
+        ...unresolved.slice(0, OPERATIONAL_UNRESOLVED_LIMIT).map((r: any) => Number(r.id)),
+        ...board.slice(0, OPERATIONAL_WINDOW_LIMIT).map((r: any) => Number(r.id)),
+        ...recent.map((r: any) => Number(r.id)),
+      ])];
+      const alerts = (await this.hydrateAlerts(ids))
+        .sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime() || y.id - x.id);
+      return {
+        scope: 'operational' as const,
+        generatedAt: now.toISOString(),
+        window: { since: since.toISOString(), until: until.toISOString() },
+        counts: {
+          unresolved: counted.reduce((n: number, r: any) => n + Number(r.n), 0),
+          unresolvedByType: Object.fromEntries(counted.map((r: any) => [r.type, Number(r.n)])),
+        },
+        more: { unresolved: unresolved.length > OPERATIONAL_UNRESOLVED_LIMIT, window: board.length > OPERATIONAL_WINDOW_LIMIT },
+        limits: { unresolved: OPERATIONAL_UNRESOLVED_LIMIT, window: OPERATIONAL_WINDOW_LIMIT, recent: OPERATIONAL_RECENT_LIMIT },
+        alerts,
+      };
+    }
+
+    if (query.scope === 'history') {
+      const page = query.page ?? 1;
+      const pageSize = query.pageSize ?? HISTORY_DEFAULT_PAGE_SIZE;
+      const params = [companyId, typeList, query.from ?? null, query.to ?? null, query.type ?? null, query.status ?? null];
+      // Raised in [from, to), or closed in [from, to): an alert raised before the period and closed in it is part of it.
+      const WHERE = `a."companyId" = $1 AND ${TYPE}
+        AND ($5::text IS NULL OR a."type"::text = $5) AND ($6::text IS NULL OR a."status"::text = $6)
+        AND (
+          ($3::timestamp IS NULL OR a."createdAt" >= $3::timestamp) AND ($4::timestamp IS NULL OR a."createdAt" < $4::timestamp)
+          OR (a."closedAt" IS NOT NULL AND ($3::timestamp IS NULL OR a."closedAt" >= $3::timestamp) AND ($4::timestamp IS NULL OR a."closedAt" < $4::timestamp))
+        )`;
+      const [{ total }] = await this.dataSource.query(`SELECT count(*)::int AS "total" FROM "safety_alerts" a WHERE ${WHERE}`, params);
+      const rows = await this.dataSource.query(
+        `SELECT a."id" FROM "safety_alerts" a WHERE ${WHERE} ORDER BY a."createdAt" DESC, a."id" DESC LIMIT $7 OFFSET $8`,
+        [...params, pageSize, (page - 1) * pageSize],
+      );
+      return {
+        scope: 'history' as const,
+        items: await this.hydrateAlerts(rows.map((r: any) => Number(r.id))),
+        total: Number(total),
+        page,
+        pageSize,
+      };
+    }
+
+    // shift: one shift's full record. Another company's shift answers exactly as a missing one.
+    const [shift] = await this.dataSource.query(`SELECT "id" FROM "shifts" WHERE "id" = $1 AND "companyId" = $2`, [query.shiftId, companyId]);
+    if (!shift) throw new NotFoundException('Shift not found');
+    const rows = await this.dataSource.query(
+      `SELECT a."id" FROM "safety_alerts" a WHERE a."companyId" = $1 AND ${TYPE} AND a."shiftId" = $3
+        ORDER BY a."createdAt" DESC, a."id" DESC LIMIT ${SHIFT_ALERT_LIMIT + 1}`,
+      [companyId, typeList, query.shiftId],
+    );
+    return {
+      scope: 'shift' as const,
+      shiftId: query.shiftId,
+      more: rows.length > SHIFT_ALERT_LIMIT,
+      alerts: await this.hydrateAlerts(rows.slice(0, SHIFT_ALERT_LIMIT).map((r: any) => Number(r.id))),
+    };
   }
 
   private async patrolsEnabled(companyId: number): Promise<boolean> {

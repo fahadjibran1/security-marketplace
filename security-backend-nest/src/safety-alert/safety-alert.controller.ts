@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { SafetyAlertService } from './safety-alert.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -8,6 +8,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateSafetyAlertDto } from './dto/create-safety-alert.dto';
 import { ResolveSafetyAlertDto } from './dto/resolve-safety-alert.dto';
+import { parseAlertScopeQuery } from './alert-scope-query';
 
 @Controller('alerts')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -20,13 +21,33 @@ export class SafetyAlertController {
     return this.safetyAlertService.findMine(user.sub);
   }
 
+  /**
+   * Without `scope`: exactly as before — every alert the caller may see (Platform Admin: every company's). With
+   * `scope` (Stage A): a bounded company read — operational, history (paginated) or one shift's record. Each parameter
+   * is read on its own, so a query key this route does not know is still ignored, as it always was.
+   */
   @Get('company')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
-  findForCompany(@CurrentUser() user: JwtPayload) {
+  findForCompany(
+    @CurrentUser() user: JwtPayload,
+    @Query('scope') scope?: string,
+    @Query('since') since?: string,
+    @Query('until') until?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('type') type?: string,
+    @Query('status') status?: string,
+    @Query('shiftId') shiftId?: string,
+  ) {
+    const scoped = parseAlertScopeQuery({ scope, since, until, page, pageSize, from, to, type, status, shiftId });
     if (user.role === UserRole.ADMIN) {
+      // Platform Admin's every-company list is unchanged; its bounded read is a later, separate change.
+      if (scoped) throw new BadRequestException('Alert scopes are for company accounts.');
       return this.safetyAlertService.findAll();
     }
-
+    if (scoped) return this.safetyAlertService.scopedForCompany(user.sub, scoped);
     return this.safetyAlertService.findForCompany(user.sub);
   }
 

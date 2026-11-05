@@ -177,6 +177,11 @@ async function main() {
 
   // Record the SQL each endpoint issues (inside its read-only snapshot), to EXPLAIN it afterwards.
   let recording: Array<{ sql: string; params: unknown[] }> | null = null;
+  const originalDs = DataSource.prototype.query;
+  DataSource.prototype.query = function (this: DataSource, sql: string, params?: unknown[]) {
+    if (recording && !/^SET TRANSACTION/.test(sql)) recording.push({ sql, params: params ?? [] });
+    return originalDs.call(this, sql, params);
+  } as typeof originalDs;
   const original = EntityManager.prototype.query;
   EntityManager.prototype.query = function (this: EntityManager, sql: string, params?: unknown[]) {
     if (recording && !/^SET TRANSACTION/.test(sql)) recording.push({ sql, params: params ?? [] });
@@ -215,6 +220,30 @@ async function main() {
       let alertBody: any[] = [];
       for (let i = 0; i < ALERT_ITERATIONS; i += 1) { const t = process.hrtime.bigint(); alertBody = await alertService.findForCompany(c.ownerId); al.push(ms(t)); }
       console.log(`[${tag}] ${c.sites} sites: existing /alerts/company ${JSON.stringify(stats(al))} ms, ${alertBody.length} alerts, ${(Buffer.byteLength(JSON.stringify(alertBody)) / 1e6).toFixed(1)} MB`);
+      // Stage A scopes (GET /alerts/company?scope=…): live board, a day-mode board 3 days ago, a history page, one shift.
+      const dayStart = new Date(Date.now() - 3 * 86_400_000);
+      const scopes: Array<[string, any]> = [
+        ['operational (live)', { scope: 'operational' }],
+        ['operational (day mode)', { scope: 'operational', since: new Date(dayStart.getTime() - 36 * 3_600_000), until: new Date(dayStart.getTime() + 86_400_000) }],
+        ['history page 1 (100)', { scope: 'history', page: 1, pageSize: 100 }],
+        ['history page 50 (100)', { scope: 'history', page: 50, pageSize: 100 }],
+      ];
+      const [shiftRow] = await q(`SELECT "shiftId" FROM safety_alerts WHERE "companyId" = $1 AND "shiftId" IS NOT NULL ORDER BY id DESC LIMIT 1`, [c.companyId]);
+      if (shiftRow) scopes.push(['shift record', { scope: 'shift', shiftId: Number(shiftRow.shiftId) }]);
+      for (const [label, query] of scopes) {
+        const times: number[] = [];
+        let res: any = null;
+        for (let i = 0; i < ITERATIONS; i += 1) { const t = process.hrtime.bigint(); res = await alertService.scopedForCompany(c.ownerId, query); times.push(ms(t)); }
+        const rows = (res.alerts ?? res.items).length;
+        console.log(`[${tag}] ${c.sites} sites: scope ${label} ${JSON.stringify(stats(times))} ms, ${rows} alerts, ${(Buffer.byteLength(JSON.stringify(res)) / 1e6).toFixed(2)} MB${res.counts ? `, unresolved ${res.counts.unresolved}` : ''}${res.total != null ? `, total ${res.total}` : ''}`);
+        if (c.sites === 50) {
+          recording = [];
+          await alertService.scopedForCompany(c.ownerId, query);
+          const sqls = recording.filter((x) => /safety_alerts/.test(x.sql) && /SELECT a\."id"|count\(\*\)/.test(x.sql));
+          recording = null;
+          await explain(`scope ${label}`, sqls);
+        }
+      }
       console.log(`[${tag}] ${c.sites} sites: attention ${JSON.stringify(stats(at))} ms, ${Buffer.byteLength(JSON.stringify(body))} bytes, ${body.cases.length}/${body.counts.patrolAlerts} cases, missedToday ${body.counts.missedToday}`
         + ` | investigation ${JSON.stringify(stats(inv))} ms, ${Buffer.byteLength(JSON.stringify(invBody))} bytes`);
       if (c.sites === 50) {
@@ -244,6 +273,7 @@ async function main() {
     await q(`DROP INDEX ${cand.name}`);
   }
   EntityManager.prototype.query = original;
+  DataSource.prototype.query = originalDs;
   await app.close();
 }
 
