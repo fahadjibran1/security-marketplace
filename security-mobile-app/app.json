@@ -24,7 +24,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sfour.s4",
-      "buildNumber": "21",
+      "buildNumber": "22",
       "config": {
         "usesNonExemptEncryption": false
       },
