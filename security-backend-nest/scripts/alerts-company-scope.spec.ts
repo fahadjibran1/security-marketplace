@@ -282,13 +282,20 @@ async function main() {
       const hr = ok(await api('GET', `/alerts/company?scope=${s}`, tok.hr), `hr ${s}`);
       const list = hr.alerts ?? hr.items;
       assert.ok(list.length > 0 && list.every((a: any) => a.type === 'compliance_lapse'), `HR & Compliance, ${s}: compliance lapses only`);
+      // A Viewer holds compliance.view and patrols.view: compliance lapses and patrol alerts, exactly as without a scope.
       const viewer = ok(await api('GET', `/alerts/company?scope=${s}`, tok.viewer), `viewer ${s}`);
-      assert.ok((viewer.alerts ?? viewer.items).every((a: any) => a.type.startsWith('patrol') || a.type === 'checkpoint_missed'), `Viewer, ${s}: patrol alerts only`);
+      const viewerList = viewer.alerts ?? viewer.items;
+      assert.ok(viewerList.every((a: any) => a.type === 'compliance_lapse' || a.type.startsWith('patrol') || a.type === 'checkpoint_missed'), `Viewer, ${s}: compliance and patrol alerts only`);
+      for (const [member, list] of [['hr', hr.alerts ?? hr.items], ['viewer', viewerList]] as const) {
+        const unscoped = new Set(ok(await api('GET', '/alerts/company', (tok as any)[member])).map((a: any) => a.id));
+        assert.ok(list.every((a: any) => unscoped.has(a.id)), `${member}, ${s}: never more than the member sees without a scope`);
+      }
       assert.equal((await api('GET', `/alerts/company?scope=${s}`, tok.finance)).status, 404, `Finance, ${s}: as without a scope`);
     }
     assert.deepEqual(ok(await operational(tok.hr)).counts, { unresolved: 1, unresolvedByType: { compliance_lapse: 1 } }, 'counts only of what the member may see');
     await q(`UPDATE companies SET "patrolsEnabled" = false WHERE id = $1`, [A.id]);
-    assert.equal((await operational(tok.viewer)).status, 404, 'Patrols off: a Viewer sees nothing, as without a scope');
+    const off = ok(await operational(tok.viewer));
+    assert.ok(off.alerts.length > 0 && off.alerts.every((a: any) => a.type === 'compliance_lapse'), 'Patrols off: a Viewer keeps compliance lapses, loses patrol alerts, as without a scope');
     await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id = $1`, [A.id]);
     assert.equal((await operational(tok.admin)).status, 400, 'Platform Admin: scopes are for company accounts');
     assert.equal((await api('GET', '/alerts/company?scope=operational', null)).status, 401);
