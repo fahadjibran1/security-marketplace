@@ -163,13 +163,23 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
     }
   }
 
+  // The camera stays open while the scan is saved and turns straight into the checkpoint photo camera when one is needed:
+  // closing it and opening another at once fails on iOS (no modal can be presented while one is being dismissed).
   async function onScanned(data: string) {
-    setCamera(null);
-    if (!engine || !plan || !active) return;
+    let next: CameraTask = null;
+    try {
+      next = await recordScan(data);
+    } finally {
+      setCamera(next);
+    }
+  }
+
+  async function recordScan(data: string): Promise<CameraTask> {
+    if (!engine || !plan || !active) return null;
     const decision = decideScan(data, plan, active.scans.map((s) => String(s.meta.publicId ?? '')));
     if (decision.kind !== 'record') {
       setNotice({ tone: decision.kind === 'duplicate' ? 'warning' : 'danger', text: `${decision.title}. ${decision.message}` });
-      return;
+      return null;
     }
     const clientVisitId = newPatrolClientId();
     const saved = await guard(() => engine.enqueueScan({
@@ -179,12 +189,12 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
       scannedAtDevice: new Date().toISOString(),
       meta: { publicId: decision.publicId, label: decision.checkpoint?.label ?? null },
     }), 'Could not save the scan on this phone.');
-    if (!saved) return;
+    if (!saved) return null;
     outbox.kick();
     const label = decision.checkpoint?.label ?? 'Checkpoint';
     const needsPhoto = (decision.checkpoint?.photoRequired ?? false) || plan.policy.photosPerCheckpoint > 0;
     setNotice({ tone: decision.notice ? 'warning' : 'good', text: decision.notice ?? `${label} scanned.${needsPhoto ? ' Take the checkpoint photo now.' : ''}` });
-    if (needsPhoto) setCamera({ mode: 'photo', kind: 'checkpoint_photo', clientVisitId, label });
+    return needsPhoto ? { mode: 'photo', kind: 'checkpoint_photo', clientVisitId, label } : null;
   }
 
   async function onCaptured(capture: { uri: string; width: number; height: number }) {
@@ -376,16 +386,18 @@ export function GuardPatrolPanel({ userId, shift }: { userId: number; shift: { i
             <Text style={styles.muted}>No patrol in progress.</Text>
           )}
         </ScrollView>
+        {/* The camera is a modal INSIDE the patrol modal. iOS presents a modal from the nearest view controller: as a
+            sibling, the camera asked the screen — already presenting the patrol modal — and iOS silently refused, so
+            "Take patrol photo" did nothing (1.2.1 iOS 21). Android stacks dialogs either way. */}
+        <GuardPatrolCamera
+          visible={camera !== null}
+          mode={camera?.mode ?? 'scan'}
+          title={camera?.mode === 'scan' ? 'Scan checkpoint' : camera?.mode === 'photo' && camera.kind === 'checkpoint_photo' ? `Photo: ${camera.label}` : 'Patrol photo'}
+          onClose={() => setCamera(null)}
+          onScanned={(data) => { void onScanned(data); }}
+          onCaptured={(capture) => { void onCaptured(capture); }}
+        />
       </AppModal>
-
-      <GuardPatrolCamera
-        visible={camera !== null}
-        mode={camera?.mode ?? 'scan'}
-        title={camera?.mode === 'scan' ? 'Scan checkpoint' : camera?.mode === 'photo' && camera.kind === 'checkpoint_photo' ? `Photo: ${camera.label}` : 'Patrol photo'}
-        onClose={() => setCamera(null)}
-        onScanned={(data) => { void onScanned(data); }}
-        onCaptured={(capture) => { void onCaptured(capture); }}
-      />
     </View>
   );
 }
