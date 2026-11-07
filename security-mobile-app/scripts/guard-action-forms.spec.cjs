@@ -539,8 +539,19 @@ test('FORM-25-BOOK-OFF-IS-NOT-AMONG-THE-REPORTING-ACTIONS', () => {
   for (const term of ['handleCheckOut', 'Book Off', 'End shift']) {
     assert.ok(!grid.includes(term), `${term} must not appear in the action grid`);
   }
-  // Emergency is in the card but deliberately outside the grid of routine tiles.
-  assert.ok(grid.includes('styles.emergencyButton'), 'Emergency must be visually separated');
+  // S4-UX-01.2 (deliberate retarget): Emergency is still separated from the routine tiles, but its one launcher
+  // is now the persistent on-duty bar, outside every ScrollView, so the grid must not carry it at all.
+  assert.ok(!grid.includes("'emergency'"), 'Emergency is not a tile in the routine grid');
+  const barAt = screen.indexOf('<GuardOnDutyBar');
+  assert.ok(barAt > 0, 'the on-duty bar renders Emergency');
+  assert.ok(barAt < screen.indexOf('<ScrollView ref={screeningScrollRef}'), 'the on-duty bar is outside (before) the scrolling content');
+  const bar = screen.slice(barAt, screen.indexOf('/>', barAt));
+  assert.match(bar, /onEmergency=\{\(\) => setQuickActionModal\('emergency'\)\}/, 'it opens the existing Emergency form');
+  const barSource = codeOf('src/components/guard/home/GuardOnDutyBar.tsx');
+  assert.match(barSource, /backgroundColor: colors\.danger/, 'Emergency keeps its destructive styling');
+  for (const term of ['handleCheckOut', 'Book Off', 'End shift', 'createSafetyAlert']) {
+    assert.ok(!barSource.includes(term), `${term} must not appear in the on-duty bar`);
+  }
 });
 
 // ═══════════════════ the soft keyboard on Android (Guard release audit, 20 Oct 2026) ═══════════════════

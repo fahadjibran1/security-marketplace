@@ -463,6 +463,12 @@ jobs:
       - name: Verify Patrols on the Guard app
         run: npm run test:guard-patrols
 
+      # S4-UX-01.1/01.2: the Guard Home model and layout matrix (360x640, 375x667, 393x852, 430x932 at text 1.0/1.3/2.0),
+      # the Guard-only header (Log out, Notifications, UAT label) and the persistent on-duty Emergency bar outside every
+      # ScrollView; non-Guard top bars unchanged; every patrol file byte-identical to the build 22 release commit.
+      - name: Verify the adaptive Guard Home (UX-01)
+        run: npm run test:guard-home-ux01
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

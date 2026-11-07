@@ -134,13 +134,21 @@ import {
   type GuardActionApi,
   type GuardActionOutcome,
 } from '../components/guard/guardActionDispatch';
-import { colors } from '../theme';
+import { brand, colors } from '../theme';
 import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
+import { GuardHeader } from '../components/guard/home/GuardHeader';
+import { GuardOnDutyBar } from '../components/guard/home/GuardOnDutyBar';
+import { showOnDutyBar } from '../components/guard/home/guardHomeModel';
+import { useGuardHomeLayout } from '../components/guard/home/useGuardHomeLayout';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
   onLogout: () => void;
+  /** App's resolved product label ("S4", or "S4 UAT · STAGING" in the UAT app), shown in the Guard header. */
+  productLabel?: string;
+  /** True only in the staging-only UAT app; the label is then highlighted. */
+  productIsUat?: boolean;
   /** Called after the server deletes the account; signs out locally. */
   onAccountDeleted?: (message: string) => void | Promise<void>;
 }
@@ -478,8 +486,9 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
 }
 
 
-export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: GuardDashboardScreenProps) {
+export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, productLabel = brand.appName, productIsUat = false }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
+  const homeLayout = useGuardHomeLayout();
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
   const [myCompaniesLoading, setMyCompaniesLoading] = useState(false);
@@ -1865,11 +1874,12 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   const logBookCard = homeShiftLive ? guardLogBookCard(currentHomeShift?.operations) : null;
 
   /**
-   * The canonical live-shift actions, and the only launchers for them.
+   * The canonical routine live-shift actions, and the only launchers for them.
    *
-   * Emergency is separated and destructive-styled rather than sitting last in a uniform grid. Book Off
-   * is NOT here at all — it is the shift card's own primary control, which is what keeps an accidental
-   * end-of-shift away from routine reporting.
+   * Emergency is NOT here (S4-UX-01.2): its one launcher is the persistent on-duty bar, rendered outside
+   * the scrolling content on every tab, so it is reachable without scrolling Home. Book Off is NOT here
+   * either — it is the shift card's own primary control, which is what keeps an accidental end-of-shift
+   * away from routine reporting.
    *
    * Welfare Check is here ONLY when the Welfare Check block above is not showing it, so that each
    * action has exactly one launcher. Its natural home is beside its own status and next-due time.
@@ -1882,7 +1892,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
     const routine: GuardActionKey[] = welfareCard
       ? ['logBook', 'siteRequest', 'incident']
       : ['welfareCheck', 'logBook', 'siteRequest', 'incident'];
-    const emergency = guardActionForm('emergency');
 
     return (
       <FeatureCard
@@ -1906,14 +1915,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
             );
           })}
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={emergency.launchAccessibilityLabel}
-          style={[styles.quickActionButton, styles.quickActionDanger, styles.emergencyButton]}
-          onPress={() => setQuickActionModal('emergency')}
-        >
-          <Text style={styles.quickActionDangerText}>{emergency.title}</Text>
-        </Pressable>
       </FeatureCard>
     );
   }
@@ -1979,9 +1980,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          {activeTab === 'home'
+      {/* S4-UX-01.6: for a Guard this is the only top bar — App no longer draws its own above it. */}
+      <GuardHeader
+        productLabel={productLabel}
+        productIsUat={productIsUat}
+        layout={homeLayout}
+        onLogout={onLogout}
+        title={
+          activeTab === 'home'
             ? 'Current Shift'
             : activeTab === 'offers'
               ? 'Shift Offers'
@@ -1995,9 +2001,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                       ? 'My Companies'
                       : activeTab === 'inbox'
                         ? 'Notifications'
-                        : 'Profile'}
-        </Text>
-        {(() => {
+                        : 'Profile'
+        }
+        notifications={(() => {
           // The inbox entry point. On a server without notifications the badge is hidden; the button still opens a
           // calm explanation rather than disappearing.
           const badge = inboxAvailability === 'unavailable' ? null : unreadBadge(unreadCount(inbox.items));
@@ -2019,7 +2025,20 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
             </Pressable>
           );
         })()}
-      </View>
+      />
+
+      {/* S4-UX-01.2: Emergency, outside every scrolling area and on every tab, whenever an Emergency can be raised
+          (the same action target the form submits against). Its one launcher; the form and its SOS confirmation
+          are the existing ones below. */}
+      {showOnDutyBar(currentShiftActionTarget) ? (
+        <GuardOnDutyBar
+          siteName={currentHomeShift?.siteName ?? null}
+          emergencyLabel={guardActionForm('emergency').title}
+          emergencyAccessibilityLabel={guardActionForm('emergency').launchAccessibilityLabel}
+          layout={homeLayout}
+          onEmergency={() => setQuickActionModal('emergency')}
+        />
+      ) : null}
 
       <View style={styles.mainArea}>
 
@@ -3694,7 +3713,7 @@ const styles = StyleSheet.create({
   companiesEntrySubtitle: { fontSize: 13, color: '#748392' },
   companiesEntryChevron: { fontSize: 22, color: '#748392' },
   container: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  // The Notifications control sits in the navy Guard header (S4-UX-01.6).
   inboxButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3703,14 +3722,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: colors.primaryNavySoft,
+    backgroundColor: colors.primaryNavySoft,
   },
-  inboxButtonActive: { borderColor: colors.primaryNavy },
-  inboxButtonText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
+  inboxButtonActive: { borderColor: colors.accentTeal },
+  inboxButtonText: { color: colors.textOnBrand, fontWeight: '700', fontSize: 14 },
   inboxButtonTextActive: { fontWeight: '800' },
-  headerTitle: { fontSize: 24, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.3 },
-  mainArea: { flex: 1 },
+  mainArea: { flex: 1, paddingTop: 12 },
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },
   content: { paddingHorizontal: 16, paddingBottom: 28, flexGrow: 1 },
@@ -3949,7 +3967,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primaryNavySoft,
   },
-  quickActionDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
   quickActionText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   // ── Welfare Check block (Phase 3D) ───────────────────────────────────────
   guardSectionUrgent: {
@@ -4006,13 +4023,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
   },
-  // Emergency is deliberately not a fifth tile in a uniform grid: full width, on its own row, so it
-  // cannot be hit while reaching for Log Book.
-  emergencyButton: {
-    width: '100%',
-    marginTop: 10,
-  },
-  quickActionDangerText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   guardOffersRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   offersListSection: { gap: 0, paddingTop: 2 },
   offersWorkflowFooter: {
