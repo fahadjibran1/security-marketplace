@@ -59,9 +59,11 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   barStacked: { flexDirection: 'column', alignItems: 'stretch', gap: spacing.sm },
-  status: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
+  // Grow and shrink from the content's own size (flexBasis auto), never from zero. `flex: 1` sets a zero basis, which
+  // in the stacked (column) bar collapsed the status to no height and hid "On duty" and the site (S4-UX-01.2a).
+  status: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
   dot: { width: STATUS_DOT, height: STATUS_DOT, borderRadius: STATUS_DOT / 2, backgroundColor: colors.success },
-  statusText: { flex: 1, minWidth: 0 },
+  statusText: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
   onDuty: { color: colors.success, fontSize: 13, lineHeight: 18, fontWeight: '800', letterSpacing: 0.3 },
   site: { color: colors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
   emergency: {

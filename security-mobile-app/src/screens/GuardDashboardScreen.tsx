@@ -1984,7 +1984,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       <GuardHeader
         productLabel={productLabel}
         productIsUat={productIsUat}
-        layout={homeLayout}
         onLogout={onLogout}
         title={
           activeTab === 'home'
@@ -3443,7 +3442,10 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       </ScrollView>
       </View>
 
-      <View style={[styles.bottomNav, { paddingBottom: Math.max(18, insets.bottom + 8) }]}>
+      {/* S4-UX-01.2a: this bar owns the bottom safe area. App no longer insets the Guard screen at the bottom, so
+          the bar's background runs under the gesture indicator while its labels stay above it (insets.bottom + 8).
+          With large text the side padding tightens, and each label stays on one line (see bottomNavLabel). */}
+      <View style={[styles.bottomNav, homeLayout.compact && styles.bottomNavCompact, { paddingBottom: Math.max(18, insets.bottom + 8) }]}>
         {([
           ['home', 'Home'],
           ['offers', 'Offers'],
@@ -3461,7 +3463,16 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
           >
             <View style={[styles.bottomNavIndicator, navActiveTab === tab && styles.bottomNavIndicatorActive]} />
             <View style={styles.bottomNavLabelRow}>
-              <Text style={[styles.bottomNavLabel, navActiveTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
+              {/* One line, never broken mid-word: when large text makes a label wider than its tab, it shrinks to fit
+                  (no further than 60% of the scaled size) instead of wrapping, and the tab keeps its accessibilityLabel. */}
+              <Text
+                style={[styles.bottomNavLabel, navActiveTab === tab && styles.bottomNavLabelActive]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {label}
+              </Text>
               {tab === 'offers' && shiftOffers.length > 0 ? (
                 <View style={styles.navBadge}>
                   <Text style={styles.navBadgeText}>{shiftOffers.length}</Text>
@@ -4295,7 +4306,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     elevation: 6,
   },
-  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6 },
+  bottomNavCompact: { paddingHorizontal: 2 },
+  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6, paddingHorizontal: 2, minWidth: 0 },
   bottomNavItemActive: { opacity: 1 },
   bottomNavIndicator: {
     width: 32,
@@ -4306,7 +4318,7 @@ const styles = StyleSheet.create({
   bottomNavIndicatorActive: {
     backgroundColor: colors.accentTeal,
   },
-  bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13 },
+  bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13, flexShrink: 1 },
   bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
   // Inline action feedback. Inside the form, so the keyboard and the modal cannot hide it.
@@ -4381,7 +4393,7 @@ const styles = StyleSheet.create({
   homeOffersStripBtnText: { color: colors.warning, fontWeight: '700', fontSize: 13 },
 
   // Bottom nav badge
-  bottomNavLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  bottomNavLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' },
   navBadge: {
     minWidth: 18,
     height: 18,

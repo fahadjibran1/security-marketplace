@@ -2,9 +2,9 @@
 // text scale can be executed in a spec. The UI is never scaled as a whole: these values only choose how flexible
 // rows wrap and how many tile columns fit, in density-independent points, after the system text scale.
 
-/** Below this width (points) the header actions move to their own row. */
+/** Below this width (points) the screen counts as narrow. (The header no longer uses it: it wraps by content.) */
 export const NARROW_WIDTH = 375;
-/** At or above this system text scale the header actions move to their own row. */
+/** At or above this system text scale the text counts as large. */
 export const LARGE_TEXT_SCALE = 1.3;
 /** Horizontal page gutter used by the Guard screen (styles.content paddingHorizontal). */
 export const PAGE_GUTTER = 16;
@@ -29,8 +29,6 @@ export interface GuardHomeLayout {
   fontScale: number;
   /** Narrow screen or large text: anything laid out in one row should be allowed to wrap. */
   compact: boolean;
-  /** The header's Notifications and Log out move to a second row instead of squeezing the title. */
-  headerWraps: boolean;
   /** The on-duty bar puts Emergency on its own full-width row under the status. */
   onDutyBarStacks: boolean;
   /** Columns for the Home action tiles. */
@@ -55,7 +53,6 @@ export function guardHomeLayout({ width, height, fontScale }: GuardHomeLayoutInp
     height,
     fontScale: scale,
     compact: narrow || largeText,
-    headerWraps: narrow || largeText,
     onDutyBarStacks: rowWidth / scale < MIN_BAR_ROW_TEXT_WIDTH,
     tileColumns: tileWidth / scale >= MIN_TILE_TEXT_WIDTH ? 2 : 1,
   };

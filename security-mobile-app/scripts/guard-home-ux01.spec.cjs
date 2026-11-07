@@ -110,7 +110,9 @@ function loadWith(relativePath, { overrides = {}, appVariant } = {}) {
       }
       if (request === 'react-native-safe-area-context') {
         const Pass = ({ children }) => h(React.Fragment, null, children);
-        return { SafeAreaProvider: Pass, SafeAreaView: Pass, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
+        // A plain view that keeps the style, testID and edges App gives it, so UX-T11 can inspect the safe areas.
+        const SafeAreaView = ({ children, edges, style, testID }) => h(RNW.View, { style, testID: testID || 'safe-area', nativeID: (edges || []).join(',') }, children);
+        return { SafeAreaProvider: Pass, SafeAreaView, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
       }
       return require(request);
     };
@@ -260,17 +262,18 @@ test('UX-T1-UPCOMING-SHIFTS-ARE-ACCEPTED-WORK-ONLY', () => {
 // ═══════════════════ UX-T8 the layout matrix ═══════════════════
 
 test('UX-T8-LAYOUT-MATRIX-FOUR-VIEWPORTS-THREE-TEXT-SCALES', () => {
-  // [width, height, scale, headerWraps, barStacks, tileColumns]
+  // [width, height, scale, barStacks, tileColumns]. The header is not here: since S4-UX-01.2a it wraps by content
+  // (UX-T9), not by a width breakpoint, so there is no headerWraps rule left to tabulate.
   const expected = [
-    [360, 640, 1.0, true, false, 2], [360, 640, 1.3, true, true, 1], [360, 640, 2.0, true, true, 1],
-    [375, 667, 1.0, false, false, 2], [375, 667, 1.3, true, true, 1], [375, 667, 2.0, true, true, 1],
-    [393, 852, 1.0, false, false, 2], [393, 852, 1.3, true, true, 2], [393, 852, 2.0, true, true, 1],
-    [430, 932, 1.0, false, false, 2], [430, 932, 1.3, true, false, 2], [430, 932, 2.0, true, true, 1],
+    [360, 640, 1.0, false, 2], [360, 640, 1.3, true, 1], [360, 640, 2.0, true, 1],
+    [375, 667, 1.0, false, 2], [375, 667, 1.3, true, 1], [375, 667, 2.0, true, 1],
+    [393, 852, 1.0, false, 2], [393, 852, 1.3, true, 2], [393, 852, 2.0, true, 1],
+    [430, 932, 1.0, false, 2], [430, 932, 1.3, false, 2], [430, 932, 2.0, true, 1],
   ];
-  for (const [width, height, fontScale, headerWraps, barStacks, tiles] of expected) {
+  for (const [width, height, fontScale, barStacks, tiles] of expected) {
     const l = layoutRules.guardHomeLayout({ width, height, fontScale });
     const at = `${width}x${height} @${fontScale}`;
-    assert.equal(l.headerWraps, headerWraps, `${at} header wraps`);
+    assert.ok(!('headerWraps' in l), `${at}: no width breakpoint decides the header`);
     assert.equal(l.onDutyBarStacks, barStacks, `${at} bar stacks`);
     assert.equal(l.tileColumns, tiles, `${at} tile columns`);
     assert.equal(l.compact, width < 375 || fontScale >= 1.3, `${at} compact`);
@@ -305,10 +308,20 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
   const { GuardHeader } = loadWith('src/components/guard/home/GuardHeader.tsx');
   const { GuardOnDutyBar, EMERGENCY_MIN_HEIGHT } = loadWith('src/components/guard/home/GuardOnDutyBar.tsx');
   assert.ok(EMERGENCY_MIN_HEIGHT >= 48);
-  for (const headerWraps of [false, true]) {
+  const { nextHeaderWrapped } = loadWith('src/components/guard/home/GuardHeader.tsx');
+  // S4-UX-01.2a content-driven wrapping, with the widths measured on the CP-A emulator: mark 26pt, "Current Shift"
+  // 114pt on one line, Notifications + Log out 189pt; the content box is the screen width minus 32pt.
+  const fit = (wrapped, lines, rowWidth) => nextHeaderWrapped({ wrapped, lines, textWidth: 114, rowWidth, markWidth: 26, actionsWidth: 189 });
+  assert.equal(fit(false, 1, 328), false, 'a title on one line keeps the actions beside it');
+  assert.equal(fit(false, 2, 328), true, '360dp: the title would need two lines, so the actions wrap');
+  assert.equal(fit(true, 1, 343), true, '375dp: 26+12+114+12+189 = 353 > 343, so they stay on their own row (CP-A shot 2)');
+  assert.equal(fit(true, 1, 361), false, '393dp: 353 fits in 361, so they come back beside the title (CP-A shot 3)');
+  assert.equal(fit(true, 2, 1000), true, 'a title that needs two lines even alone keeps the actions on their own row');
+  assert.equal(fit(true, 1, 0), true, 'nothing moves before the row is measured');
+  for (const title of ['Current Shift', 'A deliberately long screen title that cannot share a row']) {
     let r;
     await act(async () => {
-      r = TestRenderer.create(h(GuardHeader, { title: 'Current Shift', productLabel: 'S4', productIsUat: false, layout: { headerWraps }, onLogout: noop, notifications: h(RNW.Text, null, 'N') }));
+      r = TestRenderer.create(h(GuardHeader, { title, productLabel: 'S4', productIsUat: false, onLogout: noop, notifications: h(RNW.Text, null, 'N') }));
     });
     const controls = pressables(r.root, () => true);
     assert.equal(controls.length, 1, 'Log out is the header\'s own control (Notifications is passed in)');
@@ -318,13 +331,32 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
       assert.ok(flat(c.props.style).minHeight >= 44, 'at least 44pt');
     }
     assert.ok(r.root.findAll((n) => n.props?.accessibilityRole === 'header').length >= 1, 'the title is announced as a heading');
-    // Wrapped: the actions become the header's second row instead of sharing the title row.
-    const [header] = byTestId(r.root, 'guard-header');
-    const [titleRow] = byTestId(header, 'guard-header-title-row');
-    const [actions] = byTestId(header, 'guard-header-actions');
-    assert.ok(texts(titleRow).includes('Current Shift') && texts(actions).includes('Log out'));
-    assert.equal(isInside(actions, titleRow), !headerWraps, headerWraps ? 'actions on their own row' : 'actions beside the title');
+    // Before any measurement the actions sit beside the title, in the header's first row.
+    const parts = () => {
+      const [header] = byTestId(r.root, 'guard-header');
+      const [row] = byTestId(header, 'guard-header-row');
+      const [identity] = byTestId(header, 'guard-header-title-row');
+      const [actions] = byTestId(header, 'guard-header-actions');
+      return { header, row, identity, actions };
+    };
+    let p = parts();
+    assert.ok(texts(p.identity).includes(title) && texts(p.actions).includes('Log out'));
+    assert.ok(isInside(p.actions, p.row) && !isInside(p.actions, p.identity), 'actions beside the title');
+    // Drive the real handlers with device measurements: the title needs two lines at 360dp, so the actions move to
+    // their own row; at 430dp the one-line title fits beside them again, so they come back.
+    const titleNode = r.root.findAll((n) => typeof n.props?.onTextLayout === 'function' && n.props.accessibilityRole === 'header')[0];
+    const markNode = r.root.findAll((n) => typeof n.props?.onLayout === 'function' && n.props.children === 'S4')[0];
+    const layout = (node, width) => node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } } });
+    const textLayout = (widths) => titleNode.props.onTextLayout({ nativeEvent: { lines: widths.map((width) => ({ width, text: '' })) } });
+    await act(async () => { layout(p.row, 328); layout(markNode, 26); layout(p.actions, 189); textLayout([90, 60]); });
+    p = parts();
+    assert.ok(!isInside(p.actions, p.row) && isInside(p.actions, p.header), 'wrapped: the actions are the header\'s second row');
+    assert.equal(flat(p.actions.props.style).alignSelf, 'flex-end', 'right-aligned on their own row');
+    await act(async () => { layout(parts().row, 398); textLayout([114]); });
+    assert.ok(isInside(parts().actions, parts().row), 'room again: the actions return beside the title');
+    await act(async () => r.unmount());
   }
+  assert.doesNotMatch(codeOf('src/components/guard/home/GuardHeader.tsx'), /headerWraps|NARROW_WIDTH|useWindowDimensions|useGuardHomeLayout/, 'no width breakpoint in the header');
   for (const onDutyBarStacks of [false, true]) {
     let r;
     await act(async () => {
@@ -336,6 +368,17 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
     assert.match(emergency.props.accessibilityHint, /needs a connection/i, 'Emergency is announced as online-only');
     assert.ok(flat(emergency.props.style).minHeight >= 48, 'Emergency is at least 48pt');
     assert.equal(flat(emergency.props.style).backgroundColor, '#B42318', 'Emergency is danger red');
+    // S4-UX-01.2a (CP-A shots 5 and 6): `flex: 1` gave the status a zero basis, so in the stacked column it had no
+    // height and "On duty" and the site disappeared. Both containers now size from their content in either layout.
+    const [status] = r.root.findAll((n) => n.props && /^On duty at /.test(String(n.props.accessibilityLabel || '')) && n.props.style);
+    assert.ok(status, 'the status is announced with the site');
+    assert.ok(texts(status).includes('On duty'), `On duty is rendered (stacked: ${onDutyBarStacks})`);
+    const statusText = status.findAll((n) => n.props && n.props.style && texts(n).includes('On duty') && n !== status && flat(n.props.style).minWidth === 0)[0];
+    for (const [name, node] of [['status', status], ['status text', statusText]]) {
+      const s = flat(node.props.style);
+      assert.equal(s.flex, undefined, `${name} does not use flex: 1 (a zero basis)`);
+      assert.equal(s.flexBasis, 'auto', `${name} is sized from its content`);
+    }
   }
   for (const rel of ['src/components/guard/home/GuardHeader.tsx', 'src/components/guard/home/GuardOnDutyBar.tsx']) {
     const src = codeOf(rel);
@@ -466,6 +509,45 @@ test('UX-T7-NON-GUARD-SURFACES-KEEP-APPS-TOP-BAR', async () => {
   const app = codeOf('App.tsx');
   assert.match(app, /\{surface !== 'company' && surface !== 'guard' \? <View style=\{styles\.topBar\}>/, 'only Guards lose App\'s top bar');
   assert.match(app, /\{PRODUCT_LABEL\}<\/Text>/);
+});
+
+// ═══════════════════ UX-T11 status bar, safe areas and tab labels (S4-UX-01.2a) ═══════════════════
+
+const edgesOf = (n) => (n.props.edges ? n.props.edges.join(',') : n.props.nativeID);
+
+test('UX-T11-GUARD-STATUS-BAR-SITS-ON-NAVY-AND-THE-TAB-BAR-OWNS-THE-BOTTOM-INSET', async () => {
+  const { renderer, run } = await mountApp({ shifts: [liveShift()] });
+  const root = renderer.root;
+  // Top: a navy backdrop exactly the height of the top inset, then the navy Guard header (CP-A: white status-bar
+  // content had been drawn over the light page background).
+  const [backdrop] = byTestId(root, 'guard-status-bar-backdrop');
+  assert.ok(backdrop, 'a status-bar backdrop is drawn for a Guard');
+  assert.equal(edgesOf(backdrop), 'top', 'it insets the top edge only');
+  assert.equal(flat(backdrop.props.style).backgroundColor, '#0B1F33', 'navy, matching the Guard header');
+  const [outer] = byTestId(root, 'safe-area');
+  assert.equal(edgesOf(outer), 'right,left', 'the Guard screen is not inset again at the top or the bottom');
+  // Bottom: the tab bar keeps padding itself by insets.bottom, so its labels stay above the gesture indicator.
+  const screen = codeOf(SCREEN);
+  assert.match(screen, /styles\.bottomNav, homeLayout\.compact && styles\.bottomNavCompact, \{ paddingBottom: Math\.max\(18, insets\.bottom \+ 8\) \}/);
+  // Tabs: all five destinations stay, each announced by name, each label on one line that shrinks rather than breaks.
+  const tabs = pressables(root, (p) => p.accessibilityRole === 'tab');
+  assert.deepEqual(tabs.map((t) => t.props.accessibilityLabel), ['Home', 'Offers', 'Jobs', 'History', 'Profile']);
+  for (const tab of tabs) {
+    const labels = tab.findAll((n) => n.props && n.props.numberOfLines === 1 && n.props.adjustsFontSizeToFit === true);
+    assert.ok(labels.length >= 1, `${tab.props.accessibilityLabel}: one line, shrink to fit, never broken mid-word`);
+    assert.ok(labels[0].props.minimumFontScale >= 0.5, 'shrinks only so far');
+    assert.notEqual(labels[0].props.allowFontScaling, false, 'still follows the system text size');
+  }
+  await run(() => renderer.unmount());
+});
+
+test('UX-T11-NON-GUARD-SURFACES-KEEP-ALL-FOUR-SAFE-AREA-EDGES', async () => {
+  const { renderer, run } = await mountApp({ role: 'client_admin' });
+  assert.equal(byTestId(renderer.root, 'guard-status-bar-backdrop').length, 0, 'no Guard backdrop');
+  const [outer] = byTestId(renderer.root, 'safe-area');
+  assert.equal(edgesOf(outer), 'top,right,bottom,left', 'unchanged for every other surface');
+  await run(() => renderer.unmount());
+  assert.match(codeOf('App.tsx'), /const GUARD_SAFE_AREA_EDGES: Array<'top' \| 'right' \| 'bottom' \| 'left'> = \['right', 'left'\];/);
 });
 
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════
