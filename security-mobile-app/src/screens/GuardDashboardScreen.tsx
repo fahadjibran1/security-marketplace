@@ -139,9 +139,10 @@ import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 import { GuardHeader } from '../components/guard/home/GuardHeader';
 import { GuardOnDutyBar } from '../components/guard/home/GuardOnDutyBar';
-import { guardHomeMode, showOnDutyBar } from '../components/guard/home/guardHomeModel';
+import { guardHomeMode, showOnDutyBar, upcomingShifts } from '../components/guard/home/guardHomeModel';
 import { guardEmergencyPresentation } from '../components/guard/home/guardEmergencyPresentation';
 import { GuardBookOff, GuardRecentActivity, GuardShiftRecords, GuardShiftSummary, GuardWelfareSummary } from '../components/guard/home/GuardOnDutyHome';
+import { GuardNoShift, GuardShiftCard, GuardUpcomingShifts, UPCOMING_SHIFTS_LIMIT } from '../components/guard/home/GuardOffDutyHome';
 import { useGuardHomeLayout } from '../components/guard/home/useGuardHomeLayout';
 
 interface GuardDashboardScreenProps {
@@ -1879,6 +1880,19 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // S4-UX-01.3: the compact On Duty Home is used for the four on-duty phases of a live shift; every other phase keeps
   // the Current Shift card exactly as before.
   const homeOnDuty = homeShiftLive && guardHomeMode(guardShiftPhase) === 'on_duty';
+  // S4-UX-01.4 Off Duty Home: what the shift card calls the shift the screen already chose, and the accepted shifts
+  // after it (guardHomeModel.upcomingShifts: accepted and not yet ended, soonest first), never repeating it.
+  const offDutyCardKind: 'next' | 'offer' | 'last' = guardShiftPhase === 'offer_pending'
+    ? 'offer'
+    : guardShiftPhase === 'timesheet_pending' || guardShiftPhase === 'shift_ended' ? 'last' : 'next';
+  // UAT-ATT-01: being before the scheduled start is NOT a reason to disable Book On.
+  // Only an in-flight attendance request disables the shift card's action.
+  const primaryDisabled = currentHomeShift ? attendanceBusyShiftId === currentHomeShift.id : false;
+  const offDutyUpcoming = homeOnDuty
+    ? []
+    : upcomingShifts(sortedShifts, liveNow, normalizeShiftLifecycleStatus, UPCOMING_SHIFTS_LIMIT + 1)
+      .filter((shift) => shift.id !== currentHomeShift?.id)
+      .slice(0, UPCOMING_SHIFTS_LIMIT);
   // Emergency: one handler, whichever launcher shows it (Variant A, the on-duty bar — the default — or Variant B, the
   // header SOS control, development bundles only; see guardEmergencyPresentation.ts).
   const emergencyPresentation = guardEmergencyPresentation();
@@ -2126,212 +2140,37 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   : null}
                 statusTone={guardShiftPhase === 'welfare_overdue' ? 'danger' : guardShiftPhase === 'on_shift' ? null : 'warning'}
               />
+            ) : currentHomeShift ? (
+              // S4-UX-01.4 Off Duty Home: one compact card for the shift the screen already chose (currentHomeShift —
+              // the next accepted shift, else an offer, else the last finished one), with its existing action and
+              // handler. Book On still goes through handleCurrentShiftPrimaryPress → handlePrimaryHomeAction, so the
+              // early Book On confirmation is unchanged.
+              <GuardShiftCard
+                kind={offDutyCardKind}
+                siteName={currentHomeShift.siteName}
+                dateLabel={formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}
+                timeRange={`${formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – ${formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}`}
+                // The phase line only where it adds something: before the shift it would repeat the date and time,
+                // and an offer's line pointed at a section that no longer exists.
+                statusLine={guardShiftPhase === 'shift_window_check_in' || guardShiftPhase === 'timesheet_pending' || guardShiftPhase === 'shift_ended'
+                  ? getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)
+                  : null}
+                statusTone={guardShiftPhase === 'timesheet_pending' ? 'warning' : null}
+                action={getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift)
+                  ? {
+                      label: getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) as string,
+                      busy: primaryDisabled,
+                      busyLabel: 'Starting...',
+                      disabled: primaryDisabled,
+                      emphasis: offDutyCardKind === 'last' ? 'secondary' : 'primary',
+                      onPress: handleCurrentShiftPrimaryPress,
+                    }
+                  : null}
+                note={guardShiftPhase === 'before_shift' ? getPrimaryActionGuidance(guardShiftPhase) : null}
+                instructions={currentHomeShift.instructions}
+              />
             ) : (
-            <FeatureCard
-              title="Current Shift"
-              subtitle={
-                guardShiftPhase === 'no_shift'
-                  ? 'Between shifts — your Home hub for the next booking or paperwork.'
-                  : guardShiftPhase === 'offer_pending'
-                    ? 'A company has offered you work — your next step is to decide.'
-                    : guardShiftPhase === 'before_shift'
-                      ? 'Upcoming shift — get on site, then Book On.'
-                      : guardShiftPhase === 'timesheet_pending'
-                        ? 'Last completed shift still needs a timesheet step from you.'
-                        : guardShiftPhase === 'shift_ended'
-                          ? 'Most recent finished shift — recap or follow-up only.'
-                          : 'The single most important shift on your device right now.'
-              }
-              style={styles.guardCurrentShiftCard}
-            >
-              {guardShiftPhase === 'no_shift' ? (
-                <>
-                  <View style={styles.guardSection}>
-                    <Text style={styles.guardSectionLabel}>What to do now</Text>
-                    <Text style={[styles.helperText, styles.guardSectionBody]}>
-                      You are not on a live shift. Use Offers when work is proposed to you, History for finished shifts
-                      and timesheets, and Jobs if you are looking for extra cover — same tabs as before.
-                    </Text>
-                  </View>
-                  <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                    <Text style={styles.guardSectionLabel}>Quick links</Text>
-                    <View style={styles.guardLinkStack}>
-                      <Pressable
-                        style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                        onPress={() => setActiveTab('offers')}
-                      >
-                        <Text style={styles.secondarySummaryButtonText}>Review shift offers</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                        onPress={() => setActiveTab('history')}
-                      >
-                        <Text style={styles.secondarySummaryButtonText}>Past shifts & timesheets</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                        onPress={() => setActiveTab('jobs')}
-                      >
-                        <Text style={styles.secondarySummaryButtonText}>Browse jobs</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </>
-              ) : currentHomeShift ? (
-                (() => {
-                  const statusNorm = normalizeShiftLifecycleStatus(currentHomeShift.status);
-                  const primaryLabel = getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift);
-                  // UAT-ATT-01: being before the scheduled start is NOT a reason to disable Book On.
-                  // Only an in-flight attendance request disables the button.
-                  const primaryDisabled = attendanceBusyShiftId === currentHomeShift.id;
-                  const attendanceBusy = attendanceBusyShiftId === currentHomeShift.id;
-
-                  const primaryGuidance = getPrimaryActionGuidance(guardShiftPhase);
-
-                  return (
-                    <>
-                      <View style={styles.guardSection}>
-                        <Text style={styles.guardSectionLabel}>Shift details</Text>
-                        <View style={styles.cardTopRow}>
-                          <View style={styles.flexGrow}>
-                            <Text style={[styles.siteName, styles.guardSiteTitle]}>{currentHomeShift.siteName}</Text>
-                            <View style={styles.guardTimeStack}>
-                              <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}</Text>
-                              <Text style={styles.shiftTime}>
-                                {formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – {formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}
-                              </Text>
-                            </View>
-                            {statusNorm === 'in_progress' ? (
-                              <View style={styles.liveBanner}>
-                                <View style={styles.liveDot} />
-                                <Text style={styles.liveBannerText}>LIVE</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                          <StatusBadge label={normalizeShiftLifecycleStatus(currentHomeShift.status)} tone={shiftStatusTone(currentHomeShift.status)} />
-                        </View>
-                      </View>
-
-                      <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                        <Text style={styles.guardSectionLabel}>Status</Text>
-                        <Text
-                          style={[
-                            styles.helperLine,
-                            styles.guardStatusText,
-                            guardShiftPhase === 'welfare_overdue' ? styles.helperLineUrgent : null,
-                            guardShiftPhase === 'welfare_due' ||
-                            guardShiftPhase === 'shift_ending_soon' ||
-                            guardShiftPhase === 'offer_pending' ||
-                            guardShiftPhase === 'timesheet_pending'
-                              ? styles.helperLineWarning
-                              : null,
-                          ]}
-                        >
-                          {getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)}
-                        </Text>
-                      </View>
-
-                      {normalizeShiftLifecycleStatus(currentHomeShift.status) === 'in_progress' ? (
-                        <View style={[styles.guardSection, styles.guardSectionLive]}>
-                          <Text style={styles.guardSectionLabel}>Live clock</Text>
-                          <View style={[styles.liveStatusBlock, styles.guardLiveStatusFlush]}>
-                            <View style={styles.liveStatusItem}>
-                              <Text style={styles.liveStatusLabel}>Booked On</Text>
-                              <Text style={styles.liveStatusValue}>
-                                {currentHomeShiftAttendance?.checkInAt
-                                  ? formatTimeLabel(currentHomeShiftAttendance.checkInAt, currentHomeShift.site?.timezone)
-                                  : 'Pending'}
-                              </Text>
-                            </View>
-                            <View style={styles.liveStatusItem}>
-                              <Text style={styles.liveStatusLabel}>Duration</Text>
-                              <Text style={styles.liveStatusValue}>
-                                {formatDurationLabel(
-                                  currentHomeShiftAttendance?.checkInAt || currentHomeShift.start,
-                                  currentHomeShiftAttendance?.checkOutAt,
-                                  liveNow,
-                                )}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-                      ) : null}
-
-                      {/* The Welfare Check block is no longer inside this card: it is rendered once, below it
-                          (GuardWelfareSummary), for every state that has a Welfare obligation. */}
-
-                      {primaryLabel ? (
-                        <View style={[styles.guardSection, styles.guardSectionMainAction]}>
-                          <Text style={styles.guardSectionLabel}>Main action</Text>
-                          {primaryGuidance ? (
-                            <Text style={[styles.helperText, styles.guardSectionBody]}>{primaryGuidance}</Text>
-                          ) : null}
-                          <Pressable
-                            style={[
-                              styles.primaryActionButton,
-                              styles.guardHomeCta,
-                              primaryDisabled && styles.buttonDisabled,
-                            ]}
-                            onPress={handleCurrentShiftPrimaryPress}
-                            disabled={primaryDisabled}
-                          >
-                            <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
-                              {attendanceBusy
-                                ? statusNorm === 'ready'
-                                  ? 'Starting...'
-                                  : 'Ending...'
-                                : primaryLabel}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      ) : null}
-
-                      {guardShiftPhase === 'timesheet_pending' ? (
-                        <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                          <Text style={styles.guardSectionLabel}>Timesheet follow-up</Text>
-                          <Text style={[styles.helperText, styles.guardSectionBody]}>
-                            Payroll still needs this timesheet completed or updated. Open History to the timesheets
-                            list — same place you have always used — then submit or fix what your company asked for.
-                          </Text>
-                          <Pressable
-                            style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                            onPress={() => setActiveTab('history')}
-                          >
-                            <Text style={styles.secondarySummaryButtonText}>Open History & timesheets</Text>
-                          </Pressable>
-                        </View>
-                      ) : null}
-
-                      {guardShiftPhase === 'shift_ended' && statusNorm === 'completed' ? (
-                        <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                          <Text style={styles.guardSectionLabel}>Paperwork & history</Text>
-                          <Text style={[styles.helperText, styles.guardSectionBody]}>
-                            History still holds payslips, older shifts, and company notes even when nothing is flagged
-                            here.
-                          </Text>
-                          <Pressable
-                            style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                            onPress={() => setActiveTab('history')}
-                          >
-                            <Text style={styles.secondarySummaryButtonText}>Open History</Text>
-                          </Pressable>
-                        </View>
-                      ) : guardShiftPhase === 'shift_ended' ? (
-                        <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                          <Text style={[styles.helperText, styles.guardSectionBody]}>
-                            If this outcome looks wrong, use History for related records and contact your supervisor
-                            outside the app.
-                          </Text>
-                        </View>
-                      ) : null}
-
-                    </>
-                  );
-                })()
-              ) : (
-                <Text style={styles.helperText}>No active shift requiring action.</Text>
-              )}
-            </FeatureCard>
+              <GuardNoShift onOffers={() => setActiveTab('offers')} onHistory={() => setActiveTab('history')} onJobs={() => setActiveTab('jobs')} />
             )}
 
             {/* ── Welfare Check ── every value is the backend's, via the operations projection on this shift
@@ -2371,7 +2210,21 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               />
             ) : null}
 
-            {homeOnDuty ? (
+            {/* S4-UX-01.4: accepted shifts after the one in the shift card, never that one again (Off Duty only). */}
+            {!homeOnDuty ? (
+              <GuardUpcomingShifts
+                shifts={offDutyUpcoming.map((shift) => ({
+                  id: shift.id,
+                  siteName: shift.siteName,
+                  dateLabel: formatDateLabel(shift.start, shift.site?.timezone),
+                  timeRange: `${formatTimeLabel(shift.start, shift.site?.timezone)} – ${formatTimeLabel(shift.end, shift.site?.timezone)}`,
+                }))}
+              />
+            ) : null}
+
+            {/* Recent activity: the On Duty Home's, and the last finished shift's recap (the only Off Duty states that
+                had one before). Same compact list either way. */}
+            {homeOnDuty || (currentHomeShift && (guardShiftPhase === 'shift_ended' || guardShiftPhase === 'timesheet_pending')) ? (
               <GuardRecentActivity
                 entries={currentHomeShiftTimeline.map((entry) => ({
                   id: entry.id,
@@ -2382,40 +2235,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               />
             ) : null}
           </View>
-        ) : null}
-
-        {/* The on-duty phases show the condensed Recent activity inside the On Duty Home above (S4-UX-01.3). */}
-        {activeTab === 'home' &&
-        currentHomeShift &&
-        !homeOnDuty &&
-        [
-          'on_shift',
-          'welfare_due',
-          'welfare_overdue',
-          'shift_ending_soon',
-          'shift_ended',
-          'timesheet_pending',
-        ].includes(guardShiftPhase) ? (
-          <FeatureCard
-            title="Recent Activity"
-            subtitle="Background log only — use Current Shift actions above first when something needs doing."
-            style={styles.guardRecentActivityCard}
-          >
-            {currentHomeShiftTimeline.length === 0 ? (
-              <Text style={styles.helperText}>No activity recorded yet.</Text>
-            ) : (
-              currentHomeShiftTimeline.map((entry) => (
-                <View key={entry.id} style={styles.activityRow}>
-                  <View style={styles.activityBullet} />
-                  <View style={styles.flexGrow}>
-                    <Text style={styles.activityTitle}>{entry.title}</Text>
-                    <Text style={styles.metaText}>{entry.message}</Text>
-                  </View>
-                  <Text style={styles.activityTime}>{formatTimeLabel(entry.occurredAt)}</Text>
-                </View>
-              ))
-            )}
-          </FeatureCard>
         ) : null}
 
         {activeTab === 'home' && shiftOffers.length > 0 ? (
@@ -3771,69 +3590,12 @@ const styles = StyleSheet.create({
   // padding) when it renders null. The inner -1 hides the panel's own top divider against the card edge.
   homePatrolSlot: { backgroundColor: colors.card, borderRadius: 16, paddingHorizontal: 16, overflow: 'hidden' },
   homePatrolInner: { marginTop: -1 },
-  guardCurrentShiftCard: {
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.06,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  guardSection: {
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  guardSectionMuted: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-  },
-  guardSectionMainAction: {
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-  },
-  guardSectionLive: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accentTeal,
-    paddingLeft: 13,
-  },
   guardSectionLabel: {
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.8,
     color: colors.textSecondary,
     textTransform: 'uppercase',
-  },
-  guardSectionBody: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: colors.textSecondary,
-  },
-  guardSiteTitle: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    letterSpacing: -0.3,
-  },
-  guardTimeStack: {
-    gap: 4,
-    marginTop: 4,
-  },
-  guardStatusText: {
-    fontSize: 15,
-    lineHeight: 23,
   },
   guardHomeCta: {
     marginTop: 4,
@@ -3871,97 +3633,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
-  guardLinkStack: {
-    gap: 10,
-  },
-  guardOutlineLink: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-  },
-  guardLiveStatusFlush: {
-    marginTop: 2,
-  },
-  guardRecentActivityCard: {
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    backgroundColor: colors.card,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
   flexGrow: { flex: 1 },
-  siteName: { fontSize: 26, lineHeight: 30, fontWeight: '800', color: colors.textPrimary },
-  shiftDate: { color: colors.textSecondary, fontWeight: '600' },
-  shiftTime: { color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  helperLine: { color: colors.textSecondary, lineHeight: 20 },
-  helperLineWarning: { color: colors.warning, fontWeight: '700' },
-  helperLineUrgent: { color: colors.danger, fontWeight: '800' },
   helperText: { color: colors.textSecondary, lineHeight: 20 },
-  liveBanner: {
-    marginTop: 10,
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.successSurface,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: colors.success,
-  },
-  liveBannerText: {
-    color: colors.success,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-  },
   primaryActionButton: { backgroundColor: colors.primaryNavy, borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
   primaryActionText: { color: colors.textOnBrand, fontSize: 16, fontWeight: '800' },
-  liveStatusBlock: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
-  },
-  liveStatusItem: {
-    flex: 1,
-    backgroundColor: colors.card,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 4,
-  },
-  liveStatusLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  liveStatusValue: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  secondarySummaryButton: {
-    alignSelf: 'stretch',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondarySummaryButtonText: { color: colors.textPrimary, fontWeight: '700', fontSize: 15 },
   // ── Welfare Check block (Phase 3D) ───────────────────────────────────────
   guardOffersRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   offersListSection: { gap: 0, paddingTop: 2 },
@@ -4054,25 +3729,6 @@ const styles = StyleSheet.create({
   },
   secondaryActionButtonText: { color: colors.textPrimary, fontWeight: '700' },
   cardTitle: { color: colors.textPrimary, fontWeight: '700', fontSize: 16 },
-  metaText: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
-  activityRow: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: 12,
-    paddingBottom: 4,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  activityBullet: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: colors.success,
-    marginTop: 5,
-  },
-  activityTitle: { color: colors.textPrimary, fontWeight: '700' },
-  activityTime: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
   guardHistoryRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   historyFilterRow: {
     flexDirection: 'row',
@@ -4291,7 +3947,10 @@ const styles = StyleSheet.create({
 
   // Home offers indicator strip
   homeOffersStrip: {
+    // S4-UX-01.4: the same 12pt gap as the Home cards above it.
+    marginTop: 12,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,

@@ -722,6 +722,111 @@ test('UX-T16-EMERGENCY-VARIANT-B-IS-REVIEW-ONLY-AND-USES-THE-SAME-HANDLER', asyn
   }
 });
 
+// ═══════════════════ UX-T17 … UX-T20 the Off Duty Home (S4-UX-01.4) ═══════════════════
+
+const HOUR = 3_600_000;
+const readyShift = (id, startInHours, siteName, extra = {}) => ({
+  id,
+  siteName,
+  start: new Date(NOW + startInHours * HOUR).toISOString(),
+  end: new Date(NOW + (startInHours + 8) * HOUR).toISOString(),
+  status: 'accepted',
+  companyId: 3,
+  checkCallIntervalMinutes: 60,
+  instructions: null,
+  site: { timezone: 'Europe/London' },
+  ...extra,
+});
+
+test('UX-T17-OFF-DUTY-HOME-SHOWS-THE-NEXT-SHIFT-ITS-BOOK-ON-AND-THREE-UPCOMING', async () => {
+  const shifts = [
+    readyShift(61, 30, 'Delta Yard'),
+    readyShift(60, 3, 'North Gate', { instructions: '  Use the north gate. Radio channel 4.  ' }),
+    readyShift(62, 54, 'Echo Quay'),
+    readyShift(63, 78, 'Foxtrot Mill'),
+    readyShift(64, 102, 'Golf Tower'),
+  ];
+  const { renderer, run } = await mountApp({ shifts });
+  const root = renderer.root;
+  const [card] = byTestId(root, 'guard-shift-card');
+  assert.ok(card, 'the shift card');
+  const cardText = texts(card);
+  assert.ok(cardText.includes('Next shift') && cardText.includes('North Gate'), 'the soonest accepted shift, named');
+  assert.ok(cardText.some((t) => / – /.test(t)), 'its time range');
+  assert.equal(byTestId(root, 'guard-on-duty-bar').length, 0, 'off duty: no on-duty bar');
+  assert.equal(byTestId(root, 'guard-welfare-summary').length, 0);
+  // The filler and the duplicated headings are gone.
+  const body = texts(scrollViews(root)[0]);
+  for (const gone of ['What to do now', 'Quick links', 'Shift details', 'Main action', 'Status', 'Upcoming shift — get on site, then Book On.']) {
+    assert.ok(!body.includes(gone), `no "${gone}"`);
+  }
+  assert.ok(!body.some((t) => /Book On is available now/.test(t)), 'no status line repeating the date and time');
+  // Instructions: exactly the API's text, behind a 44pt control, only on request.
+  assert.equal(byTestId(root, 'guard-shift-instructions').length, 0, 'collapsed at first');
+  const [toggle] = byLabel(card, 'Show shift instructions');
+  assert.ok(toggle && flat(toggle.props.style).minHeight >= 44, 'a 44pt control');
+  await run(() => toggle.props.onPress());
+  assert.deepEqual([...new Set(texts(byTestId(root, 'guard-shift-instructions')[0]))], ['Use the north gate. Radio channel 4.'], 'the API text, trimmed, nothing invented');
+  assert.equal(byLabel(root, 'Hide shift instructions').length, 1);
+  // Upcoming: the next three accepted shifts after the card's, soonest first, never the card's again.
+  const [upcoming] = byTestId(root, 'guard-upcoming-shifts');
+  const listed = [...new Set(texts(upcoming).filter((t) => / · /.test(t)))];
+  assert.deepEqual(listed.map((t) => t.split(' · ').pop()), ['Delta Yard', 'Echo Quay', 'Foxtrot Mill'], 'three, in order, without North Gate');
+  // Book On: the existing label and handler, so the early confirmation still asks first.
+  const [bookOn] = byLabel(card, 'Book On early');
+  assert.ok(bookOn && flat(bookOn.props.style).minHeight >= 44, 'Book On early, at least 44pt');
+  assert.ok(texts(card).some((t) => /You can Book On before your scheduled start/.test(t)), 'the early Book On rule');
+  await run(() => bookOn.props.onPress());
+  assert.ok(texts(root).includes('Book on early?'), 'the existing early Book On confirmation opens');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T18-NO-INSTRUCTIONS-CONTROL-WITHOUT-INSTRUCTIONS-AND-A-COMPACT-NO-SHIFT-STATE', async () => {
+  for (const instructions of [null, '', '   ']) {
+    const { renderer, run } = await mountApp({ shifts: [readyShift(70, 3, 'North Gate', { instructions })] });
+    assert.equal(byTestId(renderer.root, 'guard-shift-instructions-toggle').length, 0, `no control for ${JSON.stringify(instructions)}`);
+    assert.equal(byTestId(renderer.root, 'guard-upcoming-shifts').length, 0, 'no Upcoming card for a single shift');
+    await run(() => renderer.unmount());
+  }
+  const { renderer, run } = await mountApp({ shifts: [] });
+  const [none] = byTestId(renderer.root, 'guard-no-shift');
+  assert.ok(none, 'between shifts');
+  assert.ok(texts(none).includes('No shifts booked'));
+  const links = pressables(none, (p) => p.accessibilityRole === 'button');
+  assert.deepEqual(links.map((l) => l.props.accessibilityLabel), ['Review shift offers', 'Past shifts & timesheets', 'Browse jobs'], 'the same three destinations');
+  for (const link of links) assert.ok(flat(link.props.style).minHeight >= 44, 'at least 44pt');
+  assert.ok(!texts(renderer.root).some((t) => /same tabs as before/.test(t)), 'no explanatory filler');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T19-AN-OFFER-AND-A-FINISHED-SHIFT-KEEP-THEIR-EXISTING-ACTIONS', async () => {
+  const offer = readyShift(80, 20, 'Offer Site', { status: 'assigned' });
+  const a = await mountApp({ shifts: [offer] });
+  const [offerCard] = byTestId(a.renderer.root, 'guard-shift-card');
+  assert.ok(texts(offerCard).includes('Shift offer'));
+  assert.equal(byLabel(offerCard, 'Review Offer').length, 1, 'Review Offer, as before');
+  await a.run(() => a.renderer.unmount());
+
+  const done = { ...readyShift(81, -10, 'Done Site'), status: 'completed' };
+  const b = await mountApp({ shifts: [done] });
+  const [lastCard] = byTestId(b.renderer.root, 'guard-shift-card');
+  assert.ok(texts(lastCard).includes('Last shift'));
+  assert.equal(byLabel(lastCard, 'View Summary').length, 1, 'the read-only summary action, as before');
+  assert.equal(byTestId(b.renderer.root, 'guard-recent-activity').length, 1, 'its recap, in the compact list');
+  await b.run(() => b.renderer.unmount());
+});
+
+test('UX-T20-OFF-DUTY-ORDER-KEEPS-THE-PATROL-SLOT-AND-ONE-PRIMARY-HANDLER', () => {
+  const screen = codeOf(SCREEN);
+  const slotAt = screen.indexOf('<View style={styles.homePatrolSlot}>');
+  assert.ok(screen.indexOf('<GuardShiftCard') < slotAt && screen.indexOf('<GuardNoShift') < slotAt, 'the shift card comes before the Patrol slot');
+  assert.ok(slotAt < screen.indexOf('<GuardUpcomingShifts'), 'Upcoming comes after it, so the slot never moves');
+  const card = screen.slice(screen.indexOf('<GuardShiftCard'), screen.indexOf('/>', screen.indexOf('<GuardShiftCard')));
+  assert.match(card, /onPress: handleCurrentShiftPrimaryPress/, 'Book On, Review Offer and View Summary keep their one handler');
+  assert.match(card, /disabled: primaryDisabled/, 'disabled only while a request is in flight');
+  assert.doesNotMatch(codeOf('src/components/guard/home/GuardOffDutyHome.tsx'), /checkIn|checkOut|bookOnDecision|setPendingBookOff|api\./, 'the components decide nothing');
+});
+
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════
 
 // Recorded from release/s4-pilot-rc1 at 1251a8e (iOS 1.2.1 (22), the verified Photo Patrol camera fix c82c442).
