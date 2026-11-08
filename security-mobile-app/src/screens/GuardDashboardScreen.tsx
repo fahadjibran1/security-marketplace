@@ -2029,7 +2029,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             >
               <Text style={[styles.inboxButtonText, open && styles.inboxButtonTextActive]}>{open ? 'Close' : 'Notifications'}</Text>
               {badge && !open ? (
-                <View style={styles.navBadge}>
+                <View style={[styles.navBadge, styles.navBadgeOnHeader]}>
                   <Text style={styles.navBadgeText}>{badge}</Text>
                 </View>
               ) : null}
@@ -4004,5 +4004,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
+  // Stage 1B: on the Notifications control's secondary-navy fill the teal badge alone is 2.12:1, below the 3:1
+  // non-text minimum. A 1dp white outline (10.08:1 against #28445F) defines it there. The border sits inside the
+  // badge's existing 18dp box, so its size and position are unchanged.
+  navBadgeOnHeader: { borderWidth: 1, borderColor: '#FFFFFF' },
   navBadgeText: { color: colors.textOnBrand, fontSize: 10, fontWeight: '800', lineHeight: 14 },
 });
