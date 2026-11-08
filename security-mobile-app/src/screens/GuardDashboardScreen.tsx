@@ -135,7 +135,7 @@ import {
   type GuardActionOutcome,
 } from '../components/guard/guardActionDispatch';
 import { brand, colors } from '../theme';
-import { guardColors, guardShape } from '../theme/guard';
+import { guardColors, guardFontFamily, guardShape, guardType } from '../theme/guard';
 import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 import { GuardHeader } from '../components/guard/home/GuardHeader';
@@ -3572,8 +3572,8 @@ const styles = StyleSheet.create({
     backgroundColor: guardColors.navySecondary,
   },
   inboxButtonActive: { borderColor: guardColors.teal },
-  inboxButtonText: { color: colors.textOnBrand, fontWeight: '700', fontSize: 14 },
-  inboxButtonTextActive: { fontWeight: '800' },
+  inboxButtonText: { color: colors.textOnBrand, ...guardType.headerButton },
+  inboxButtonTextActive: { fontFamily: guardFontFamily.bold },
   mainArea: { flex: 1, paddingTop: 12 },
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },
@@ -3915,8 +3915,8 @@ const styles = StyleSheet.create({
   bottomNavIndicatorActive: {
     backgroundColor: guardColors.teal,
   },
-  bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13, flexShrink: 1 },
-  bottomNavLabelActive: { color: guardColors.navy, fontWeight: '800' },
+  bottomNavLabel: { color: colors.textSecondary, ...guardType.nav, flexShrink: 1 },
+  bottomNavLabelActive: { color: guardColors.navy, ...guardType.navActive },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
   // Inline action feedback. Inside the form, so the keyboard and the modal cannot hide it.
   actionInlineError: {
@@ -4008,5 +4008,5 @@ const styles = StyleSheet.create({
   // non-text minimum. A 1dp white outline (10.08:1 against #28445F) defines it there. The border sits inside the
   // badge's existing 18dp box, so its size and position are unchanged.
   navBadgeOnHeader: { borderWidth: 1, borderColor: '#FFFFFF' },
-  navBadgeText: { color: colors.textOnBrand, fontSize: 10, fontWeight: '800', lineHeight: 14 },
+  navBadgeText: { color: colors.textOnBrand, fontFamily: guardFontFamily.bold, fontSize: 10, lineHeight: 14 },
 });

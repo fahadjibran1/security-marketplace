@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { brand, colors, control, spacing } from '../../../theme';
-import { guardColors, guardShape } from '../../../theme/guard';
+import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
 
 // The project's react-native type shim (src/types/react-shims.d.ts) does not export event types; these are the only
 // fields read here.
@@ -146,11 +146,11 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: ROW_GAP },
   identity: { flexDirection: 'row', alignItems: 'center', gap: ROW_GAP, flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
-  brandMark: { color: guardColors.headerMark, fontSize: 22, fontWeight: '900', letterSpacing: 1 },
+  brandMark: { color: guardColors.headerMark, ...guardType.mark, letterSpacing: 1 },
   titleBlock: { flexShrink: 1, minWidth: 0 },
-  title: { color: colors.textOnBrand, fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.2 },
-  productLabel: { color: colors.border, fontSize: 13, lineHeight: 18 },
-  uatLabel: { color: '#FBBF24', fontWeight: '800' },
+  title: { color: colors.textOnBrand, ...guardType.title, letterSpacing: -0.2 },
+  productLabel: { color: colors.border, fontFamily: guardFontFamily.regular, fontSize: 13, lineHeight: 18 },
+  uatLabel: { color: '#FBBF24', fontFamily: guardFontFamily.bold },
   actions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 0 },
   // On its own row: right-aligned, and its two buttons may wrap if even they do not fit side by side.
   actionsWrapped: { alignSelf: 'flex-end', flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, maxWidth: '100%' },
@@ -164,7 +164,7 @@ const styles = StyleSheet.create({
     borderColor: guardColors.headerControlBorder,
     paddingHorizontal: spacing.md,
   },
-  logoutText: { color: colors.textOnBrand, fontSize: 14, fontWeight: '700' },
+  logoutText: { color: colors.textOnBrand, ...guardType.headerButton },
   sosButton: {
     minHeight: HEADER_SOS_MIN_SIZE,
     minWidth: HEADER_SOS_MIN_SIZE + spacing.lg,
@@ -176,6 +176,6 @@ const styles = StyleSheet.create({
     borderColor: colors.textOnBrand,
     paddingHorizontal: spacing.md,
   },
-  sosText: { color: colors.textOnBrand, fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+  sosText: { color: colors.textOnBrand, ...guardType.button, letterSpacing: 1 },
   pressed: { opacity: 0.8 },
 });

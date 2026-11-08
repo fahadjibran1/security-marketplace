@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, control, spacing } from '../../../theme';
-import { guardColors, guardShape } from '../../../theme/guard';
+import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
 
 /**
  * S4-UX-01.4 — the Off Duty Home, presentation only.
@@ -181,16 +181,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md - guardShape.cardBorderWidth,
     gap: spacing.sm,
   },
-  sectionLabel: { color: guardColors.navySecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
-  site: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  sectionLabel: { color: guardColors.navySecondary, ...guardType.sectionLabel, letterSpacing: 0.8, textTransform: 'uppercase' },
+  site: { color: guardColors.textPrimary, ...guardType.siteTime },
   whenRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: spacing.sm, rowGap: 2 },
-  timeRange: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
-  dateLabel: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' },
-  statusLine: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: guardColors.textPrimary },
+  timeRange: { color: guardColors.textPrimary, ...guardType.siteTime },
+  dateLabel: { color: colors.textSecondary, ...guardType.date },
+  statusLine: { fontFamily: guardFontFamily.bold, fontSize: 15, lineHeight: 20, color: guardColors.textPrimary },
   toneWarning: { color: colors.warning },
   toneDanger: { color: guardColors.emergency },
-  meta: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
-  body: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 22 },
+  meta: { color: colors.textSecondary, ...guardType.meta },
+  body: { color: guardColors.textPrimary, fontFamily: guardFontFamily.regular, fontSize: 15, lineHeight: 22 },
   primaryButton: {
     minHeight: control.buttonHeight,
     borderRadius: guardShape.controlRadius,
@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  primaryButtonText: { color: colors.textOnBrand, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
+  primaryButtonText: { color: colors.textOnBrand, ...guardType.button, textAlign: 'center' },
   secondaryButton: {
     minHeight: control.minTouchTarget,
     borderRadius: guardShape.controlRadius,
@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  secondaryButtonText: { color: guardColors.navy, fontSize: 15, lineHeight: 20, fontWeight: '800', textAlign: 'center' },
+  secondaryButtonText: { color: guardColors.navy, ...guardType.button, textAlign: 'center' },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.85 },
   instructions: { gap: spacing.xs, borderTopWidth: 1, borderTopColor: guardColors.cardBorder },
@@ -225,8 +225,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     columnGap: spacing.sm,
   },
-  instructionsToggleText: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
-  instructionsToggleHint: { color: guardColors.teal, fontSize: 14, lineHeight: 20, fontWeight: '800' },
+  instructionsToggleText: { color: guardColors.textPrimary, fontFamily: guardFontFamily.bold, fontSize: 15, lineHeight: 20 },
+  instructionsToggleHint: { color: guardColors.teal, fontFamily: guardFontFamily.bold, fontSize: 14, lineHeight: 20 },
   linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   link: {
     flexGrow: 1,
@@ -239,8 +239,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  linkText: { color: guardColors.navy, fontSize: 14, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
+  linkText: { color: guardColors.navy, fontFamily: guardFontFamily.bold, fontSize: 14, lineHeight: 20, textAlign: 'center' },
   upcomingRow: { paddingVertical: spacing.xs, gap: 2 },
   upcomingDivider: { borderTopWidth: 1, borderTopColor: guardColors.cardBorder, paddingTop: spacing.sm },
-  upcomingDate: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  upcomingDate: { color: guardColors.textPrimary, fontFamily: guardFontFamily.bold, fontSize: 15, lineHeight: 20 },
 });

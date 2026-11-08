@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, control, spacing } from '../../../theme';
-import { guardColors, guardShape } from '../../../theme/guard';
+import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
 import type { GuardWelfareCard } from '../guardWelfarePresentation';
 
 /**
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
     paddingLeft: spacing.lg - guardShape.liveEdgeWidth,
   },
   recordsCard: { paddingHorizontal: spacing.md - guardShape.cardBorderWidth },
-  site: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  site: { color: guardColors.textPrimary, ...guardType.siteTime },
   summaryRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: spacing.xs },
   livePill: {
     flexDirection: 'row',
@@ -229,22 +229,22 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
-  livePillText: { color: colors.success, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.6 },
-  timeRange: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
-  dateLabel: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' },
-  meta: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
-  statusLine: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: guardColors.textPrimary },
+  livePillText: { color: colors.success, fontFamily: guardFontFamily.bold, fontSize: 12, lineHeight: 16, letterSpacing: 0.6 },
+  timeRange: { color: guardColors.textPrimary, ...guardType.siteTime },
+  dateLabel: { color: colors.textSecondary, ...guardType.date },
+  meta: { color: colors.textSecondary, ...guardType.meta },
+  statusLine: { fontFamily: guardFontFamily.bold, fontSize: 15, lineHeight: 20, color: guardColors.textPrimary },
   toneGood: { color: colors.success },
   toneWarning: { color: colors.warning },
   toneDanger: { color: guardColors.emergency },
   // Stage 1: section headings in secondary navy (10:1 on white) for a stronger hierarchy than the grey meta text.
-  sectionLabel: { color: guardColors.navySecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
+  sectionLabel: { color: guardColors.navySecondary, ...guardType.sectionLabel, letterSpacing: 0.8, textTransform: 'uppercase' },
   welfareHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: spacing.sm, rowGap: spacing.xs },
-  nextDue: { color: guardColors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
+  nextDue: { color: guardColors.textPrimary, ...guardType.status },
   welfareTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: 2 },
   welfareStatusRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: spacing.md, rowGap: 2 },
-  welfareStatus: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '900', letterSpacing: 0.4 },
-  body: { color: guardColors.textPrimary, fontSize: 14, lineHeight: 20 },
+  welfareStatus: { color: guardColors.textPrimary, ...guardType.status, letterSpacing: 0.4 },
+  body: { color: guardColors.textPrimary, ...guardType.meta },
   welfareButton: {
     minHeight: RECORD_TILE_MIN_HEIGHT,
     borderRadius: guardShape.controlRadius,
@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   welfareButtonUrgent: { backgroundColor: guardColors.emergency },
-  welfareButtonText: { color: colors.textOnBrand, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
+  welfareButtonText: { color: colors.textOnBrand, ...guardType.button, textAlign: 'center' },
   tileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: {
     flexGrow: 1,
@@ -269,7 +269,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
   },
-  tileText: { color: colors.textOnBrand, fontSize: 15, lineHeight: 20, fontWeight: '800', textAlign: 'center' },
+  tileText: { color: colors.textOnBrand, ...guardType.tile, textAlign: 'center' },
   bookOff: {
     minHeight: control.buttonHeight,
     borderRadius: guardShape.controlRadius,
@@ -281,11 +281,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  bookOffText: { color: guardColors.navy, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
+  bookOffText: { color: guardColors.navy, ...guardType.button, textAlign: 'center' },
   disabled: { opacity: 0.6 },
   activityRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
-  activityTime: { color: colors.textSecondary, fontSize: 13, lineHeight: 20, fontWeight: '700', minWidth: 44 },
+  activityTime: { color: colors.textSecondary, fontFamily: guardFontFamily.bold, fontSize: 13, lineHeight: 20, minWidth: 44 },
   activityText: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
-  activityTitle: { color: guardColors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
+  activityTitle: { color: guardColors.textPrimary, fontFamily: guardFontFamily.bold, fontSize: 14, lineHeight: 20 },
   pressed: { opacity: 0.85 },
 });

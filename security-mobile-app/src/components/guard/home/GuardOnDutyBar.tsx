@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, spacing } from '../../../theme';
-import { guardColors, guardShape } from '../../../theme/guard';
+import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
 import type { GuardHomeLayout } from './guardHomeLayout';
 
 /**
@@ -65,8 +65,8 @@ const styles = StyleSheet.create({
   status: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
   dot: { width: STATUS_DOT, height: STATUS_DOT, borderRadius: STATUS_DOT / 2, backgroundColor: colors.success },
   statusText: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
-  onDuty: { color: colors.success, fontSize: 13, lineHeight: 18, fontWeight: '800', letterSpacing: 0.3 },
-  site: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  onDuty: { color: colors.success, fontFamily: guardFontFamily.bold, fontSize: 13, lineHeight: 18, letterSpacing: 0.3 },
+  site: { color: guardColors.textPrimary, fontFamily: guardFontFamily.bold, fontSize: 15, lineHeight: 20 },
   // Stage 1: flat Emergency red, 6dp corners, no shadow or glow.
   emergency: {
     minHeight: EMERGENCY_MIN_HEIGHT,
@@ -78,6 +78,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emergencyStacked: { minWidth: 0, alignSelf: 'stretch' },
-  emergencyText: { color: colors.textOnBrand, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
+  emergencyText: { color: colors.textOnBrand, ...guardType.button, textAlign: 'center' },
   pressed: { opacity: 0.85 },
 });

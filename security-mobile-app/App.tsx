@@ -17,6 +17,7 @@ import { AuthSession } from './src/types/models';
 import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
 import { guardColors } from './src/theme/guard';
+import { loadGuardFonts } from './src/theme/guardFonts';
 import Constants from 'expo-constants';
 import { productLabelFor, resolveAppVariant } from './src/services/appVariant';
 import { configureWelfareNotifications, registerWelfarePush, subscribeTokenChanges, subscribeWelfareResponses, unregisterWelfarePush, type DevicePushToken, type PushRegistration } from './src/services/pushNotifications';
@@ -37,6 +38,16 @@ export default function App() {
   const [accountLink, setAccountLink] = useState<AccountLink | null>(() =>
     IS_WEB && typeof window !== 'undefined' ? takeAccountLink(window.location, window.history) : null,
   );
+
+  // S4-UX Stage 2: the Guard Home's Inter fonts load alongside the session restore. Only the Guard workspace waits for
+  // them, and never for more than GUARD_FONT_TIMEOUT_MS: loaded, failed or timed out, it then renders (a failure falls
+  // back to the system font). Other workspaces never wait.
+  const [guardFontsSettled, setGuardFontsSettled] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadGuardFonts().then(() => { if (live) setGuardFontsSettled(true); });
+    return () => { live = false; };
+  }, []);
 
   useEffect(() => installAttendanceLocationTransport(), []);
   // Welfare Check notifications. A tap is held here until a Guard session is showing; it is submitted straight away
@@ -115,7 +126,7 @@ export default function App() {
 
   return <SafeAreaProvider><AppErrorBoundary onSignOut={session ? handleLogout : undefined}>
     {accountLink ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AccountLinkScreen link={accountLink} onDone={leaveAccountLink} /></SafeAreaView>
-    : booting ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
+    : booting || (surface === 'guard' && !guardFontsSettled) ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
     : !session ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AuthScreen onLoggedIn={handleLoggedIn} noticeMessage={authNotice} onDismissNotice={() => setAuthNotice(null)} /></SafeAreaView>
     : <SafeAreaView style={styles.safeArea} edges={surface === 'guard' ? GUARD_SAFE_AREA_EDGES : ['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/>{surface === 'guard' ? <SafeAreaView edges={['top']} style={styles.guardStatusBarBackdrop} testID="guard-status-bar-backdrop" /> : null}<View style={styles.screenContainer}>
         {surface !== 'company' && surface !== 'guard' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={[styles.productLabel, APP_VARIANT === 'uat' ? styles.uatLabel : null]}>{PRODUCT_LABEL}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
