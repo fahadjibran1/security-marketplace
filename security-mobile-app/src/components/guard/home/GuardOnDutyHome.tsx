@@ -37,7 +37,7 @@ export interface GuardShiftSummaryProps {
 
 export function GuardShiftSummary({ siteName, dateLabel, timeRange, bookedOnLabel, durationLabel, statusLine, statusTone }: GuardShiftSummaryProps) {
   return (
-    <View style={styles.card} testID="guard-shift-summary">
+    <View style={[styles.card, styles.summaryCard]} testID="guard-shift-summary">
       {siteName ? <Text style={styles.site} accessibilityRole="header">{siteName}</Text> : null}
       <View style={styles.summaryRow}>
         <View style={styles.livePill} accessibilityLabel="Shift live">
@@ -64,25 +64,28 @@ export function GuardShiftSummary({ siteName, dateLabel, timeRange, bookedOnLabe
 export interface GuardWelfareSummaryProps {
   /** The backend projection, presented unchanged (guardWelfareCard): status word, next due, detail, lapses. */
   card: GuardWelfareCard;
-  /** The Log Book line from guardLogBookCard, or null. */
-  logBookLine: string | null;
   onRecord: () => void;
 }
 
-export function GuardWelfareSummary({ card, logBookLine, onRecord }: GuardWelfareSummaryProps) {
+export function GuardWelfareSummary({ card, onRecord }: GuardWelfareSummaryProps) {
   const toneStyle = card.tone === 'danger' ? styles.toneDanger : card.tone === 'warning' ? styles.toneWarning : card.tone === 'good' ? styles.toneGood : null;
   return (
     <View style={[styles.card, card.tone === 'danger' ? styles.cardUrgent : null]} testID="guard-welfare-summary">
+      {/* S4-UX-01.3b: one heading row — the name, its status word and the next due time. It wraps between those
+          three at large text sizes, never inside one. */}
       <View style={styles.welfareHead}>
-        <Text style={styles.sectionLabel}>Welfare Check</Text>
+        <View style={styles.welfareTitle}>
+          <Text style={styles.sectionLabel}>Welfare Check</Text>
+          <Text style={[styles.welfareStatus, toneStyle]}>{card.label}</Text>
+        </View>
         {card.nextDue ? <Text style={styles.nextDue}>{`Next due ${card.nextDue}`}</Text> : null}
       </View>
-      {/* The status word and its supporting line share a wrapping row: one line on a phone, two with large text. */}
-      <View style={styles.welfareStatusRow}>
-        <Text style={[styles.welfareStatus, toneStyle]}>{card.label}</Text>
-        {card.detail ? <Text style={styles.body}>{card.detail}</Text> : null}
-      </View>
-      {card.missedSummary ? <Text style={[styles.body, styles.toneDanger]}>{card.missedSummary}</Text> : null}
+      {card.detail || card.missedSummary ? (
+        <View style={styles.welfareStatusRow}>
+          {card.detail ? <Text style={styles.meta}>{card.detail}</Text> : null}
+          {card.missedSummary ? <Text style={[styles.body, styles.toneDanger]}>{card.missedSummary}</Text> : null}
+        </View>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Record Welfare Check"
@@ -91,27 +94,34 @@ export function GuardWelfareSummary({ card, logBookLine, onRecord }: GuardWelfar
       >
         <Text style={styles.welfareButtonText}>Record Welfare Check</Text>
       </Pressable>
-      {logBookLine ? <Text style={styles.meta}>{logBookLine}</Text> : null}
     </View>
   );
 }
 
 export interface GuardShiftRecordsProps<K extends string> {
   items: Array<{ key: K; title: string; accessibilityLabel: string }>;
+  /** The Log Book line from guardLogBookCard (status and when it is due), or null: shown beside its own tile. */
+  note?: string | null;
   /** The system text scale, so a tile's minimum width follows the size of its label. */
   fontScale: number;
   onOpen: (key: K) => void;
 }
 
-/** The narrowest a record tile may be, in unscaled points: three fit across a 360dp phone at the default text size. */
-export const RECORD_TILE_MIN_WIDTH = 92;
+/**
+ * The narrowest a record tile may be, in unscaled points. Three tiles (3 × 88 + 2 gaps of 8 = 280) fit inside the
+ * records card on a 360dp phone (360 − 2 × 16 page − 2 × 12 card = 304) at the default text size; larger text
+ * widens every tile, and they wrap to further rows rather than shrink.
+ */
+export const RECORD_TILE_MIN_WIDTH = 88;
 export const RECORD_TILE_MIN_HEIGHT = 48;
 
-export function GuardShiftRecords<K extends string>({ items, fontScale, onOpen }: GuardShiftRecordsProps<K>) {
+export function GuardShiftRecords<K extends string>({ items, note, fontScale, onOpen }: GuardShiftRecordsProps<K>) {
   const scale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
   return (
-    <View style={styles.card} testID="guard-shift-records">
-      <Text style={styles.sectionLabel}>Shift records</Text>
+    <View style={[styles.card, styles.recordsCard]} testID="guard-shift-records">
+      {/* S4-UX-01.3b: no "Shift records" heading — the tiles name themselves. The Log Book's status sits here,
+          beside the Log Book tile, instead of inside the Welfare card. */}
+      {note ? <Text style={styles.meta}>{note}</Text> : null}
       {/* Tiles wrap by content: each is at least RECORD_TILE_MIN_WIDTH × the text scale wide and shares the row. */}
       <View style={styles.tileRow}>
         {items.map((item) => (
@@ -193,6 +203,10 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   cardUrgent: { borderColor: colors.danger, borderWidth: 2 },
+  // S4-UX-01.3b: the summary's three short lines sit closer together; the records card is a little narrower at the
+  // sides so three tiles share one row on a 360dp phone.
+  summaryCard: { gap: spacing.xs },
+  recordsCard: { paddingHorizontal: spacing.md },
   site: { color: colors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   summaryRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: spacing.xs },
   livePill: {
@@ -216,8 +230,9 @@ const styles = StyleSheet.create({
   sectionLabel: { color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
   welfareHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: spacing.sm, rowGap: spacing.xs },
   nextDue: { color: colors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
+  welfareTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: 2 },
   welfareStatusRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: spacing.md, rowGap: 2 },
-  welfareStatus: { color: colors.textPrimary, fontSize: 20, lineHeight: 26, fontWeight: '900' },
+  welfareStatus: { color: colors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '900', letterSpacing: 0.4 },
   body: { color: colors.textPrimary, fontSize: 14, lineHeight: 20 },
   welfareButton: {
     minHeight: RECORD_TILE_MIN_HEIGHT,

@@ -592,10 +592,13 @@ test('UX-T12-ON-DUTY-HOME-IS-SUMMARY-WELFARE-PATROL-RECORDS-BOOK-OFF-ACTIVITY', 
   // Welfare: the backend's projection, unchanged, with its own launcher.
   const [welfare] = byTestId(root, 'guard-welfare-summary');
   assert.ok(texts(welfare).includes('DUE') && texts(welfare).some((t) => /^Next due /.test(t)), 'status word and next due');
-  assert.ok(texts(welfare).some((t) => /^Log Book · /.test(t)), 'the Log Book line');
+  // S4-UX-01.3b (deliberate retarget): the Log Book line moved out of the Welfare card to sit beside the Log Book tile.
+  assert.ok(!texts(welfare).some((t) => /^Log Book · /.test(t)), 'the Welfare card carries only Welfare');
   assert.equal(byLabel(welfare, 'Record Welfare Check').length, 1);
   // Records: Log Book, Site Request and Incident, at least 44pt (48), each its own launcher.
   const [records] = byTestId(root, 'guard-shift-records');
+  assert.ok(texts(records).some((t) => /^Log Book · /.test(t)), 'the Log Book line, beside its tile');
+  assert.ok(!texts(records).includes('Shift records'), 'no heading repeating what the tiles say');
   const tiles = pressables(records, (p) => p.accessibilityRole === 'button');
   assert.deepEqual(tiles.map((t) => texts(t)[0]), ['Log Book', 'Site Request', 'Incident'], 'Welfare Check is not repeated as a tile');
   for (const tile of tiles) assert.ok(flat(tile.props.style).minHeight >= 44, 'records are at least 44pt');

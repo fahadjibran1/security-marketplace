@@ -1874,6 +1874,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress';
   const welfareCard = homeShiftLive ? guardWelfareCard(currentHomeShift?.operations) : null;
   const logBookCard = homeShiftLive ? guardLogBookCard(currentHomeShift?.operations) : null;
+  // S4-UX-01.3b: the Log Book's status line, shown in the records card beside the Log Book tile.
+  const logBookLine = logBookCard ? `Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}` : null;
   // S4-UX-01.3: the compact On Duty Home is used for the four on-duty phases of a live shift; every other phase keeps
   // the Current Shift card exactly as before.
   const homeOnDuty = homeShiftLive && guardHomeMode(guardShiftPhase) === 'on_duty';
@@ -1908,7 +1910,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       const form = guardActionForm(key);
       return { key, title: form.title, accessibilityLabel: form.launchAccessibilityLabel };
     });
-    return <GuardShiftRecords items={items} fontScale={homeLayout.fontScale} onOpen={(key) => setQuickActionModal(key)} />;
+    return <GuardShiftRecords items={items} note={logBookLine} fontScale={homeLayout.fontScale} onOpen={(key) => setQuickActionModal(key)} />;
   }
 
   function handlePrimaryHomeAction() {
@@ -2338,7 +2340,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             {welfareCard ? (
               <GuardWelfareSummary
                 card={welfareCard}
-                logBookLine={logBookCard ? `Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}` : null}
                 onRecord={() => setQuickActionModal('welfareCheck')}
               />
             ) : null}
@@ -3763,7 +3764,7 @@ const styles = StyleSheet.create({
   feedbackMessage: { color: colors.textSecondary, lineHeight: 20 },
   guardHomeRoot: {
     width: '100%',
-    gap: 14,
+    gap: 12,
     paddingBottom: 4,
   },
   // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no
