@@ -461,7 +461,9 @@ test('UX-T4-THE-BAR-IS-MOUNTED-OUTSIDE-EVERY-TAB-CONDITIONAL', () => {
   assert.ok(headerAt > 0 && headerAt < barAt && barAt < mainAt, 'header, then the bar, then the tab content');
   const between = screen.slice(screen.indexOf('/>', screen.indexOf('notifications={(() => {')), barAt);
   assert.doesNotMatch(between, /activeTab ===/, 'the bar does not depend on the tab');
-  assert.match(screen.slice(barAt - 200, barAt), /\{showOnDutyBar\(currentShiftActionTarget\) \? \(\s*$/, 'shown exactly when the Emergency form can submit');
+  // S4-UX-01.3 (deliberate retarget): eligibility is computed once and shared by both Emergency presentations.
+  assert.match(screen, /const emergencyEligible = showOnDutyBar\(currentShiftActionTarget\);/, 'eligibility is the Emergency form\'s own target');
+  assert.match(screen.slice(barAt - 200, barAt), /\{emergencyEligible && emergencyPresentation === 'bar' \? \(\s*$/, 'shown exactly when the Emergency form can submit (Variant A)');
   // One Emergency launcher, and the dispatch path is the existing one.
   assert.equal((screen.match(/setQuickActionModal\('emergency'\)/g) || []).length, 1);
   assert.match(screen, /guardActionBlockedReason\(form\.key, \{ shift: currentShiftActionTarget, value, busy \}\)/);
@@ -548,6 +550,173 @@ test('UX-T11-NON-GUARD-SURFACES-KEEP-ALL-FOUR-SAFE-AREA-EDGES', async () => {
   assert.equal(edgesOf(outer), 'top,right,bottom,left', 'unchanged for every other surface');
   await run(() => renderer.unmount());
   assert.match(codeOf('App.tsx'), /const GUARD_SAFE_AREA_EDGES: Array<'top' \| 'right' \| 'bottom' \| 'left'> = \['right', 'left'\];/);
+});
+
+// ═══════════════════ UX-T12 … UX-T16 the On Duty Home (S4-UX-01.3) ═══════════════════
+
+const opsOf = (welfareStatus, start) => ({
+  timezone: 'Europe/London',
+  welfare: {
+    enabled: true, intervalMinutes: 60, status: welfareStatus,
+    currentWindow: { index: 2, start: new Date(NOW - 10 * 60_000).toISOString(), end: new Date(NOW + 20 * 60_000).toISOString() },
+    lastWelfareAt: new Date(NOW - 70 * 60_000).toISOString(), nextDueAt: new Date(NOW + 20 * 60_000).toISOString(),
+    overdueByMinutes: welfareStatus === 'overdue' ? 12 : null, requiredCount: 2, completedCount: 1, missedCount: 0, consecutiveMissed: 0,
+  },
+  logBook: { required: true, intervalMinutes: 120, currentWindow: { index: 1, start, end: new Date(NOW + 90 * 60_000).toISOString() }, currentWindowSubmitted: false, lastEntryAt: null },
+});
+const bookedOn = (shift) => [{ id: 1, type: 'check-in', occurredAt: shift.start, shift: { id: shift.id } }];
+const order = (root, ids) => {
+  const all = root.findAll((n) => typeof n.props?.testID === 'string' && ids.includes(n.props.testID));
+  const seen = [];
+  for (const n of all) if (!seen.includes(n.props.testID)) seen.push(n.props.testID);
+  return seen;
+};
+
+test('UX-T12-ON-DUTY-HOME-IS-SUMMARY-WELFARE-PATROL-RECORDS-BOOK-OFF-ACTIVITY', async () => {
+  const shift = { ...liveShift(), operations: opsOf('due', new Date(NOW - 30 * 60_000).toISOString()) };
+  const { renderer, run } = await mountApp({ shifts: [shift], attendance: bookedOn(shift) });
+  const root = renderer.root;
+  const [scroll] = scrollViews(root);
+  assert.deepEqual(
+    order(scroll, ['guard-shift-summary', 'guard-welfare-summary', 'guard-shift-records', 'guard-book-off', 'guard-recent-activity']),
+    ['guard-shift-summary', 'guard-welfare-summary', 'guard-shift-records', 'guard-book-off', 'guard-recent-activity'],
+    'the fixed On Duty order; Welfare directly above the Patrol slot',
+  );
+  const body = texts(scroll);
+  for (const gone of ['Current Shift', 'The single most important shift on your device right now.', 'Shift details', 'Live clock', 'Main action', 'Status',
+    'Background log only — use Current Shift actions above first when something needs doing.', 'Recorded against this shift.']) {
+    assert.ok(!body.includes(gone), `no "${gone}" in the On Duty body`);
+  }
+  assert.equal(body.filter((t) => t === 'Harbour Gate').length, 0, 'Variant A: the bar names the site, the body does not repeat it');
+  assert.equal(texts(byTestId(root, 'guard-on-duty-bar')[0]).filter((t) => t === 'Harbour Gate').length > 0, true);
+  // Welfare: the backend's projection, unchanged, with its own launcher.
+  const [welfare] = byTestId(root, 'guard-welfare-summary');
+  assert.ok(texts(welfare).includes('DUE') && texts(welfare).some((t) => /^Next due /.test(t)), 'status word and next due');
+  assert.ok(texts(welfare).some((t) => /^Log Book · /.test(t)), 'the Log Book line');
+  assert.equal(byLabel(welfare, 'Record Welfare Check').length, 1);
+  // Records: Log Book, Site Request and Incident, at least 44pt (48), each its own launcher.
+  const [records] = byTestId(root, 'guard-shift-records');
+  const tiles = pressables(records, (p) => p.accessibilityRole === 'button');
+  assert.deepEqual(tiles.map((t) => texts(t)[0]), ['Log Book', 'Site Request', 'Incident'], 'Welfare Check is not repeated as a tile');
+  for (const tile of tiles) assert.ok(flat(tile.props.style).minHeight >= 44, 'records are at least 44pt');
+  await run(() => tiles[0].props.onPress());
+  assert.ok(texts(root).includes('Save Log Book Entry'), 'a tile opens its existing form');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T13-BOOK-OFF-IS-PRESENT-IN-EVERY-ON-DUTY-PHASE-AND-CONFIRMS-FIRST', async () => {
+  const start = new Date(NOW - 2 * 3_600_000).toISOString();
+  const cases = [
+    ['on_shift', { ...liveShift() }],
+    ['welfare_due', { ...liveShift(), operations: opsOf('due', start) }],
+    ['welfare_overdue', { ...liveShift(), operations: opsOf('overdue', start) }],
+    ['shift_ending_soon', { ...liveShift(), end: new Date(NOW + 10 * 60_000).toISOString() }],
+  ];
+  for (const [phase, shift] of cases) {
+    const { renderer, run, calls } = await mountApp({ shifts: [shift], attendance: bookedOn(shift) });
+    const root = renderer.root;
+    const [bookOff] = byTestId(root, 'guard-book-off');
+    assert.ok(bookOff, `${phase}: Book Off is on the On Duty Home`);
+    assert.equal(bookOff.props.accessibilityLabel, 'Book Off', `${phase}: the same label`);
+    assert.ok(flat(bookOff.props.style).minHeight >= 44, `${phase}: at least 44pt`);
+    const [summary] = byTestId(root, 'guard-shift-summary');
+    if (phase === 'shift_ending_soon') assert.ok(texts(summary).some((t) => /end/i.test(t) && t !== 'LIVE'), 'ending soon is said once, in the summary');
+    if (phase === 'on_shift') assert.ok(!texts(summary).includes('You are on shift.'), 'no line that repeats the on-duty bar');
+    await run(() => bookOff.props.onPress());
+    assert.ok(texts(root).some((t) => /^Book Off (early|now)\?$/.test(t)), `${phase}: the existing confirmation opens`);
+    assert.equal(calls.checkOut || 0, 0, `${phase}: nothing is sent before confirming`);
+    await run(() => renderer.unmount());
+  }
+  // Source: the same handler as the Current Shift card's Main action, never a new one.
+  const screen = codeOf(SCREEN);
+  const use = screen.slice(screen.indexOf('<GuardBookOff'), screen.indexOf('/>', screen.indexOf('<GuardBookOff')));
+  assert.match(use, /onPress=\{handleCurrentShiftPrimaryPress\}/);
+  assert.match(use, /label=\{getGuardPhasePrimaryLabel\(guardShiftPhase, currentHomeShift\) as string\}/);
+});
+
+test('UX-T14-THE-PATROL-PANEL-HAS-ONE-STABLE-SLOT-FOR-EVERY-HOME-STATE', () => {
+  const screen = codeOf(SCREEN);
+  const slotAt = screen.indexOf('<View style={styles.homePatrolSlot}>');
+  assert.ok(slotAt > 0, 'the slot exists');
+  // Unconditional: the slot follows a closed conditional ({… : null}) and is not itself inside one, so its position
+  // among the Home children never changes with the phase — Book On, phase changes and Book Off never remount it.
+  const before = screen.slice(screen.lastIndexOf('{welfareCard ? (', slotAt), slotAt);
+  // (codeOf strips the JSX comment between them to `{}`.)
+  assert.match(before, /\) : null\}\s*(\{\}\s*)?$/, 'the Welfare block before it is a closed conditional');
+  assert.ok(screen.slice(slotAt, screen.indexOf('</View>', screen.indexOf('</View>', slotAt) + 1)).includes('<GuardPatrolPanel'), 'the panel is in the slot');
+  assert.equal((screen.match(/<GuardPatrolPanel\b/g) || []).length, 1, 'mounted once');
+  // The panel sits between Welfare and the routine records, so both obligations are adjacent near the top.
+  assert.ok(screen.indexOf('<GuardWelfareSummary') < slotAt && slotAt < screen.indexOf('{homeShiftLive ? renderHomeQuickActions() : null}'));
+});
+
+test('UX-T15-ON-DUTY-HOME-TEXT-WRAPS-NATURALLY-AT-ANY-TEXT-SCALE', async () => {
+  const src = codeOf('src/components/guard/home/GuardOnDutyHome.tsx');
+  assert.doesNotMatch(src, /numberOfLines|ellipsizeMode|adjustsFontSizeToFit|allowFontScaling=\{false\}/, 'no truncation, no shrinking, no opting out of the text scale');
+  assert.doesNotMatch(src.replace(/liveDot: \{[^}]*\}/, ''), /\b(width|height): \d/, 'no fixed sizes around text (the live dot excepted)');
+  assert.doesNotMatch(src, /\bflex: 1\b/, 'nothing sized from a zero basis');
+  const { GuardShiftRecords, RECORD_TILE_MIN_WIDTH } = loadWith('src/components/guard/home/GuardOnDutyHome.tsx');
+  for (const fontScale of [1, 1.3, 2]) {
+    let r;
+    await act(async () => {
+      r = TestRenderer.create(h(GuardShiftRecords, { items: [{ key: 'logBook', title: 'Log Book', accessibilityLabel: 'Log Book' }], fontScale, onOpen: noop }));
+    });
+    const [tile] = pressables(r.root, () => true);
+    assert.equal(flat(tile.props.style).flexBasis, RECORD_TILE_MIN_WIDTH * fontScale, `@${fontScale}: tiles widen with the text, then wrap`);
+    await act(async () => r.unmount());
+  }
+});
+
+test('UX-T16-EMERGENCY-VARIANT-B-IS-REVIEW-ONLY-AND-USES-THE-SAME-HANDLER', async () => {
+  const { guardEmergencyPresentation, DEFAULT_GUARD_EMERGENCY_PRESENTATION } = loadWith('src/components/guard/home/guardEmergencyPresentation.ts');
+  assert.equal(DEFAULT_GUARD_EMERGENCY_PRESENTATION, 'bar', 'Variant A ships');
+  assert.equal(guardEmergencyPresentation(undefined, false), 'bar');
+  assert.equal(guardEmergencyPresentation('header', false), 'bar', 'a release build ignores the preview flag');
+  assert.equal(guardEmergencyPresentation('header', true), 'header', 'only a development bundle can preview Variant B');
+  assert.equal(guardEmergencyPresentation('bar', true), 'bar');
+  // Render Variant B through the real App.
+  const prevDev = global.__DEV__;
+  const prevEnv = process.env.EXPO_PUBLIC_S4_SOS_PREVIEW;
+  global.__DEV__ = true;
+  process.env.EXPO_PUBLIC_S4_SOS_PREVIEW = 'header';
+  try {
+    const shift = liveShift();
+    const { renderer, run, calls } = await mountApp({ shifts: [shift], attendance: bookedOn(shift) });
+    const root = renderer.root;
+    assert.equal(byTestId(root, 'guard-on-duty-bar').length, 0, 'never both presentations');
+    const check = (where) => {
+      const [header] = byTestId(root, 'guard-header');
+      const [sos] = byTestId(header, 'guard-header-sos');
+      assert.ok(sos, `${where}: SOS is in the header`);
+      for (const sv of scrollViews(root)) assert.ok(!isInside(sos, sv), `${where}: outside every ScrollView`);
+      const s = flat(sos.props.style);
+      assert.ok(s.minHeight >= 48 && s.minWidth >= 48, `${where}: at least 48pt`);
+      assert.equal(s.backgroundColor, '#B42318', 'danger red');
+      assert.match(sos.props.accessibilityLabel, /emergency/i, 'announced as Emergency');
+      assert.match(sos.props.accessibilityHint, /needs a connection/i);
+      return sos;
+    };
+    check('Home');
+    // Variant B shows no bar, so the summary names the site instead.
+    assert.ok(texts(byTestId(root, 'guard-shift-summary')[0]).includes('Harbour Gate'), 'the summary names the site');
+    for (const tab of ['Offers', 'Jobs', 'History', 'Profile', 'Home']) {
+      await run(() => byLabel(root, tab)[0].props.onPress());
+      check(tab);
+    }
+    const allEmergency = pressables(root, (p) => /emergency/i.test(String(p.accessibilityLabel || '')));
+    assert.equal(allEmergency.length, 1, 'one Emergency launcher on the whole screen');
+    await run(() => check('Home').props.onPress());
+    assert.ok(texts(root).includes('You need immediate help. Type SOS to confirm.'), 'the existing Emergency form, with its SOS confirmation');
+    assert.equal(calls.safetyAlerts.length, 0, 'opening it sends nothing');
+    await run(() => renderer.unmount());
+    // Not eligible (before Book On): no SOS either.
+    const ready = { ...liveShift(), status: 'accepted', start: new Date(NOW + 3_600_000).toISOString() };
+    const off = await mountApp({ shifts: [ready] });
+    assert.equal(byTestId(off.renderer.root, 'guard-header-sos').length, 0, 'no SOS when an Emergency cannot be raised');
+    await off.run(() => off.renderer.unmount());
+  } finally {
+    if (prevDev === undefined) delete global.__DEV__; else global.__DEV__ = prevDev;
+    if (prevEnv === undefined) delete process.env.EXPO_PUBLIC_S4_SOS_PREVIEW; else process.env.EXPO_PUBLIC_S4_SOS_PREVIEW = prevEnv;
+  }
 });
 
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════

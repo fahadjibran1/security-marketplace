@@ -31,9 +31,16 @@ export interface GuardHeaderProps {
   productIsUat: boolean;
   notifications: ReactNode;
   onLogout: () => void;
+  /**
+   * S4-UX-01.3 Variant B (review only, see guardEmergencyPresentation.ts): a compact SOS control that opens the
+   * existing Emergency form. Null (the default) renders nothing, which is Variant A.
+   */
+  sos?: { accessibilityLabel: string; onPress: () => void } | null;
 }
 
 const ROW_GAP = spacing.md;
+/** The SOS control is larger than the 44pt minimum, like the Emergency bar's button. */
+export const HEADER_SOS_MIN_SIZE = 48;
 
 export interface HeaderFitInput {
   /** Whether the actions are currently on their own row. */
@@ -59,7 +66,7 @@ export function nextHeaderWrapped({ wrapped, lines, textWidth, rowWidth, markWid
   return markWidth + ROW_GAP + Math.ceil(textWidth) + ROW_GAP + actionsWidth > rowWidth;
 }
 
-export function GuardHeader({ title, productLabel, productIsUat, notifications, onLogout }: GuardHeaderProps) {
+export function GuardHeader({ title, productLabel, productIsUat, notifications, onLogout, sos = null }: GuardHeaderProps) {
   const showProductLabel = productIsUat || productLabel !== brand.shortBrand;
   const [wrapped, setWrapped] = useState(false);
   const sizes = useRef({ row: 0, mark: 0, actions: 0, text: { title: { lines: 0, width: 0 }, label: { lines: 0, width: 0 } } });
@@ -85,6 +92,18 @@ export function GuardHeader({ title, productLabel, productIsUat, notifications, 
 
   const actions = (
     <View style={[styles.actions, wrapped && styles.actionsWrapped]} onLayout={onSize('actions')} testID="guard-header-actions">
+      {sos ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={sos.accessibilityLabel}
+          accessibilityHint="Opens the Emergency form. Sending it needs a connection."
+          onPress={sos.onPress}
+          style={({ pressed }: { pressed: boolean }) => [styles.sosButton, pressed && styles.pressed]}
+          testID="guard-header-sos"
+        >
+          <Text style={styles.sosText}>SOS</Text>
+        </Pressable>
+      ) : null}
       {notifications}
       <Pressable
         accessibilityRole="button"
@@ -143,5 +162,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   logoutText: { color: colors.textOnBrand, fontSize: 14, fontWeight: '700' },
+  sosButton: {
+    minHeight: HEADER_SOS_MIN_SIZE,
+    minWidth: HEADER_SOS_MIN_SIZE + spacing.lg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: colors.danger,
+    borderWidth: 2,
+    borderColor: colors.textOnBrand,
+    paddingHorizontal: spacing.md,
+  },
+  sosText: { color: colors.textOnBrand, fontSize: 16, fontWeight: '900', letterSpacing: 1 },
   pressed: { opacity: 0.8 },
 });

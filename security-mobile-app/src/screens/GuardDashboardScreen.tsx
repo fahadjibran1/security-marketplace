@@ -139,7 +139,9 @@ import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 import { GuardHeader } from '../components/guard/home/GuardHeader';
 import { GuardOnDutyBar } from '../components/guard/home/GuardOnDutyBar';
-import { showOnDutyBar } from '../components/guard/home/guardHomeModel';
+import { guardHomeMode, showOnDutyBar } from '../components/guard/home/guardHomeModel';
+import { guardEmergencyPresentation } from '../components/guard/home/guardEmergencyPresentation';
+import { GuardBookOff, GuardRecentActivity, GuardShiftRecords, GuardShiftSummary, GuardWelfareSummary } from '../components/guard/home/GuardOnDutyHome';
 import { useGuardHomeLayout } from '../components/guard/home/useGuardHomeLayout';
 
 interface GuardDashboardScreenProps {
@@ -1872,6 +1874,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress';
   const welfareCard = homeShiftLive ? guardWelfareCard(currentHomeShift?.operations) : null;
   const logBookCard = homeShiftLive ? guardLogBookCard(currentHomeShift?.operations) : null;
+  // S4-UX-01.3: the compact On Duty Home is used for the four on-duty phases of a live shift; every other phase keeps
+  // the Current Shift card exactly as before.
+  const homeOnDuty = homeShiftLive && guardHomeMode(guardShiftPhase) === 'on_duty';
+  // Emergency: one handler, whichever launcher shows it (Variant A, the on-duty bar — the default — or Variant B, the
+  // header SOS control, development bundles only; see guardEmergencyPresentation.ts).
+  const emergencyPresentation = guardEmergencyPresentation();
+  const emergencyEligible = showOnDutyBar(currentShiftActionTarget);
+  const openEmergency = () => setQuickActionModal('emergency');
 
   /**
    * The canonical routine live-shift actions, and the only launchers for them.
@@ -1893,30 +1903,12 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       ? ['logBook', 'siteRequest', 'incident']
       : ['welfareCheck', 'logBook', 'siteRequest', 'incident'];
 
-    return (
-      <FeatureCard
-        title="Shift Records"
-        subtitle="Recorded against this shift."
-        style={[styles.quickActionCard, styles.guardLiveActionsCard]}
-      >
-        <View style={styles.quickActionGrid}>
-          {routine.map((key) => {
-            const form = guardActionForm(key);
-            return (
-              <Pressable
-                key={key}
-                accessibilityRole="button"
-                accessibilityLabel={form.launchAccessibilityLabel}
-                style={styles.quickActionButton}
-                onPress={() => setQuickActionModal(key)}
-              >
-                <Text style={styles.quickActionText}>{form.title}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </FeatureCard>
-    );
+    // S4-UX-01.3: the same launchers, as compact 48pt tiles that wrap by their label's size (GuardShiftRecords).
+    const items = routine.map((key) => {
+      const form = guardActionForm(key);
+      return { key, title: form.title, accessibilityLabel: form.launchAccessibilityLabel };
+    });
+    return <GuardShiftRecords items={items} fontScale={homeLayout.fontScale} onOpen={(key) => setQuickActionModal(key)} />;
   }
 
   function handlePrimaryHomeAction() {
@@ -1985,6 +1977,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
         productLabel={productLabel}
         productIsUat={productIsUat}
         onLogout={onLogout}
+        sos={emergencyEligible && emergencyPresentation === 'header'
+          ? { accessibilityLabel: guardActionForm('emergency').launchAccessibilityLabel, onPress: openEmergency }
+          : null}
         title={
           activeTab === 'home'
             ? 'Current Shift'
@@ -2028,14 +2023,15 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
       {/* S4-UX-01.2: Emergency, outside every scrolling area and on every tab, whenever an Emergency can be raised
           (the same action target the form submits against). Its one launcher; the form and its SOS confirmation
-          are the existing ones below. */}
-      {showOnDutyBar(currentShiftActionTarget) ? (
+          are the existing ones below. S4-UX-01.3: Variant A (this bar) unless a development bundle previews
+          Variant B, the header SOS control above — never both. */}
+      {emergencyEligible && emergencyPresentation === 'bar' ? (
         <GuardOnDutyBar
           siteName={currentHomeShift?.siteName ?? null}
           emergencyLabel={guardActionForm('emergency').title}
           emergencyAccessibilityLabel={guardActionForm('emergency').launchAccessibilityLabel}
           layout={homeLayout}
-          onEmergency={() => setQuickActionModal('emergency')}
+          onEmergency={openEmergency}
         />
       ) : null}
 
@@ -2105,6 +2101,30 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 />
               ));
             })()}
+            {homeOnDuty && currentHomeShift ? (
+              // S4-UX-01.3 On Duty Home: one compact summary instead of the Current Shift card's Shift details,
+              // Status, Live clock and Main action sections. The header already says "Current Shift"; the site is
+              // named here only when the on-duty bar is not already naming it.
+              <GuardShiftSummary
+                siteName={emergencyEligible && emergencyPresentation === 'bar' ? null : currentHomeShift.siteName}
+                dateLabel={formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}
+                timeRange={`${formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – ${formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}`}
+                bookedOnLabel={currentHomeShiftAttendance?.checkInAt
+                  ? formatTimeLabel(currentHomeShiftAttendance.checkInAt, currentHomeShift.site?.timezone)
+                  : 'Pending'}
+                durationLabel={formatDurationLabel(
+                  currentHomeShiftAttendance?.checkInAt || currentHomeShift.start,
+                  currentHomeShiftAttendance?.checkOutAt,
+                  liveNow,
+                )}
+                // The phase line is shown only when it adds something: "You are on shift" repeats the on-duty bar,
+                // and the Welfare lines repeat the Welfare block below whenever that block is showing.
+                statusLine={guardShiftPhase === 'shift_ending_soon' || (!welfareCard && (guardShiftPhase === 'welfare_due' || guardShiftPhase === 'welfare_overdue'))
+                  ? getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)
+                  : null}
+                statusTone={guardShiftPhase === 'welfare_overdue' ? 'danger' : guardShiftPhase === 'on_shift' ? null : 'warning'}
+              />
+            ) : (
             <FeatureCard
               title="Current Shift"
               subtitle={
@@ -2235,57 +2255,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         </View>
                       ) : null}
 
-                      {/* ── Welfare Check ────────────────────────────────────────────────
-                          Every value below is the backend's, via the operations projection on this
-                          shift. The Guard and the control room read the same status, the same next
-                          due time and the same counts, because nothing here recomputes them. */}
-                      {welfareCard ? (
-                        <View
-                          style={[
-                            styles.guardSection,
-                            welfareCard.tone === 'danger' ? styles.guardSectionUrgent : null,
-                          ]}
-                        >
-                          <Text style={styles.guardSectionLabel}>Welfare Check</Text>
-                          <View style={styles.welfareStatusRow}>
-                            <Text
-                              style={[
-                                styles.welfareStatusLabel,
-                                welfareCard.tone === 'danger' ? styles.welfareStatusDanger : null,
-                                welfareCard.tone === 'warning' ? styles.welfareStatusWarning : null,
-                                welfareCard.tone === 'good' ? styles.welfareStatusGood : null,
-                              ]}
-                            >
-                              {welfareCard.label}
-                            </Text>
-                            {welfareCard.nextDue ? (
-                              <Text style={styles.welfareNextDue}>Next due {welfareCard.nextDue}</Text>
-                            ) : null}
-                          </View>
-                          {welfareCard.detail ? (
-                            <Text style={styles.welfareDetail}>{welfareCard.detail}</Text>
-                          ) : null}
-                          {welfareCard.missedSummary ? (
-                            <Text style={styles.welfareMissed}>{welfareCard.missedSummary}</Text>
-                          ) : null}
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Record Welfare Check"
-                            style={[
-                              styles.welfareActionButton,
-                              welfareCard.actionUrgent ? styles.welfareActionUrgent : null,
-                            ]}
-                            onPress={() => setQuickActionModal('welfareCheck')}
-                          >
-                            <Text style={styles.welfareActionText}>Record Welfare Check</Text>
-                          </Pressable>
-                          {logBookCard ? (
-                            <Text style={styles.welfareLogBookLine}>
-                              {`Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}`}
-                            </Text>
-                          ) : null}
-                        </View>
-                      ) : null}
+                      {/* The Welfare Check block is no longer inside this card: it is rendered once, below it
+                          (GuardWelfareSummary), for every state that has a Welfare obligation. */}
 
                       {primaryLabel ? (
                         <View style={[styles.guardSection, styles.guardSectionMainAction]}>
@@ -2358,23 +2329,64 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               ) : (
                 <Text style={styles.helperText}>No active shift requiring action.</Text>
               )}
-              {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the
-                  Welfare Check block. Rendered on every Home state, so patrol items still waiting to send
-                  (or refused) stay visible after Book Off. */}
-              <GuardPatrolPanel
-                userId={user.id}
-                shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
-              />
             </FeatureCard>
+            )}
 
-            {normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress'
-              ? renderHomeQuickActions()
-              : null}
+            {/* ── Welfare Check ── every value is the backend's, via the operations projection on this shift
+                (guardWelfareCard). The Guard and the control room read the same status, next due time and counts,
+                because nothing here recomputes them. Presented directly above Patrol, so both stay in view. */}
+            {welfareCard ? (
+              <GuardWelfareSummary
+                card={welfareCard}
+                logBookLine={logBookCard ? `Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}` : null}
+                onRecord={() => setQuickActionModal('welfareCheck')}
+              />
+            ) : null}
+
+            {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the Welfare Check
+                block. ONE stable slot for every Home state (S4-UX-01.3): its position in this list never changes
+                with the shift phase, so Book On, phase changes and Book Off never remount it, and patrol items still
+                waiting to send (or refused) stay visible after Book Off. */}
+            <View style={styles.homePatrolSlot}>
+              <View style={styles.homePatrolInner}>
+                <GuardPatrolPanel
+                  userId={user.id}
+                  shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
+                />
+              </View>
+            </View>
+
+            {homeShiftLive ? renderHomeQuickActions() : null}
+
+            {homeOnDuty && currentHomeShift && getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) ? (
+              // The same Book Off as the Current Shift card's Main action: the same label, the same handler, and so
+              // the same confirmation (handlePrimaryHomeAction → setPendingBookOff). Below the routine records, so it
+              // is never the easiest thing to tap by accident.
+              <GuardBookOff
+                label={getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) as string}
+                busy={attendanceBusyShiftId === currentHomeShift.id}
+                disabled={attendanceBusyShiftId === currentHomeShift.id}
+                onPress={handleCurrentShiftPrimaryPress}
+              />
+            ) : null}
+
+            {homeOnDuty ? (
+              <GuardRecentActivity
+                entries={currentHomeShiftTimeline.map((entry) => ({
+                  id: entry.id,
+                  title: entry.title,
+                  message: entry.message,
+                  time: formatTimeLabel(entry.occurredAt),
+                }))}
+              />
+            ) : null}
           </View>
         ) : null}
 
+        {/* The on-duty phases show the condensed Recent activity inside the On Duty Home above (S4-UX-01.3). */}
         {activeTab === 'home' &&
         currentHomeShift &&
+        !homeOnDuty &&
         [
           'on_shift',
           'welfare_due',
@@ -3754,6 +3766,10 @@ const styles = StyleSheet.create({
     gap: 14,
     paddingBottom: 4,
   },
+  // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no
+  // padding) when it renders null. The inner -1 hides the panel's own top divider against the card edge.
+  homePatrolSlot: { backgroundColor: colors.card, borderRadius: 16, paddingHorizontal: 16, overflow: 'hidden' },
+  homePatrolInner: { marginTop: -1 },
   guardCurrentShiftCard: {
     borderRadius: 22,
     padding: 16,
@@ -3876,11 +3892,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
-  guardLiveActionsCard: {
-    borderRadius: 22,
-    marginTop: 2,
-    overflow: 'hidden',
-  },
   cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
   flexGrow: { flex: 1 },
   siteName: { fontSize: 26, lineHeight: 30, fontWeight: '800', color: colors.textPrimary },
@@ -3950,90 +3961,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondarySummaryButtonText: { color: colors.textPrimary, fontWeight: '700', fontSize: 15 },
-  quickActionCard: {
-    borderRadius: 20,
-    backgroundColor: colors.primaryNavy,
-    borderWidth: 1,
-    borderColor: colors.primaryNavy,
-    padding: 16,
-    gap: 10,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
-  },
-  quickActionTitle: { fontSize: 16, fontWeight: '800', color: colors.textOnBrand },
-  quickActionSubtitle: { color: colors.border, lineHeight: 18 },
-  quickActionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  quickActionButton: {
-    width: '48%',
-    minHeight: 94,
-    borderRadius: 18,
-    backgroundColor: colors.primaryNavy,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: colors.primaryNavySoft,
-  },
-  quickActionText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   // ── Welfare Check block (Phase 3D) ───────────────────────────────────────
-  guardSectionUrgent: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.danger,
-  },
-  welfareStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  welfareStatusLabel: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    color: colors.textPrimary,
-  },
-  welfareStatusGood: { color: colors.success },
-  welfareStatusWarning: { color: colors.warning },
-  welfareStatusDanger: { color: colors.danger },
-  welfareNextDue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  welfareDetail: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  welfareMissed: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.danger,
-    marginTop: 4,
-  },
-  welfareActionButton: {
-    marginTop: 10,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    backgroundColor: colors.accentTeal,
-  },
-  welfareActionUrgent: { backgroundColor: colors.danger },
-  welfareActionText: {
-    color: colors.textOnBrand,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  welfareLogBookLine: {
-    marginTop: 8,
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
   guardOffersRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   offersListSection: { gap: 0, paddingTop: 2 },
   offersWorkflowFooter: {
