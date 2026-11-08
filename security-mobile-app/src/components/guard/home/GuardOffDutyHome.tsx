@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, control, radii, spacing } from '../../../theme';
+import { colors, control, spacing } from '../../../theme';
+import { guardColors, guardShape } from '../../../theme/guard';
 
 /**
  * S4-UX-01.4 — the Off Duty Home, presentation only.
@@ -169,29 +170,32 @@ export function GuardUpcomingShifts({ shifts }: GuardUpcomingShiftsProps) {
 }
 
 const styles = StyleSheet.create({
-  // The same surface as the On Duty Home cards (GuardOnDutyHome): white, no border, 16 radius.
+  // The same surface as the On Duty Home cards (GuardOnDutyHome). Stage 1: white, 8dp corners, a 1dp border and no
+  // shadow; the padding gives back the border's 1dp so the content box is unchanged.
   card: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    backgroundColor: guardColors.surface,
+    borderRadius: guardShape.cardRadius,
+    borderWidth: guardShape.cardBorderWidth,
+    borderColor: guardColors.cardBorder,
+    paddingHorizontal: spacing.lg - guardShape.cardBorderWidth,
+    paddingVertical: spacing.md - guardShape.cardBorderWidth,
     gap: spacing.sm,
   },
-  sectionLabel: { color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
-  site: { color: colors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  sectionLabel: { color: guardColors.navySecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
+  site: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   whenRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: spacing.sm, rowGap: 2 },
-  timeRange: { color: colors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  timeRange: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   dateLabel: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' },
-  statusLine: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: colors.textPrimary },
+  statusLine: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: guardColors.textPrimary },
   toneWarning: { color: colors.warning },
-  toneDanger: { color: colors.danger },
+  toneDanger: { color: guardColors.emergency },
   meta: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
-  body: { color: colors.textPrimary, fontSize: 15, lineHeight: 22 },
+  body: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 22 },
   primaryButton: {
     minHeight: control.buttonHeight,
-    borderRadius: radii.md,
-    // accentTealStrong, as the On Duty Home's Welfare action: white bold text needs ≥4.5:1.
-    backgroundColor: colors.accentTealStrong,
+    borderRadius: guardShape.controlRadius,
+    // The Guard teal, as the On Duty Home's Welfare action: white bold text is 4.75:1.
+    backgroundColor: guardColors.teal,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
@@ -200,19 +204,19 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: colors.textOnBrand, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
   secondaryButton: {
     minHeight: control.minTouchTarget,
-    borderRadius: radii.md,
-    borderWidth: 2,
-    borderColor: colors.primaryNavy,
-    backgroundColor: colors.card,
+    borderRadius: guardShape.controlRadius,
+    borderWidth: guardShape.outlineWidth,
+    borderColor: guardColors.navy,
+    backgroundColor: guardColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  secondaryButtonText: { color: colors.primaryNavy, fontSize: 15, lineHeight: 20, fontWeight: '800', textAlign: 'center' },
+  secondaryButtonText: { color: guardColors.navy, fontSize: 15, lineHeight: 20, fontWeight: '800', textAlign: 'center' },
   disabled: { opacity: 0.6 },
   pressed: { opacity: 0.85 },
-  instructions: { gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border },
+  instructions: { gap: spacing.xs, borderTopWidth: 1, borderTopColor: guardColors.cardBorder },
   instructionsToggle: {
     minHeight: control.minTouchTarget,
     flexDirection: 'row',
@@ -221,22 +225,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     columnGap: spacing.sm,
   },
-  instructionsToggleText: { color: colors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
-  instructionsToggleHint: { color: colors.accentTealStrong, fontSize: 14, lineHeight: 20, fontWeight: '800' },
+  instructionsToggleText: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  instructionsToggleHint: { color: guardColors.teal, fontSize: 14, lineHeight: 20, fontWeight: '800' },
   linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   link: {
     flexGrow: 1,
     minHeight: control.minTouchTarget,
-    borderRadius: radii.md,
+    borderRadius: guardShape.controlRadius,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: guardColors.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  linkText: { color: colors.primaryNavy, fontSize: 14, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
+  linkText: { color: guardColors.navy, fontSize: 14, lineHeight: 20, fontWeight: '700', textAlign: 'center' },
   upcomingRow: { paddingVertical: spacing.xs, gap: 2 },
-  upcomingDivider: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
-  upcomingDate: { color: colors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  upcomingDivider: { borderTopWidth: 1, borderTopColor: guardColors.cardBorder, paddingTop: spacing.sm },
+  upcomingDate: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
 });

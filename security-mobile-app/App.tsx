@@ -16,6 +16,7 @@ import { clearStoredSession, loadStoredSession, persistSession } from './src/ser
 import { AuthSession } from './src/types/models';
 import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
+import { guardColors } from './src/theme/guard';
 import Constants from 'expo-constants';
 import { productLabelFor, resolveAppVariant } from './src/services/appVariant';
 import { configureWelfareNotifications, registerWelfarePush, subscribeTokenChanges, subscribeWelfareResponses, unregisterWelfarePush, type DevicePushToken, type PushRegistration } from './src/services/pushNotifications';
@@ -133,7 +134,7 @@ export default function App() {
 const GUARD_SAFE_AREA_EDGES: Array<'top' | 'right' | 'bottom' | 'left'> = ['right', 'left'];
 
 const styles = StyleSheet.create({
-  guardStatusBarBackdrop: { backgroundColor: colors.primaryNavy },
+  guardStatusBarBackdrop: { backgroundColor: guardColors.navy },
   safeArea: { flex: 1, backgroundColor: colors.background, ...(IS_WEB ? { height: '100vh', overflow: 'hidden' } : null) },
   screenContainer: { flex: 1, minHeight: 0, ...(IS_WEB ? { overflow: 'hidden' } : null) },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },

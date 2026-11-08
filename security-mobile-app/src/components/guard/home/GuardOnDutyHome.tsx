@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, control, radii, spacing } from '../../../theme';
+import { colors, control, spacing } from '../../../theme';
+import { guardColors, guardShape } from '../../../theme/guard';
 import type { GuardWelfareCard } from '../guardWelfarePresentation';
 
 /**
@@ -193,66 +194,76 @@ export function GuardRecentActivity({ entries }: GuardRecentActivityProps) {
 }
 
 const styles = StyleSheet.create({
-  // White on the page's light background, no border: the same surface as the Patrol slot, which cannot carry a border
-  // (it would leave a hairline when the panel renders nothing). Only an overdue Welfare Check gets an outline.
+  // S4-UX Stage 1: white, 8dp corners, a 1dp border and no shadow — the same frame the Patrol slot draws around the
+  // panel. Each padding is 1dp less than before, so the border takes no space: the content box (and so every wrap,
+  // card height and the Book Off position) is unchanged. Only an overdue Welfare Check gets the heavier outline.
   card: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    backgroundColor: guardColors.surface,
+    borderRadius: guardShape.cardRadius,
+    borderWidth: guardShape.cardBorderWidth,
+    borderColor: guardColors.cardBorder,
+    paddingHorizontal: spacing.lg - guardShape.cardBorderWidth,
+    paddingVertical: spacing.md - guardShape.cardBorderWidth,
     gap: spacing.sm,
   },
-  cardUrgent: { borderColor: colors.danger, borderWidth: 2 },
+  cardUrgent: { borderColor: guardColors.emergency, borderWidth: 2 },
   // S4-UX-01.3b: the summary's three short lines sit closer together; the records card is a little narrower at the
-  // sides so three tiles share one row on a 360dp phone.
-  summaryCard: { gap: spacing.xs },
-  recordsCard: { paddingHorizontal: spacing.md },
-  site: { color: colors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  // sides so three tiles share one row on a 360dp phone. Stage 1: the summary only renders On Duty, so its green edge
+  // marks a live shift; its left padding gives back the edge's width, keeping the text where it was.
+  summaryCard: {
+    gap: spacing.xs,
+    borderLeftWidth: guardShape.liveEdgeWidth,
+    borderLeftColor: guardColors.liveEdge,
+    paddingLeft: spacing.lg - guardShape.liveEdgeWidth,
+  },
+  recordsCard: { paddingHorizontal: spacing.md - guardShape.cardBorderWidth },
+  site: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   summaryRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: spacing.xs },
   livePill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     backgroundColor: colors.successSurface,
-    borderRadius: radii.pill,
+    borderRadius: guardShape.statusRadius,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   livePillText: { color: colors.success, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.6 },
-  timeRange: { color: colors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  timeRange: { color: guardColors.textPrimary, fontSize: 18, lineHeight: 24, fontWeight: '800' },
   dateLabel: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' },
   meta: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
-  statusLine: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: colors.textPrimary },
+  statusLine: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: guardColors.textPrimary },
   toneGood: { color: colors.success },
   toneWarning: { color: colors.warning },
-  toneDanger: { color: colors.danger },
-  sectionLabel: { color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
+  toneDanger: { color: guardColors.emergency },
+  // Stage 1: section headings in secondary navy (10:1 on white) for a stronger hierarchy than the grey meta text.
+  sectionLabel: { color: guardColors.navySecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase' },
   welfareHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: spacing.sm, rowGap: spacing.xs },
-  nextDue: { color: colors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
+  nextDue: { color: guardColors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
   welfareTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: spacing.sm, rowGap: 2 },
   welfareStatusRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: spacing.md, rowGap: 2 },
-  welfareStatus: { color: colors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '900', letterSpacing: 0.4 },
-  body: { color: colors.textPrimary, fontSize: 14, lineHeight: 20 },
+  welfareStatus: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '900', letterSpacing: 0.4 },
+  body: { color: guardColors.textPrimary, fontSize: 14, lineHeight: 20 },
   welfareButton: {
     minHeight: RECORD_TILE_MIN_HEIGHT,
-    borderRadius: radii.md,
-    // accentTealStrong, not accentTeal: white bold text needs ≥4.5:1 (accentTeal gives about 2.9:1).
-    backgroundColor: colors.accentTealStrong,
+    borderRadius: guardShape.controlRadius,
+    // White bold text on the Guard teal is 4.75:1 (≥4.5).
+    backgroundColor: guardColors.teal,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  welfareButtonUrgent: { backgroundColor: colors.danger },
+  welfareButtonUrgent: { backgroundColor: guardColors.emergency },
   welfareButtonText: { color: colors.textOnBrand, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
   tileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: {
     flexGrow: 1,
     flexShrink: 0,
     minHeight: RECORD_TILE_MIN_HEIGHT,
-    borderRadius: radii.md,
-    backgroundColor: colors.primaryNavy,
+    borderRadius: guardShape.controlRadius,
+    backgroundColor: guardColors.navy,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.sm,
@@ -261,20 +272,20 @@ const styles = StyleSheet.create({
   tileText: { color: colors.textOnBrand, fontSize: 15, lineHeight: 20, fontWeight: '800', textAlign: 'center' },
   bookOff: {
     minHeight: control.buttonHeight,
-    borderRadius: radii.md,
-    borderWidth: 2,
-    borderColor: colors.primaryNavy,
-    backgroundColor: colors.card,
+    borderRadius: guardShape.controlRadius,
+    borderWidth: guardShape.outlineWidth,
+    borderColor: guardColors.navy,
+    backgroundColor: guardColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  bookOffText: { color: colors.primaryNavy, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
+  bookOffText: { color: guardColors.navy, fontSize: 16, lineHeight: 22, fontWeight: '800', textAlign: 'center' },
   disabled: { opacity: 0.6 },
   activityRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   activityTime: { color: colors.textSecondary, fontSize: 13, lineHeight: 20, fontWeight: '700', minWidth: 44 },
   activityText: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
-  activityTitle: { color: colors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
+  activityTitle: { color: guardColors.textPrimary, fontSize: 14, lineHeight: 20, fontWeight: '700' },
   pressed: { opacity: 0.85 },
 });

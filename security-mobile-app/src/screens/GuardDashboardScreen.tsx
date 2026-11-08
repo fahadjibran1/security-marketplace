@@ -135,6 +135,7 @@ import {
   type GuardActionOutcome,
 } from '../components/guard/guardActionDispatch';
 import { brand, colors } from '../theme';
+import { guardColors, guardShape } from '../theme/guard';
 import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 import { GuardHeader } from '../components/guard/home/GuardHeader';
@@ -2194,6 +2195,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
                 />
               </View>
+              <View style={styles.homePatrolFrame} pointerEvents="none" />
             </View>
 
             {homeShiftLive ? renderHomeQuickActions() : null}
@@ -3555,20 +3557,21 @@ const styles = StyleSheet.create({
   companiesEntryTitle: { fontSize: 16, fontWeight: '700', color: '#1B2A38' },
   companiesEntrySubtitle: { fontSize: 13, color: '#748392' },
   companiesEntryChevron: { fontSize: 22, color: '#748392' },
-  container: { flex: 1, backgroundColor: colors.background },
-  // The Notifications control sits in the navy Guard header (S4-UX-01.6).
+  container: { flex: 1, backgroundColor: guardColors.canvas },
+  // The Notifications control sits in the navy Guard header (S4-UX-01.6). Stage 1: rectangular like Log out, filled
+  // in secondary navy, with the same 3:1 outline.
   inboxButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     minHeight: 44,
     paddingHorizontal: 12,
-    borderRadius: 999,
+    borderRadius: guardShape.controlRadius,
     borderWidth: 1,
-    borderColor: colors.primaryNavySoft,
-    backgroundColor: colors.primaryNavySoft,
+    borderColor: guardColors.headerControlBorder,
+    backgroundColor: guardColors.navySecondary,
   },
-  inboxButtonActive: { borderColor: colors.accentTeal },
+  inboxButtonActive: { borderColor: guardColors.teal },
   inboxButtonText: { color: colors.textOnBrand, fontWeight: '700', fontSize: 14 },
   inboxButtonTextActive: { fontWeight: '800' },
   mainArea: { flex: 1, paddingTop: 12 },
@@ -3588,8 +3591,20 @@ const styles = StyleSheet.create({
   },
   // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no
   // padding) when it renders null. The inner -1 hides the panel's own top divider against the card edge.
-  homePatrolSlot: { backgroundColor: colors.card, borderRadius: 16, paddingHorizontal: 16, overflow: 'hidden' },
+  homePatrolSlot: { backgroundColor: guardColors.surface, borderRadius: guardShape.cardRadius, paddingHorizontal: 16, overflow: 'hidden' },
   homePatrolInner: { marginTop: -1 },
+  // Stage 1: the cards' 1dp border, drawn over the slot rather than on it. It takes no space, and when the panel
+  // renders nothing the slot is 0 high and clips it away, so an empty slot never leaves a hairline.
+  homePatrolFrame: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: guardShape.cardRadius,
+    borderWidth: guardShape.cardBorderWidth,
+    borderColor: guardColors.cardBorder,
+  },
   guardSectionLabel: {
     fontSize: 11,
     fontWeight: '800',
@@ -3878,33 +3893,30 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   logoutButton: { borderRadius: 16, borderWidth: 1, borderColor: colors.border, minHeight: 52, alignItems: 'center', justifyContent: 'center' },
   logoutButtonText: { color: colors.textPrimary, fontWeight: '700' },
+  // Stage 1: separated from the content by its 1dp top border alone — no shadow.
   bottomNav: {
     flexDirection: 'row',
-    backgroundColor: colors.card,
+    backgroundColor: guardColors.surface,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: guardColors.cardBorder,
     paddingTop: 8,
     paddingHorizontal: 8,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 6,
   },
   bottomNavCompact: { paddingHorizontal: 2 },
   bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6, paddingHorizontal: 2, minWidth: 0 },
-  bottomNavItemActive: { opacity: 1 },
+  // Stage 1: the selected tab sits on a subtle teal tint, above its teal indicator.
+  bottomNavItemActive: { opacity: 1, backgroundColor: guardColors.navActiveTint, borderRadius: guardShape.controlRadius },
   bottomNavIndicator: {
-    width: 32,
-    height: 3,
-    borderRadius: 999,
+    width: 40,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: 'transparent',
   },
   bottomNavIndicatorActive: {
-    backgroundColor: colors.accentTeal,
+    backgroundColor: guardColors.teal,
   },
   bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13, flexShrink: 1 },
-  bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
+  bottomNavLabelActive: { color: guardColors.navy, fontWeight: '800' },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
   // Inline action feedback. Inside the form, so the keyboard and the modal cannot hide it.
   actionInlineError: {
@@ -3986,7 +3998,8 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 999,
-    backgroundColor: colors.accentTeal,
+    // White on the Guard teal is 4.75:1 (the shared accentTeal gave 3.0:1).
+    backgroundColor: guardColors.teal,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,

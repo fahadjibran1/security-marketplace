@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { brand, colors, control, radii, spacing } from '../../../theme';
+import { brand, colors, control, spacing } from '../../../theme';
+import { guardColors, guardShape } from '../../../theme/guard';
 
 // The project's react-native type shim (src/types/react-shims.d.ts) does not export event types; these are the only
 // fields read here.
@@ -137,7 +138,7 @@ export function GuardHeader({ title, productLabel, productIsUat, notifications, 
 
 const styles = StyleSheet.create({
   header: {
-    backgroundColor: colors.primaryNavy,
+    backgroundColor: guardColors.navy,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
@@ -145,7 +146,7 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: ROW_GAP },
   identity: { flexDirection: 'row', alignItems: 'center', gap: ROW_GAP, flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
-  brandMark: { color: colors.accentTeal, fontSize: 22, fontWeight: '900', letterSpacing: 1 },
+  brandMark: { color: guardColors.headerMark, fontSize: 22, fontWeight: '900', letterSpacing: 1 },
   titleBlock: { flexShrink: 1, minWidth: 0 },
   title: { color: colors.textOnBrand, fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.2 },
   productLabel: { color: colors.border, fontSize: 13, lineHeight: 18 },
@@ -153,12 +154,14 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 0 },
   // On its own row: right-aligned, and its two buttons may wrap if even they do not fit side by side.
   actionsWrapped: { alignSelf: 'flex-end', flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, maxWidth: '100%' },
+  // Stage 1: a compact rectangular control whose outline is 3:1 against the navy header (the Notifications control,
+  // passed in by the dashboard, matches it).
   logoutButton: {
     minHeight: control.minTouchTarget,
     justifyContent: 'center',
-    borderRadius: radii.pill,
+    borderRadius: guardShape.controlRadius,
     borderWidth: 1,
-    borderColor: colors.primaryNavySoft,
+    borderColor: guardColors.headerControlBorder,
     paddingHorizontal: spacing.md,
   },
   logoutText: { color: colors.textOnBrand, fontSize: 14, fontWeight: '700' },
@@ -167,8 +170,8 @@ const styles = StyleSheet.create({
     minWidth: HEADER_SOS_MIN_SIZE + spacing.lg,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
-    backgroundColor: colors.danger,
+    borderRadius: guardShape.controlRadius,
+    backgroundColor: guardColors.emergency,
     borderWidth: 2,
     borderColor: colors.textOnBrand,
     paddingHorizontal: spacing.md,

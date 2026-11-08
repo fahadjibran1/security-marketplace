@@ -552,7 +552,7 @@ test('FORM-25-BOOK-OFF-IS-NOT-AMONG-THE-REPORTING-ACTIONS', () => {
   assert.match(screen, /const openEmergency = \(\) => setQuickActionModal\('emergency'\);/, 'one Emergency handler');
   assert.match(bar, /onEmergency=\{openEmergency\}/, 'it opens the existing Emergency form');
   const barSource = codeOf('src/components/guard/home/GuardOnDutyBar.tsx');
-  assert.match(barSource, /backgroundColor: colors\.danger/, 'Emergency keeps its destructive styling');
+  assert.match(barSource, /backgroundColor: guardColors\.emergency/, 'Emergency keeps its destructive styling');
   for (const term of ['handleCheckOut', 'Book Off', 'End shift', 'createSafetyAlert']) {
     assert.ok(!barSource.includes(term), `${term} must not appear in the on-duty bar`);
   }

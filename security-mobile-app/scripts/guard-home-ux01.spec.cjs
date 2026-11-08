@@ -367,7 +367,7 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
     assert.equal(emergency.props.accessibilityLabel, 'Emergency');
     assert.match(emergency.props.accessibilityHint, /needs a connection/i, 'Emergency is announced as online-only');
     assert.ok(flat(emergency.props.style).minHeight >= 48, 'Emergency is at least 48pt');
-    assert.equal(flat(emergency.props.style).backgroundColor, '#B42318', 'Emergency is danger red');
+    assert.equal(flat(emergency.props.style).backgroundColor, '#B42332', 'Emergency is danger red');
     // S4-UX-01.2a (CP-A shots 5 and 6): `flex: 1` gave the status a zero basis, so in the stacked column it had no
     // height and "On duty" and the site disappeared. Both containers now size from their content in either layout.
     const [status] = r.root.findAll((n) => n.props && /^On duty at /.test(String(n.props.accessibilityLabel || '')) && n.props.style);
@@ -525,7 +525,7 @@ test('UX-T11-GUARD-STATUS-BAR-SITS-ON-NAVY-AND-THE-TAB-BAR-OWNS-THE-BOTTOM-INSET
   const [backdrop] = byTestId(root, 'guard-status-bar-backdrop');
   assert.ok(backdrop, 'a status-bar backdrop is drawn for a Guard');
   assert.equal(edgesOf(backdrop), 'top', 'it insets the top edge only');
-  assert.equal(flat(backdrop.props.style).backgroundColor, '#0B1F33', 'navy, matching the Guard header');
+  assert.equal(flat(backdrop.props.style).backgroundColor, '#14263D', 'navy, matching the Guard header');
   const [outer] = byTestId(root, 'safe-area');
   assert.equal(edgesOf(outer), 'right,left', 'the Guard screen is not inset again at the top or the bottom');
   // Bottom: the tab bar keeps padding itself by insets.bottom, so its labels stay above the gesture indicator.
@@ -693,7 +693,7 @@ test('UX-T16-EMERGENCY-VARIANT-B-IS-REVIEW-ONLY-AND-USES-THE-SAME-HANDLER', asyn
       for (const sv of scrollViews(root)) assert.ok(!isInside(sos, sv), `${where}: outside every ScrollView`);
       const s = flat(sos.props.style);
       assert.ok(s.minHeight >= 48 && s.minWidth >= 48, `${where}: at least 48pt`);
-      assert.equal(s.backgroundColor, '#B42318', 'danger red');
+      assert.equal(s.backgroundColor, '#B42332', 'danger red');
       assert.match(sos.props.accessibilityLabel, /emergency/i, 'announced as Emergency');
       assert.match(sos.props.accessibilityHint, /needs a connection/i);
       return sos;

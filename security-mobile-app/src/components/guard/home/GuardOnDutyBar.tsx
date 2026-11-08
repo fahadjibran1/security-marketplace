@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radii, spacing } from '../../../theme';
+import { colors, spacing } from '../../../theme';
+import { guardColors, guardShape } from '../../../theme/guard';
 import type { GuardHomeLayout } from './guardHomeLayout';
 
 /**
@@ -54,9 +55,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
-    backgroundColor: colors.card,
+    backgroundColor: guardColors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: guardColors.cardBorder,
   },
   barStacked: { flexDirection: 'column', alignItems: 'stretch', gap: spacing.sm },
   // Grow and shrink from the content's own size (flexBasis auto), never from zero. `flex: 1` sets a zero basis, which
@@ -65,13 +66,14 @@ const styles = StyleSheet.create({
   dot: { width: STATUS_DOT, height: STATUS_DOT, borderRadius: STATUS_DOT / 2, backgroundColor: colors.success },
   statusText: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0 },
   onDuty: { color: colors.success, fontSize: 13, lineHeight: 18, fontWeight: '800', letterSpacing: 0.3 },
-  site: { color: colors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  site: { color: guardColors.textPrimary, fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  // Stage 1: flat Emergency red, 6dp corners, no shadow or glow.
   emergency: {
     minHeight: EMERGENCY_MIN_HEIGHT,
     minWidth: 132,
     paddingHorizontal: spacing.lg,
-    borderRadius: radii.md,
-    backgroundColor: colors.danger,
+    borderRadius: guardShape.controlRadius,
+    backgroundColor: guardColors.emergency,
     alignItems: 'center',
     justifyContent: 'center',
   },
