@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, control, spacing } from '../../../theme';
 import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
@@ -115,22 +116,98 @@ export interface GuardShiftRecordsProps<K extends string> {
  */
 export const RECORD_TILE_MIN_WIDTH = 88;
 export const RECORD_TILE_MIN_HEIGHT = 48;
+/** S4-UX-04B-S1: the near-square tiles' minimum height when every record shares one row. */
+export const RECORD_TILE_COMPACT_MIN_HEIGHT = 64;
+/** Gap between tiles, across and down (styles.tileRow). */
+const RECORD_TILE_GAP = spacing.sm;
+/** A tile's side padding: tighter when the tiles share one row, so a label's longest word has more room. */
+const RECORD_TILE_PADDING_COMPACT = spacing.xs;
+const RECORD_TILE_PADDING = spacing.sm;
+/** Room kept beside a label's longest word, so sub-pixel rounding can never push it onto a broken second line. */
+const RECORD_TILE_WORD_SLACK = 2;
+
+// The project's react-native type shim (src/types/react-shims.d.ts) does not export event types; this is the only
+// field read here.
+type LayoutEvent = { nativeEvent: { layout: { width: number } } };
+
+/** The words a label may wrap between. A label only ever breaks at its spaces, never inside a word. */
+export function recordLabelWords(title: string): string[] {
+  return title.split(/\s+/).filter(Boolean);
+}
+
+export interface RecordTileColumnsInput {
+  /** Width of the tiles' row, in points, as laid out (0 = not measured yet). */
+  rowWidth: number;
+  /** For each tile, the laid-out width of its label's longest word at the current text scale (0 = not measured yet). */
+  longestWords: number[];
+}
+
+/**
+ * S4-UX-04B-S1 — how many tiles share a row. Every record on one row when each label's longest word fits its tile;
+ * otherwise two columns (2 + 1: the last tile takes the full width), otherwise one column. Labels still wrap between
+ * their words, so "Site Request" may take two lines, but no word is ever broken and no text is made smaller: larger
+ * text simply means fewer columns. Four tiles (Welfare Check included) go 2 + 2 rather than 3 + 1.
+ * Returns null until the row and every label have been measured; the caller then keeps the previous wrapping rule.
+ */
+export function recordTileColumns({ rowWidth, longestWords }: RecordTileColumnsInput): number | null {
+  const count = longestWords.length;
+  if (count === 0 || !(rowWidth > 0) || longestWords.some((w) => !(w > 0))) return null;
+  const widest = Math.max(...longestWords);
+  const candidates = [3, 2].filter((n) => n <= count && !(count === 4 && n === 3));
+  for (const columns of candidates) {
+    const tileWidth = (rowWidth - RECORD_TILE_GAP * (columns - 1)) / columns;
+    const padding = columns === count ? RECORD_TILE_PADDING_COMPACT : RECORD_TILE_PADDING;
+    if (widest <= tileWidth - padding * 2 - RECORD_TILE_WORD_SLACK) return columns;
+  }
+  return 1;
+}
 
 export function GuardShiftRecords<K extends string>({ items, note, fontScale, onOpen }: GuardShiftRecordsProps<K>) {
   const scale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  const [rowWidth, setRowWidth] = useState(0);
+  const [wordWidths, setWordWidths] = useState<Record<string, number>>({});
+  const words = Array.from(new Set(items.flatMap((item) => recordLabelWords(item.title))));
+  const columns = recordTileColumns({
+    rowWidth,
+    longestWords: items.map((item) => Math.max(0, ...recordLabelWords(item.title).map((word) => wordWidths[word] ?? 0))),
+  });
+  const oneRow = columns !== null && columns === items.length;
+  // Until measured: the previous rule (each tile at least RECORD_TILE_MIN_WIDTH × the text scale, wrapping by size).
+  const basis = columns === null ? RECORD_TILE_MIN_WIDTH * scale : (rowWidth - RECORD_TILE_GAP * (columns - 1)) / columns - 0.5;
+  const tileSize = {
+    flexBasis: basis,
+    minHeight: oneRow ? RECORD_TILE_COMPACT_MIN_HEIGHT : RECORD_TILE_MIN_HEIGHT,
+    paddingHorizontal: oneRow ? RECORD_TILE_PADDING_COMPACT : RECORD_TILE_PADDING,
+  };
   return (
     <View style={[styles.card, styles.recordsCard]} testID="guard-shift-records">
       {/* S4-UX-01.3b: no "Shift records" heading — the tiles name themselves. The Log Book's status sits here,
           beside the Log Book tile, instead of inside the Welfare card. */}
       {note ? <Text style={styles.meta}>{note}</Text> : null}
-      {/* Tiles wrap by content: each is at least RECORD_TILE_MIN_WIDTH × the text scale wide and shares the row. */}
-      <View style={styles.tileRow}>
+      {/* S4-UX-04B-S1: each label word laid out once, invisibly and at the tiles' own style and text scale, so the
+          column count follows the real Inter widths on this device. Hidden from touch and from screen readers. */}
+      <View style={styles.wordMeasure} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden aria-hidden testID="guard-shift-records-measure">
+        {words.map((word) => (
+          <Text
+            key={word}
+            style={[styles.tileText, styles.wordMeasureText]}
+            onLayout={(e: LayoutEvent) => {
+              const width = e.nativeEvent.layout.width;
+              setWordWidths((current) => (current[word] === width ? current : { ...current, [word]: width }));
+            }}
+          >
+            {word}
+          </Text>
+        ))}
+      </View>
+      {/* One row of near-square tiles when every label fits; 2 + 1 or one column with larger text (recordTileColumns). */}
+      <View style={styles.tileRow} onLayout={(e: LayoutEvent) => setRowWidth(e.nativeEvent.layout.width)} testID="guard-shift-records-tiles">
         {items.map((item) => (
           <Pressable
             key={item.key}
             accessibilityRole="button"
             accessibilityLabel={item.accessibilityLabel}
-            style={({ pressed }: { pressed: boolean }) => [styles.tile, { flexBasis: RECORD_TILE_MIN_WIDTH * scale }, pressed && styles.pressed]}
+            style={({ pressed }: { pressed: boolean }) => [styles.tile, tileSize, pressed && styles.pressed]}
             onPress={() => onOpen(item.key)}
           >
             <Text style={styles.tileText}>{item.title}</Text>
@@ -257,7 +334,10 @@ const styles = StyleSheet.create({
   },
   welfareButtonUrgent: { backgroundColor: guardColors.emergency },
   welfareButtonText: { color: colors.textOnBrand, ...guardType.button, textAlign: 'center' },
-  tileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  tileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: RECORD_TILE_GAP },
+  // Off-screen-equivalent: absolutely placed (no effect on the card's size), fully transparent, sized by its words.
+  wordMeasure: { position: 'absolute', top: 0, left: 0, opacity: 0, alignItems: 'flex-start' },
+  wordMeasureText: { alignSelf: 'flex-start' },
   tile: {
     flexGrow: 1,
     flexShrink: 0,

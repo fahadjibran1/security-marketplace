@@ -14,6 +14,8 @@
  *   UX-T10  every file under src/components/guard/patrol is byte-identical to the verified build 22 release commit
  *   UX-T21  Stage 4A: both badges grow with the text scale (never a fixed height), sit outside their control's layout,
  *           and so never change the Notifications control, move Log out, or shorten the Offers label
+ *   UX-T22  Stage 4B-S1: the record tiles share one row of 64pt tiles when every label's longest (measured) word fits,
+ *           then reflow to 2 + 1 or one column; no word broken, no text shrunk, every label and handler kept
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
  */
@@ -757,6 +759,87 @@ test('UX-T15-ON-DUTY-HOME-TEXT-WRAPS-NATURALLY-AT-ANY-TEXT-SCALE', async () => {
     assert.equal(flat(tile.props.style).flexBasis, RECORD_TILE_MIN_WIDTH * fontScale, `@${fontScale}: tiles widen with the text, then wrap`);
     await act(async () => r.unmount());
   }
+});
+
+// S4-UX-04B-S1: word widths are the Inter Bold 15 label words as laid out on Android 16 (S4_UX01_CPA, Stage 4A dumps;
+// single words derived from the measured labels), at 1.0x, 1.3x and 2.0x. Row widths are the records card's content
+// width on each phone (width − 2 × 16 page − 2 × 12 card).
+const RECORD_WORDS = {
+  1: { Log: 26, Book: 38, Site: 30, Request: 58, Incident: 59, Welfare: 55, Check: 44 },
+  1.3: { Log: 35, Book: 51, Site: 40, Request: 78, Incident: 79, Welfare: 74, Check: 59 },
+  2: { Log: 47, Book: 70, Site: 54, Request: 104, Incident: 107, Welfare: 100, Check: 80 },
+};
+const RECORD_ROWS = { 360: 304, 375: 319, 393: 337, 430: 374 };
+const RECORD_ITEMS = [
+  { key: 'logBook', title: 'Log Book', accessibilityLabel: 'Add Log Book entry' },
+  { key: 'siteRequest', title: 'Site Request', accessibilityLabel: 'Raise Site Request' },
+  { key: 'incident', title: 'Incident', accessibilityLabel: 'Report Incident' },
+];
+
+test('UX-T22-RECORD-TILES-SHARE-ONE-ROW-WHEN-EVERY-WORD-FITS-THEN-REFLOW', async () => {
+  const { recordTileColumns, recordLabelWords, GuardShiftRecords, RECORD_TILE_MIN_WIDTH, RECORD_TILE_MIN_HEIGHT, RECORD_TILE_COMPACT_MIN_HEIGHT } =
+    loadWith('src/components/guard/home/GuardOnDutyHome.tsx');
+  assert.equal(RECORD_TILE_COMPACT_MIN_HEIGHT, 64);
+  assert.deepEqual(recordLabelWords('Site Request'), ['Site', 'Request']);
+  const longest = (scale, titles) => titles.map((t) => Math.max(...recordLabelWords(t).map((w) => RECORD_WORDS[scale][w])));
+  const three = ['Log Book', 'Site Request', 'Incident'];
+  // The matrix: one row at 1.0x and 1.3x on every phone; at 2.0x, 2 + 1 except on the 430dp phone.
+  const expected = { 1: { 360: 3, 375: 3, 393: 3, 430: 3 }, 1.3: { 360: 3, 375: 3, 393: 3, 430: 3 }, 2: { 360: 2, 375: 2, 393: 2, 430: 3 } };
+  for (const scale of [1, 1.3, 2]) {
+    for (const [phone, rowWidth] of Object.entries(RECORD_ROWS)) {
+      assert.equal(recordTileColumns({ rowWidth, longestWords: longest(scale, three) }), expected[scale][phone], `${phone}dp @${scale}x`);
+    }
+  }
+  // Four tiles (no Welfare card: Welfare Check is a tile) go 2 + 2, never 3 + 1.
+  assert.equal(recordTileColumns({ rowWidth: 304, longestWords: longest(1, ['Welfare Check', ...three]) }), 2);
+  // Nothing fits two abreast: one column. Not measured yet: null (the previous rule applies).
+  assert.equal(recordTileColumns({ rowWidth: 304, longestWords: [200, 60, 60] }), 1);
+  assert.equal(recordTileColumns({ rowWidth: 0, longestWords: [60, 60, 60] }), null);
+  assert.equal(recordTileColumns({ rowWidth: 304, longestWords: [60, 0, 60] }), null);
+
+  // The component, measured as a phone would: the row's width and each hidden word's laid-out width.
+  for (const [scale, phone, columns] of [[1, 360, 3], [1.3, 360, 3], [2, 360, 2], [2, 430, 3]]) {
+    let r;
+    const opened = [];
+    await act(async () => {
+      r = TestRenderer.create(h(GuardShiftRecords, { items: RECORD_ITEMS, note: 'Log Book · ENTRY DUE · By 19:17', fontScale: scale, onOpen: (k) => opened.push(k) }));
+    });
+    const tileRow = r.root.find((n) => n.props?.testID === 'guard-shift-records-tiles' && typeof n.props.onLayout === 'function');
+    const measure = r.root.find((n) => n.props?.testID === 'guard-shift-records-measure' && n.props.importantForAccessibility);
+    // Before measuring: the previous wrapping rule, unchanged.
+    let tiles = pressables(r.root, (p) => p.accessibilityRole === 'button');
+    assert.equal(flat(tiles[0].props.style).flexBasis, RECORD_TILE_MIN_WIDTH * scale);
+    // The measuring words are hidden from touch and from screen readers, and take no space in the card.
+    assert.equal(measure.props.pointerEvents, 'none');
+    assert.equal(measure.props.importantForAccessibility, 'no-hide-descendants');
+    assert.equal(measure.props.accessibilityElementsHidden, true);
+    assert.equal(flat(measure.props.style).position, 'absolute');
+    await act(async () => {
+      tileRow.props.onLayout({ nativeEvent: { layout: { width: RECORD_ROWS[phone] } } });
+      for (const word of measure.findAll((n) => typeof n.props?.onLayout === 'function' && typeof n.props.children === 'string')) {
+        word.props.onLayout({ nativeEvent: { layout: { width: RECORD_WORDS[scale][word.props.children] } } });
+      }
+    });
+    tiles = pressables(r.root, (p) => p.accessibilityRole === 'button');
+    assert.deepEqual(tiles.map((t) => texts(t)[0]), ['Log Book', 'Site Request', 'Incident'], 'complete labels, in order');
+    assert.deepEqual(tiles.map((t) => t.props.accessibilityLabel), ['Add Log Book entry', 'Raise Site Request', 'Report Incident']);
+    const basis = (RECORD_ROWS[phone] - 8 * (columns - 1)) / columns - 0.5;
+    const widestWord = Math.max(...longest(scale, three));
+    for (const t of tiles) {
+      const s = flat(t.props.style);
+      assert.equal(s.flexBasis, basis, `${phone}dp @${scale}x: ${columns} per row`);
+      assert.equal(s.minHeight, columns === 3 ? RECORD_TILE_COMPACT_MIN_HEIGHT : RECORD_TILE_MIN_HEIGHT);
+      assert.ok(s.minHeight >= 44, 'at least a 44pt target');
+      assert.ok(widestWord <= basis - s.paddingHorizontal * 2, 'the longest word fits inside the padding: no word is broken');
+    }
+    assert.ok(columns * basis + 8 * (columns - 1) <= RECORD_ROWS[phone], 'the row never overflows its card');
+    assert.ok(texts(r.root).some((t) => /^Log Book · /.test(t)), 'the Log Book status line is kept');
+    for (const t of tiles) await act(async () => t.props.onPress());
+    assert.deepEqual(opened, ['logBook', 'siteRequest', 'incident'], 'every tile keeps its handler');
+    await act(async () => r.unmount());
+  }
+  // Text is never shrunk, truncated or opted out of the system text scale.
+  assert.doesNotMatch(codeOf('src/components/guard/home/GuardOnDutyHome.tsx'), /maxFontSizeMultiplier|allowFontScaling|adjustsFontSizeToFit|numberOfLines/);
 });
 
 test('UX-T16-EMERGENCY-VARIANT-B-IS-REVIEW-ONLY-AND-USES-THE-SAME-HANDLER', async () => {
