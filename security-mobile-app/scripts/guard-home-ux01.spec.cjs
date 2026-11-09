@@ -18,6 +18,8 @@
  *           then reflow to 2 + 1 or one column; no word broken, no text shrunk, every label and handler kept
  *   UX-T23  Stage 4B-S2: the Welfare status and its full-label action share a row only at normal text when everything
  *           fits; otherwise stacked as before. DUE / OVERDUE / MISSED / COMPLETED all keep every line, colour and handler
+ *   UX-T24  Stage 4B-S3: Shift Operations groups Welfare, Patrol, records and Book Off; the group is always mounted, so
+ *           Book On, Book Off and No Shift never remount the Patrol panel; Emergency stays outside the scroll area
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
  */
@@ -183,13 +185,14 @@ async function quiet(fn) {
   try { return await fn(); } finally { console.error = original; }
 }
 
-async function mountApp({ role = 'guard', shifts = [], attendance = [], appVariant, notifications, fontScale } = {}) {
+async function mountApp({ role = 'guard', shifts = [], attendance = [], appVariant, notifications, fontScale, apiOverrides = {}, moduleOverrides = {} } = {}) {
   FakeAppState.currentState = 'active';
   const fake = fakeApi({
     fetchCurrentUser: async () => userOf(role),
     listMyShifts: async () => shifts,
     listMyAttendance: async () => attendance,
     ...(notifications ? { listMyNotifications: async () => notifications } : {}),
+    ...apiOverrides,
   });
   const overrides = {
     'src/services/api': fake.api,
@@ -203,6 +206,7 @@ async function mountApp({ role = 'guard', shifts = [], attendance = [], appVaria
     'src/screens/CompanyDashboardScreen': { CompanyDashboardScreen: () => null },
     'src/screens/AdminDashboardScreen': { AdminDashboardScreen: () => null },
     'src/screens/ClientPortalScreen': { ClientPortalScreen: () => h(RNW.Text, null, 'Client portal') },
+    ...moduleOverrides,
   };
   // react-native-web always reports a text scale of 1; a test that needs another one supplies the layout directly.
   if (fontScale !== undefined) {
@@ -1096,6 +1100,84 @@ test('UX-T20-OFF-DUTY-ORDER-KEEPS-THE-PATROL-SLOT-AND-ONE-PRIMARY-HANDLER', () =
   assert.match(card, /onPress: handleCurrentShiftPrimaryPress/, 'Book On, Review Offer and View Summary keep their one handler');
   assert.match(card, /disabled: primaryDisabled/, 'disabled only while a request is in flight');
   assert.doesNotMatch(codeOf('src/components/guard/home/GuardOffDutyHome.tsx'), /checkIn|checkOut|bookOnDecision|setPendingBookOff|api\./, 'the components decide nothing');
+});
+
+// ═══════════════════ UX-T24 Shift Operations grouping (S4-UX-04B-S3) ═══════════════════
+
+test('UX-T24-SHIFT-OPERATIONS-GROUPS-HOME-WITHOUT-EVER-REMOUNTING-THE-PATROL-PANEL', async () => {
+  // Source: one group, always mounted, holding Welfare → the Patrol slot → the records → a rule and Book Off.
+  const screen = codeOf(SCREEN);
+  const groupAt = screen.indexOf('<View style={styles.homeOperations} testID="guard-shift-operations">');
+  assert.ok(groupAt > 0, 'the group exists');
+  assert.match(screen.slice(groupAt - 300, groupAt), /\)\}\s*(\{\}\s*)?$/, 'it follows the closed shift-summary conditional and is not itself conditional');
+  const seq = ['<GuardWelfareSummary', '<View style={styles.homePatrolSlot}>', '{homeShiftLive ? renderHomeQuickActions() : null}', 'styles.homeOperationsSeparator', '<GuardBookOff'].map((m) => screen.indexOf(m));
+  assert.ok(seq.every((at, i) => at > groupAt && (i === 0 || at > seq[i - 1])), 'Welfare, Patrol, records, the rule, then Book Off, all inside the group');
+  assert.ok(screen.indexOf('<GuardUpcomingShifts') > seq[4], 'Upcoming and Recent activity stay after the group');
+  assert.equal((screen.match(/<GuardBookOff\b/g) || []).length, 1, 'one Book Off');
+  assert.equal((screen.match(/<GuardOnDutyBar\b/g) || []).length, 1, 'one Emergency launcher, unchanged');
+
+  // Runtime: a probe in place of the Patrol panel counts mounts through Book On, Book Off and No Shift.
+  const probe = { mounts: 0, unmounts: 0, shifts: [] };
+  const PatrolProbe = ({ shift }) => {
+    React.useEffect(() => { probe.mounts += 1; return () => { probe.unmounts += 1; }; }, []);
+    probe.shifts.push(shift ? shift.status : null);
+    return h(RNW.Text, { testID: 'patrol-probe' }, 'patrol');
+  };
+  const moduleOverrides = { 'src/components/guard/patrol/GuardPatrolPanel': { GuardPatrolPanel: PatrolProbe } };
+  const ids = ['guard-welfare-summary', 'patrol-probe', 'guard-shift-records', 'guard-shift-operations-separator', 'guard-book-off'];
+  const shift = readyShift(90, -0.1, 'Probe Gate', { operations: opsOf('due', new Date(NOW - 6 * 60_000).toISOString()) });
+  const shifts = [shift];
+  const attendance = [];
+  const lifecycle = {
+    checkInShift: async ({ shiftId }) => { shift.status = 'in_progress'; attendance.push({ id: 1, type: 'check-in', occurredAt: new Date().toISOString(), shift: { id: shiftId } }); return { id: 1 }; },
+    checkOutShift: async ({ shiftId }) => { shift.status = 'completed'; attendance.push({ id: 2, type: 'check-out', occurredAt: new Date().toISOString(), shift: { id: shiftId } }); return { id: 2 }; },
+  };
+  const confirm = (root) => root.findAll((n) => n.props?.visible === true && typeof n.props.onConfirm === 'function')[0];
+  const a = await mountApp({ shifts, attendance, apiOverrides: lifecycle, moduleOverrides });
+  const root = a.renderer.root;
+  const group = () => byTestId(root, 'guard-shift-operations')[0];
+  // Off Duty (before Book On): the group is there, holding only the Patrol slot; no heading.
+  assert.ok(group() && byTestId(group(), 'patrol-probe').length === 1, 'off duty: the Patrol slot is in the group');
+  assert.ok(!texts(group()).includes('Shift operations'), 'off duty: no heading');
+  const [bookOn] = byLabel(byTestId(root, 'guard-shift-card')[0], 'Book On now');
+  assert.ok(bookOn, 'the existing Book On');
+  await a.run(() => bookOn.props.onPress());
+  // On Duty: the heading, then the existing parts in order, Book Off last and set apart by a rule.
+  assert.equal(byTestId(root, 'guard-shift-summary').length, 1, 'on duty after Book On');
+  const heading = group().findAll((n) => n.props?.accessibilityRole === 'header' && n.props.children === 'Shift operations');
+  assert.ok(heading.length > 0, 'the Shift operations heading, announced as a header');
+  assert.deepEqual(order(group(), ids), ids, 'Welfare, Patrol, records, rule, Book Off');
+  assert.equal(isInside(byTestId(root, 'guard-shift-summary')[0], group()), false, 'the compact summary stays above, outside the group');
+  const [scroll] = scrollViews(root);
+  const [bar] = byTestId(root, 'guard-on-duty-bar');
+  assert.ok(bar && !isInside(bar, scroll), 'Emergency stays outside the scroll area');
+  assert.ok(byTestId(group(), 'guard-shift-operations-separator')[0].props.accessibilityElementsHidden, 'the rule is hidden from screen readers');
+  assert.equal(byLabel(group(), 'Record Welfare Check').length, 1);
+  assert.deepEqual(pressables(byTestId(group(), 'guard-shift-records')[0], (p) => p.accessibilityRole === 'button').map((t) => texts(t)[0]), ['Log Book', 'Site Request', 'Incident']);
+  // Book Off through the existing confirmation, then Off Duty with the last shift.
+  await a.run(() => byTestId(root, 'guard-book-off')[0].props.onPress());
+  const dialog = confirm(root);
+  assert.ok(dialog, 'the existing Book Off confirmation');
+  await a.run(() => dialog.props.onConfirm());
+  assert.equal(byTestId(root, 'guard-shift-summary').length, 0, 'off duty after Book Off');
+  assert.ok(texts(byTestId(root, 'guard-shift-card')[0]).includes('Last shift'));
+  assert.ok(group() && byTestId(group(), 'patrol-probe').length === 1 && !texts(group()).includes('Shift operations'), 'the group and its Patrol slot remain; no heading');
+  assert.deepEqual([probe.mounts, probe.unmounts], [1, 0], 'Book On and Book Off never remounted the Patrol panel');
+  assert.deepEqual([...new Set(probe.shifts)], ['ready', 'in_progress', 'completed'], 'it saw every state of the same shift (normalised)');
+  await a.run(() => a.renderer.unmount());
+
+  // On Duty → No Shift (the shift leaves the list after Book Off): still the same mount.
+  probe.mounts = 0; probe.unmounts = 0;
+  const live = { ...liveShift(91), operations: opsOf('due', new Date(NOW - 2 * 3_600_000).toISOString()) };
+  const list = [live];
+  const b = await mountApp({ shifts: list, attendance: bookedOn(live), apiOverrides: { checkOutShift: async () => { list.length = 0; return { id: 3 }; } }, moduleOverrides });
+  await b.run(() => byTestId(b.renderer.root, 'guard-book-off')[0].props.onPress());
+  await b.run(() => confirm(b.renderer.root).props.onConfirm());
+  assert.equal(byTestId(b.renderer.root, 'guard-no-shift').length, 1, 'No Shift');
+  assert.equal(byTestId(byTestId(b.renderer.root, 'guard-shift-operations')[0], 'patrol-probe').length, 1, 'the group and the Patrol slot are still mounted');
+  assert.deepEqual([probe.mounts, probe.unmounts], [1, 0], 'On Duty → No Shift never remounted the Patrol panel');
+  await b.run(() => b.renderer.unmount());
+  assert.equal(probe.unmounts, 1, 'unmounted once, with the app');
 });
 
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════

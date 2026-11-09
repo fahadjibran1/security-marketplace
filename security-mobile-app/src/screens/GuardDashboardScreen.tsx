@@ -2215,43 +2215,58 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               <GuardNoShift onOffers={() => setActiveTab('offers')} onHistory={() => setActiveTab('history')} onJobs={() => setActiveTab('jobs')} />
             )}
 
-            {/* ── Welfare Check ── every value is the backend's, via the operations projection on this shift
-                (guardWelfareCard). The Guard and the control room read the same status, next due time and counts,
-                because nothing here recomputes them. Presented directly above Patrol, so both stay in view. */}
-            {welfareCard ? (
-              <GuardWelfareSummary
-                card={welfareCard}
-                onRecord={() => setQuickActionModal('welfareCheck')}
-              />
-            ) : null}
+            {/* ── SHIFT OPERATIONS (S4-UX-04B-S3) ── one presentational group: Welfare, the Patrol slot, the shift
+                records and, last and set apart, Book Off. The group is mounted in EVERY Home state (On Duty, Off Duty,
+                No Shift) at one fixed position, and every child inside it keeps a fixed position too (each is either
+                always rendered or a closed conditional), so the Patrol panel keeps its component identity through Book
+                On, phase changes and Book Off, and unsent patrol evidence stays reachable afterwards. Off duty only the
+                Patrol slot can show; the heading belongs to the live shift. Emergency stays outside the scroll area. */}
+            <View style={styles.homeOperations} testID="guard-shift-operations">
+              {homeShiftLive ? (
+                <Text style={styles.homeOperationsLabel} accessibilityRole="header">Shift operations</Text>
+              ) : null}
 
-            {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the Welfare Check
-                block. ONE stable slot for every Home state (S4-UX-01.3): its position in this list never changes
-                with the shift phase, so Book On, phase changes and Book Off never remount it, and patrol items still
-                waiting to send (or refused) stay visible after Book Off. */}
-            <View style={styles.homePatrolSlot}>
-              <View style={styles.homePatrolInner}>
-                <GuardPatrolPanel
-                  userId={user.id}
-                  shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
+              {/* ── Welfare Check ── every value is the backend's, via the operations projection on this shift
+                  (guardWelfareCard). The Guard and the control room read the same status, next due time and counts,
+                  because nothing here recomputes them. Presented directly above Patrol, so both stay in view. */}
+              {welfareCard ? (
+                <GuardWelfareSummary
+                  card={welfareCard}
+                  onRecord={() => setQuickActionModal('welfareCheck')}
                 />
+              ) : null}
+
+              {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the Welfare Check
+                  block. ONE stable slot for every Home state (S4-UX-01.3): its position in this list never changes
+                  with the shift phase, so Book On, phase changes and Book Off never remount it, and patrol items still
+                  waiting to send (or refused) stay visible after Book Off. */}
+              <View style={styles.homePatrolSlot}>
+                <View style={styles.homePatrolInner}>
+                  <GuardPatrolPanel
+                    userId={user.id}
+                    shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
+                  />
+                </View>
+                <View style={styles.homePatrolFrame} pointerEvents="none" />
               </View>
-              <View style={styles.homePatrolFrame} pointerEvents="none" />
+
+              {homeShiftLive ? renderHomeQuickActions() : null}
+
+              {homeOnDuty && currentHomeShift && getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) ? (
+                // The same Book Off as the Current Shift card's Main action: the same label, the same handler, and so
+                // the same confirmation (handlePrimaryHomeAction → setPendingBookOff). Below the routine records, so it
+                // is never the easiest thing to tap by accident.
+                <>
+                  <View style={styles.homeOperationsSeparator} importantForAccessibility="no" accessibilityElementsHidden testID="guard-shift-operations-separator" />
+                  <GuardBookOff
+                    label={getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) as string}
+                    busy={attendanceBusyShiftId === currentHomeShift.id}
+                    disabled={attendanceBusyShiftId === currentHomeShift.id}
+                    onPress={handleCurrentShiftPrimaryPress}
+                  />
+                </>
+              ) : null}
             </View>
-
-            {homeShiftLive ? renderHomeQuickActions() : null}
-
-            {homeOnDuty && currentHomeShift && getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) ? (
-              // The same Book Off as the Current Shift card's Main action: the same label, the same handler, and so
-              // the same confirmation (handlePrimaryHomeAction → setPendingBookOff). Below the routine records, so it
-              // is never the easiest thing to tap by accident.
-              <GuardBookOff
-                label={getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) as string}
-                busy={attendanceBusyShiftId === currentHomeShift.id}
-                disabled={attendanceBusyShiftId === currentHomeShift.id}
-                onPress={handleCurrentShiftPrimaryPress}
-              />
-            ) : null}
 
             {/* S4-UX-01.4: accepted shifts after the one in the shift card, never that one again (Off Duty only). */}
             {!homeOnDuty ? (
@@ -3630,6 +3645,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 4,
   },
+  // S4-UX-04B-S3 — the Shift Operations group: no frame and no padding of its own (its cards keep theirs), the same
+  // 12dp rhythm as the rest of Home, a heading in the Guard section-label type, and a 1dp rule above Book Off.
+  homeOperations: { width: '100%', gap: 12 },
+  homeOperationsLabel: { color: guardColors.navy, ...guardType.sectionLabel, letterSpacing: 0.8, textTransform: 'uppercase' },
+  homeOperationsSeparator: { borderTopWidth: guardShape.cardBorderWidth, borderTopColor: guardColors.cardBorder },
   // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no
   // padding) when it renders null. The inner -1 hides the panel's own top divider against the card edge.
   homePatrolSlot: { backgroundColor: guardColors.surface, borderRadius: guardShape.cardRadius, paddingHorizontal: 16, overflow: 'hidden' },
