@@ -16,6 +16,8 @@
  *           and so never change the Notifications control, move Log out, or shorten the Offers label
  *   UX-T22  Stage 4B-S1: the record tiles share one row of 64pt tiles when every label's longest (measured) word fits,
  *           then reflow to 2 + 1 or one column; no word broken, no text shrunk, every label and handler kept
+ *   UX-T23  Stage 4B-S2: the Welfare status and its full-label action share a row only at normal text when everything
+ *           fits; otherwise stacked as before. DUE / OVERDUE / MISSED / COMPLETED all keep every line, colour and handler
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
  */
@@ -839,6 +841,102 @@ test('UX-T22-RECORD-TILES-SHARE-ONE-ROW-WHEN-EVERY-WORD-FITS-THEN-REFLOW', async
     await act(async () => r.unmount());
   }
   // Text is never shrunk, truncated or opted out of the system text scale.
+  assert.doesNotMatch(codeOf('src/components/guard/home/GuardOnDutyHome.tsx'), /maxFontSizeMultiplier|allowFontScaling|adjustsFontSizeToFit|numberOfLines/);
+});
+
+// S4-UX-04B-S2: Inter widths at 1.0x as laid out on Android 16 (Stage 4A dumps; single words derived), and the Welfare
+// card's content width on each phone (width − 2 × 16 page − 2 × 16 card).
+const WELFARE_WIDTHS = {
+  'Welfare Check': 111, DUE: 30, OVERDUE: 62, MISSED: 50, COMPLETED: 76, 'Next due 18:07': 101,
+  Every: 38, 60: 17, min: 26, 12: 17, over: 30, 1: 8, 2: 9, missed: 48, in: 12, a: 8, row: 27, this: 26, shift: 31, Last: 30, '17:07': 36,
+  'Every 60 min': 87, '12 min over': 80, '1 missed this shift': 125, '2 missed in a row': 117, 'Last 17:07': 70,
+  'Record Welfare Check': 174,
+};
+// One-line heights: the section label is 16/16, the status lines 20, the action's label 22.
+const welfareHeight = (text) => (text === 'Welfare Check' ? 16 : text === 'Record Welfare Check' ? 22 : 20);
+const WELFARE_ROWS = { 360: 296, 375: 311, 393: 329, 430: 366 };
+const WELFARE_CARDS = {
+  due: { label: 'DUE', tone: 'neutral', nextDue: '18:07', detail: 'Every 60 min', missedSummary: null, actionUrgent: false },
+  overdue: { label: 'OVERDUE', tone: 'warning', nextDue: '18:07', detail: '12 min over', missedSummary: '1 missed this shift', actionUrgent: true },
+  missed: { label: 'MISSED', tone: 'danger', nextDue: '18:07', detail: 'Every 60 min', missedSummary: '2 missed in a row', actionUrgent: true },
+  routine: { label: 'COMPLETED', tone: 'good', nextDue: '18:07', detail: 'Last 17:07', missedSummary: null, actionUrgent: false },
+};
+
+test('UX-T23-WELFARE-STATUS-AND-ACTION-SHARE-A-ROW-ONLY-AT-NORMAL-TEXT-WHEN-EVERYTHING-FITS', async () => {
+  const base = loadWith('src/components/guard/home/GuardOnDutyHome.tsx');
+  const { welfareSideBySide, WELFARE_ACTION_LABEL } = base;
+  assert.equal(WELFARE_ACTION_LABEL, 'Record Welfare Check', 'the label stays in full');
+  const sz = (text, scale = 1) => ({ width: WELFARE_WIDTHS[text] * scale, height: welfareHeight(text) * scale });
+  const ln = (text, scale = 1) => (text ? { ...sz(text, scale), longestWord: Math.max(...text.split(' ').map((w) => WELFARE_WIDTHS[w])) * scale } : null);
+  const input = (card, rowWidth, fontScale = 1) => ({
+    fontScale, rowWidth, action: sz('Record Welfare Check', fontScale), name: sz('Welfare Check', fontScale), status: sz(card.label, fontScale),
+    next: sz(`Next due ${card.nextDue}`, fontScale), detail: ln(card.detail, fontScale), missed: ln(card.missedSummary, fontScale),
+  });
+  // At 1.0x the full action (174 + 2 × 16) and a column for "WELFARE CHECK" (111) need 333dp: only the 430dp phone has
+  // room. There, DUE and COMPLETED are shorter side by side; OVERDUE and MISSED carry two more facts and are not, so they
+  // stay stacked.
+  const sideStates = ['DUE', 'COMPLETED'];
+  for (const [phone, rowWidth] of Object.entries(WELFARE_ROWS)) {
+    for (const card of Object.values(WELFARE_CARDS)) {
+      assert.equal(welfareSideBySide(input(card, rowWidth)), phone === '430' && sideStates.includes(card.label), `${phone}dp ${card.label}`);
+      // Larger text: always stacked, however wide the phone.
+      for (const fontScale of [1.3, 2]) assert.equal(welfareSideBySide(input(card, 1000, fontScale)), false, `${card.label} @${fontScale}x`);
+    }
+  }
+  // Not measured yet: stacked.
+  const due = WELFARE_CARDS.due;
+  assert.equal(welfareSideBySide({ ...input(due, 0) }), false);
+  assert.equal(welfareSideBySide({ ...input(due, 366), action: { width: 0, height: 0 } }), false);
+  assert.equal(welfareSideBySide({ ...input(due, 366), detail: { width: 87, height: 20, longestWord: 0 } }), false);
+
+  // The component, measured as a phone would, in every state: 430 @1.0 (DUE and COMPLETED side by side), 360 @1.0 and
+  // 430 @1.3 (all stacked).
+  for (const [phone, fontScale, sideFor] of [[430, 1, sideStates], [360, 1, []], [430, 1.3, []]]) {
+    const { GuardWelfareSummary } = loadWith('src/components/guard/home/GuardOnDutyHome.tsx', {
+      overrides: { 'src/components/guard/home/useGuardHomeLayout': { useGuardHomeLayout: () => layoutRules.guardHomeLayout({ width: phone, height: 800, fontScale }) } },
+    });
+    for (const [name, card] of Object.entries(WELFARE_CARDS)) {
+      let r;
+      let recorded = 0;
+      await act(async () => { r = TestRenderer.create(h(GuardWelfareSummary, { card, onRecord: () => { recorded += 1; } })); });
+      const measure = r.root.find((n) => n.props?.testID === 'guard-welfare-measure' && n.props.importantForAccessibility);
+      assert.equal(measure.props.importantForAccessibility, 'no-hide-descendants');
+      assert.equal(measure.props.accessibilityElementsHidden, true);
+      assert.equal(measure.props.pointerEvents, 'none');
+      assert.equal(flat(measure.props.style).position, 'absolute', 'it takes no space');
+      const layoutNode = () => r.root.find((n) => n.props?.testID === 'guard-welfare-layout' && typeof n.props.onLayout === 'function');
+      assert.notEqual(flat(layoutNode().props.style).flexDirection, 'row', `${name}: stacked until measured`);
+      await act(async () => {
+        layoutNode().props.onLayout({ nativeEvent: { layout: { width: WELFARE_ROWS[phone], height: 100 } } });
+        for (const t of measure.findAll((n) => typeof n.props?.onLayout === 'function' && typeof n.props.children === 'string')) {
+          const text = t.props.children;
+          t.props.onLayout({ nativeEvent: { layout: { width: WELFARE_WIDTHS[text] * fontScale, height: welfareHeight(text) * fontScale } } });
+        }
+      });
+      const layout = layoutNode();
+      const side = sideFor.includes(card.label);
+      assert.equal(flat(layout.props.style).flexDirection === 'row', side, `${phone}dp @${fontScale}x ${name}: ${side ? 'side by side' : 'stacked'}`);
+      // Every status, warning and the action, visible (outside the hidden measuring words).
+      const shown = texts(layout);
+      for (const t of ['Welfare Check', card.label, `Next due ${card.nextDue}`, card.detail, card.missedSummary].filter(Boolean)) assert.ok(shown.includes(t), `${name}: "${t}" shown`);
+      const [action] = byLabel(layout, 'Record Welfare Check');
+      assert.ok(action, `${name}: one action`);
+      assert.equal(texts(action)[0], 'Record Welfare Check', 'the full label');
+      const s = flat(action.props.style);
+      assert.ok(s.minHeight >= 44, 'at least a 44pt target');
+      assert.equal(s.backgroundColor, card.actionUrgent ? '#B42332' : '#087F8C', `${name}: ${card.actionUrgent ? 'red, the priority' : 'teal'}`);
+      if (side) assert.equal(s.flexShrink, 0, 'beside the status it is never squeezed');
+      const cardStyle = flat(r.root.find((n) => n.props?.testID === 'guard-welfare-summary' && n.props.style).props.style);
+      assert.equal(cardStyle.borderColor, card.tone === 'danger' ? '#B42332' : '#D7E0E8', `${name}: the red outline only when MISSED`);
+      if (card.missedSummary) {
+        const missed = layout.findAll((n) => n.props?.children === card.missedSummary)[0];
+        assert.equal(flat(missed.props.style).color, '#B42332', 'the missed count stays red');
+      }
+      await act(async () => action.props.onPress());
+      assert.equal(recorded, 1, 'the same handler');
+      await act(async () => r.unmount());
+    }
+  }
   assert.doesNotMatch(codeOf('src/components/guard/home/GuardOnDutyHome.tsx'), /maxFontSizeMultiplier|allowFontScaling|adjustsFontSizeToFit|numberOfLines/);
 });
 

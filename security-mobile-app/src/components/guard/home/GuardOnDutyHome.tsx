@@ -3,6 +3,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, control, spacing } from '../../../theme';
 import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
 import type { GuardWelfareCard } from '../guardWelfarePresentation';
+import { LARGE_TEXT_SCALE } from './guardHomeLayout';
+import { useGuardHomeLayout } from './useGuardHomeLayout';
 
 /**
  * S4-UX-01.3 — the On Duty Home, presentation only.
@@ -69,33 +71,190 @@ export interface GuardWelfareSummaryProps {
   onRecord: () => void;
 }
 
+/** The Welfare action's label, always in full. */
+export const WELFARE_ACTION_LABEL = 'Record Welfare Check';
+/** Gap between the status column and the action when they share a row. */
+const WELFARE_SIDE_GAP = spacing.md;
+
+/** A text's one-line laid-out size (0 = not measured yet). */
+export interface WelfareTextSize { width: number; height: number }
+/** A line that may wrap between its words: its one-line size and its longest single word's width. */
+export interface WelfareLineSize extends WelfareTextSize { longestWord: number }
+
+export interface WelfareSideBySideInput {
+  /** The system text scale. Side by side is a normal-text-size arrangement only. */
+  fontScale: number;
+  /** The card's content width, as laid out (0 = not measured yet). */
+  rowWidth: number;
+  /** The action's label, on one line. */
+  action: WelfareTextSize;
+  /** The section name, the status word and "Next due …" (null when nothing is due). */
+  name: WelfareTextSize;
+  status: WelfareTextSize;
+  next: WelfareTextSize | null;
+  /** The detail and missed lines, when present. */
+  detail: WelfareLineSize | null;
+  missed: WelfareLineSize | null;
+}
+
+/** A part not laid out yet (a measurement, not a style): not a positive size, so welfareSideBySide keeps the stacked arrangement. */
+const WELFARE_UNMEASURED: WelfareTextSize = Object.freeze({ width: Number.NaN, height: Number.NaN });
+
+const measuredSize = (s: WelfareTextSize | null) => s === null || (s.width > 0 && s.height > 0);
+/** Lines a text takes at a width (an estimate from its one-line width: wrapping happens only between words). */
+const linesAt = (s: WelfareTextSize, width: number) => Math.max(1, Math.ceil((s.width + RECORD_TILE_WORD_SLACK) / width));
+/** The detail and missed lines' row (styles.welfareStatusRow): side by side when both fit, else one under the other. */
+function welfareStatusRowHeight(detail: WelfareLineSize | null, missed: WelfareLineSize | null, width: number): number {
+  if (detail && missed) {
+    if (detail.width + spacing.md + missed.width + RECORD_TILE_WORD_SLACK <= width) return Math.max(detail.height, missed.height);
+    return detail.height * linesAt(detail, width) + 2 + missed.height * linesAt(missed, width);
+  }
+  const only = detail ?? missed;
+  return only ? only.height * linesAt(only, width) : 0;
+}
+
+/**
+ * S4-UX-04B-S2 — whether the Welfare status and its action share one row. Only at the normal text size; only when the
+ * full action (its one-line label plus the button's padding) and a status column wide enough for every part (no word
+ * broken) fit side by side; and only when that is actually shorter than the stacked card. Otherwise — larger text, a
+ * narrower phone, or a status with more lines (OVERDUE and MISSED carry the overrun and missed counts) — the action
+ * stays below the status, full width, exactly as before. False until everything has been measured.
+ */
+export function welfareSideBySide({ fontScale, rowWidth, action, name, status, next, detail, missed }: WelfareSideBySideInput): boolean {
+  if (!(fontScale < LARGE_TEXT_SCALE) || !(rowWidth > 0)) return false;
+  if (![action, name, status, next, detail, missed].every(measuredSize)) return false;
+  if ((detail && !(detail.longestWord > 0)) || (missed && !(missed.longestWord > 0))) return false;
+  const slack = RECORD_TILE_WORD_SLACK;
+  const actionWidth = action.width + spacing.lg * 2 + slack;
+  const actionHeight = Math.max(RECORD_TILE_MIN_HEIGHT, action.height + spacing.sm * 2);
+  const column = rowWidth - actionWidth - WELFARE_SIDE_GAP;
+  const widestPart = Math.max(name.width, status.width, next?.width ?? 0, detail?.longestWord ?? 0, missed?.longestWord ?? 0);
+  if (widestPart + slack > column) return false;
+
+  const titleWidth = name.width + spacing.sm + status.width;
+  const titleHeight = (width: number) => (titleWidth + slack <= width ? Math.max(name.height, status.height) : name.height + 2 + status.height);
+  const statusRow = detail || missed ? welfareStatusRowHeight(detail, missed, column) : 0;
+  const side = Math.max(
+    actionHeight,
+    titleHeight(column) + (next ? spacing.xs + next.height : 0) + (detail || missed ? spacing.xs + statusRow : 0),
+  );
+  // Stacked (styles.welfareHead, the status row, then the full-width action, 8dp apart).
+  const head = next && titleWidth + spacing.sm + next.width + slack > rowWidth
+    ? titleHeight(rowWidth) + spacing.xs + next.height
+    : Math.max(titleHeight(rowWidth), next?.height ?? 0);
+  const stacked = head + (detail || missed ? spacing.sm + welfareStatusRowHeight(detail, missed, rowWidth) : 0) + spacing.sm + actionHeight;
+  return side < stacked;
+}
+
 export function GuardWelfareSummary({ card, onRecord }: GuardWelfareSummaryProps) {
   const toneStyle = card.tone === 'danger' ? styles.toneDanger : card.tone === 'warning' ? styles.toneWarning : card.tone === 'good' ? styles.toneGood : null;
-  return (
-    <View style={[styles.card, card.tone === 'danger' ? styles.cardUrgent : null]} testID="guard-welfare-summary">
-      {/* S4-UX-01.3b: one heading row — the name, its status word and the next due time. It wraps between those
-          three at large text sizes, never inside one. */}
-      <View style={styles.welfareHead}>
-        <View style={styles.welfareTitle}>
-          <Text style={styles.sectionLabel}>Welfare Check</Text>
-          <Text style={[styles.welfareStatus, toneStyle]}>{card.label}</Text>
-        </View>
-        {card.nextDue ? <Text style={styles.nextDue}>{`Next due ${card.nextDue}`}</Text> : null}
-      </View>
+  const { fontScale } = useGuardHomeLayout();
+  const [rowWidth, setRowWidth] = useState(0);
+  const [measured, setMeasured] = useState<Record<string, WelfareTextSize>>({});
+  const nextDueText = card.nextDue ? `Next due ${card.nextDue}` : null;
+  // Everything the arrangement depends on, each laid out once, invisibly, in its own style at the current text scale:
+  // the whole lines (for their one-line size) and the detail and missed lines' single words (for their narrowest fit).
+  const lineParts = (key: string, line: string | null, style: unknown) =>
+    line ? [{ key, text: line, style }, ...recordLabelWords(line).map((word, j) => ({ key: `${key}-w${j}`, text: word, style }))] : [];
+  const parts: Array<{ key: string; text: string; style: unknown }> = [
+    { key: 'name', text: 'Welfare Check', style: styles.sectionLabel },
+    { key: 'status', text: card.label, style: styles.welfareStatus },
+    ...(nextDueText ? [{ key: 'next', text: nextDueText, style: styles.nextDue }] : []),
+    ...lineParts('detail', card.detail, styles.meta),
+    ...lineParts('missed', card.missedSummary, styles.body),
+    { key: 'action', text: WELFARE_ACTION_LABEL, style: styles.welfareButtonText },
+  ];
+  const size = (key: string): WelfareTextSize => {
+    const part = parts.find((p) => p.key === key);
+    return (part && measured[`${part.key}:${part.text}`]) || WELFARE_UNMEASURED;
+  };
+  const line = (key: string): WelfareLineSize => ({
+    ...size(key),
+    longestWord: Math.max(0, ...parts.filter((p) => p.key.startsWith(`${key}-w`)).map((p) => size(p.key).width)),
+  });
+  const sideBySide = welfareSideBySide({
+    fontScale,
+    rowWidth,
+    action: size('action'),
+    name: size('name'),
+    status: size('status'),
+    next: nextDueText ? size('next') : null,
+    detail: card.detail ? line('detail') : null,
+    missed: card.missedSummary ? line('missed') : null,
+  });
+
+  const status = (
+    <>
       {card.detail || card.missedSummary ? (
         <View style={styles.welfareStatusRow}>
           {card.detail ? <Text style={styles.meta}>{card.detail}</Text> : null}
           {card.missedSummary ? <Text style={[styles.body, styles.toneDanger]}>{card.missedSummary}</Text> : null}
         </View>
       ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Record Welfare Check"
-        style={({ pressed }: { pressed: boolean }) => [styles.welfareButton, card.actionUrgent ? styles.welfareButtonUrgent : null, pressed && styles.pressed]}
-        onPress={onRecord}
-      >
-        <Text style={styles.welfareButtonText}>Record Welfare Check</Text>
-      </Pressable>
+    </>
+  );
+  const action = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={WELFARE_ACTION_LABEL}
+      style={({ pressed }: { pressed: boolean }) => [styles.welfareButton, sideBySide && styles.welfareButtonSide, card.actionUrgent ? styles.welfareButtonUrgent : null, pressed && styles.pressed]}
+      onPress={onRecord}
+      testID="guard-welfare-action"
+    >
+      <Text style={styles.welfareButtonText}>{WELFARE_ACTION_LABEL}</Text>
+    </Pressable>
+  );
+
+  return (
+    <View style={[styles.card, card.tone === 'danger' ? styles.cardUrgent : null]} testID="guard-welfare-summary">
+      {/* S4-UX-04B-S2: each part laid out once, invisibly, so the arrangement follows the real Inter widths on this
+          device. Hidden from touch and from screen readers, and it takes no space. */}
+      <View style={styles.wordMeasure} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden aria-hidden testID="guard-welfare-measure">
+        {parts.map((part) => (
+          <Text
+            key={part.key}
+            style={[part.style, styles.wordMeasureText]}
+            onLayout={(e: LayoutEvent) => {
+              const id = `${part.key}:${part.text}`;
+              const { width, height } = e.nativeEvent.layout;
+              setMeasured((current) => (current[id]?.width === width && current[id]?.height === height ? current : { ...current, [id]: { width, height } }));
+            }}
+          >
+            {part.text}
+          </Text>
+        ))}
+      </View>
+      <View onLayout={(e: LayoutEvent) => setRowWidth(e.nativeEvent.layout.width)} style={sideBySide ? styles.welfareSide : styles.welfareStacked} testID="guard-welfare-layout">
+        {sideBySide ? (
+          <>
+            {/* Side by side (normal text, when it fits): the name and status word, the next due time, then the detail
+                and missed lines, beside the full-label action. */}
+            <View style={styles.welfareInfo}>
+              <View style={styles.welfareTitle}>
+                <Text style={styles.sectionLabel}>Welfare Check</Text>
+                <Text style={[styles.welfareStatus, toneStyle]}>{card.label}</Text>
+              </View>
+              {nextDueText ? <Text style={styles.nextDue}>{nextDueText}</Text> : null}
+              {status}
+            </View>
+            {action}
+          </>
+        ) : (
+          <>
+            {/* S4-UX-01.3b: one heading row — the name, its status word and the next due time. It wraps between those
+                three at large text sizes, never inside one. The action below, full width. */}
+            <View style={styles.welfareHead}>
+              <View style={styles.welfareTitle}>
+                <Text style={styles.sectionLabel}>Welfare Check</Text>
+                <Text style={[styles.welfareStatus, toneStyle]}>{card.label}</Text>
+              </View>
+              {nextDueText ? <Text style={styles.nextDue}>{nextDueText}</Text> : null}
+            </View>
+            {status}
+            {action}
+          </>
+        )}
+      </View>
     </View>
   );
 }
@@ -126,9 +285,9 @@ const RECORD_TILE_PADDING = spacing.sm;
 /** Room kept beside a label's longest word, so sub-pixel rounding can never push it onto a broken second line. */
 const RECORD_TILE_WORD_SLACK = 2;
 
-// The project's react-native type shim (src/types/react-shims.d.ts) does not export event types; this is the only
-// field read here.
-type LayoutEvent = { nativeEvent: { layout: { width: number } } };
+// The project's react-native type shim (src/types/react-shims.d.ts) does not export event types; these are the only
+// fields read here.
+type LayoutEvent = { nativeEvent: { layout: { width: number; height: number } } };
 
 /** The words a label may wrap between. A label only ever breaks at its spaces, never inside a word. */
 export function recordLabelWords(title: string): string[] {
@@ -333,6 +492,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   welfareButtonUrgent: { backgroundColor: guardColors.emergency },
+  // S4-UX-04B-S2: the card's content, stacked (as before: the card's own 8dp gap) or side by side.
+  welfareStacked: { gap: spacing.sm },
+  welfareSide: { flexDirection: 'row', alignItems: 'center', columnGap: WELFARE_SIDE_GAP },
+  welfareInfo: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', minWidth: 0, gap: spacing.xs },
+  // Beside the status: sized by its one-line label, never squeezed.
+  welfareButtonSide: { flexShrink: 0 },
   welfareButtonText: { color: colors.textOnBrand, ...guardType.button, textAlign: 'center' },
   tileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: RECORD_TILE_GAP },
   // Off-screen-equivalent: absolutely placed (no effect on the card's size), fully transparent, sized by its words.
