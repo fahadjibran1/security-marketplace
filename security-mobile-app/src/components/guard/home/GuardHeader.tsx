@@ -151,8 +151,13 @@ const styles = StyleSheet.create({
   title: { color: colors.textOnBrand, ...guardType.title, letterSpacing: -0.2 },
   productLabel: { color: colors.border, fontFamily: guardFontFamily.regular, fontSize: 13, lineHeight: 18 },
   uatLabel: { color: '#FBBF24', fontFamily: guardFontFamily.bold },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 0 },
-  // On its own row: right-aligned, and its two buttons may wrap if even they do not fit side by side.
+  // Stage 4A: 12dp between the controls, whether or not a badge is showing. The Notifications unread badge overhangs
+  // its control's right edge by 4dp (see guardHeaderBadgeOffset in GuardDashboardScreen), so Log out stays 8dp clear,
+  // and because the badge is outside the control's layout the actions are the same width with and without it.
+  actions: { flexDirection: 'row', alignItems: 'center', columnGap: spacing.md, rowGap: spacing.sm, flexShrink: 0 },
+  // On its own row: right-aligned. With the badge out of the layout, Notifications and Log out stay side by side at
+  // 2.0x text on a 360dp screen (Android 16: 187 + 12 + 121 = 320 of 328dp); wrapping onto a further row remains only
+  // as the fallback for a still narrower screen or larger text, so neither control is ever clipped.
   actionsWrapped: { alignSelf: 'flex-end', flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, maxWidth: '100%' },
   // Stage 1: a compact rectangular control whose outline is 3:1 against the navy header (the Notifications control,
   // passed in by the dashboard, matches it).

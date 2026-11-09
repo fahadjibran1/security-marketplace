@@ -489,10 +489,51 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
   }
 }
 
+/**
+ * S4-UX Stage 4A — the unread (header) and pending-offers (bottom navigation) badges follow the system text scale.
+ *
+ * The badge used to be a fixed 18dp box, so at 2.0x its scaled number was clipped. Its minimum size now grows with the
+ * text (18dp at 1.0x, 23dp at 1.3x, 32dp at 2.0x) and it may grow further: a single digit stays a circle, "12" and
+ * "99+" widen into a pill. The text itself is never capped or excluded from scaling.
+ *
+ * Neither badge takes part in its control's layout any more (both are absolutely positioned), so a count arriving or
+ * clearing never changes the width of the Notifications control, never moves Log out, and never squeezes the Offers
+ * label: the header and the navigation look the same with and without a badge.
+ */
+export function guardBadgeSize(fontScale: number): number {
+  const scale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  // The badge text's scaled 14dp line plus 2dp above and below.
+  return Math.ceil(14 * scale + 4);
+}
+
+/** Minimum box for a badge of this size: a circle for one digit, a pill as the count widens. */
+export function guardBadgeBox(size: number) {
+  return { minWidth: size, minHeight: size, borderRadius: size / 2 };
+}
+
+/**
+ * The Notifications badge sits on the control's upper-right corner. It overhangs the right edge by 4dp (the actions
+ * keep a 12dp gap, so Log out stays 8dp clear) and rises above the top edge as it grows, so its lower edge stays above
+ * the label's last letters (measured on Android 16 at 1.0x, 1.3x and 2.0x) instead of covering them. At 1.0x it rises
+ * 8dp: exactly the header's top padding when the actions share the title's row, so it never leaves the header.
+ */
+export function guardHeaderBadgeOffset(size: number) {
+  return { top: -Math.round(8 + (size - 18) * 0.65), right: -4 };
+}
+
+/**
+ * The Offers badge sits just above the end of its label (its lower edge on the label's top edge) instead of beside
+ * it, so the label keeps the tab's full width and is never shortened by the count, and the navigation's height does
+ * not change. At large text it may rise above the bar's top border, over the content, which is never clipped.
+ */
+export function guardOffersBadgeOffset(size: number) {
+  return { bottom: '100%' as const, right: -Math.round(size / 4) };
+}
 
 export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, productLabel = brand.appName, productIsUat = false }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const homeLayout = useGuardHomeLayout();
+  const badgeSize = guardBadgeSize(homeLayout.fontScale);
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
   const [myCompaniesLoading, setMyCompaniesLoading] = useState(false);
@@ -2029,7 +2070,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             >
               <Text style={[styles.inboxButtonText, open && styles.inboxButtonTextActive]}>{open ? 'Close' : 'Notifications'}</Text>
               {badge && !open ? (
-                <View style={[styles.navBadge, styles.navBadgeOnHeader]}>
+                <View style={[styles.navBadge, guardBadgeBox(badgeSize), styles.navBadgeOnHeader, guardHeaderBadgeOffset(badgeSize)]} testID="guard-header-unread-badge">
                   <Text style={styles.navBadgeText}>{badge}</Text>
                 </View>
               ) : null}
@@ -3308,7 +3349,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 {label}
               </Text>
               {tab === 'offers' && shiftOffers.length > 0 ? (
-                <View style={styles.navBadge}>
+                <View style={[styles.navBadge, guardBadgeBox(badgeSize), styles.navBadgeOnNav, guardOffersBadgeOffset(badgeSize)]} testID="guard-offers-badge">
                   <Text style={styles.navBadgeText}>{shiftOffers.length}</Text>
                 </View>
               ) : null}
@@ -3994,10 +4035,12 @@ const styles = StyleSheet.create({
 
   // Bottom nav badge
   bottomNavLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' },
+  // Stage 4A: no fixed height. guardBadgeBox(guardBadgeSize(fontScale)) sets the scaled minimum size (18dp at 1.0x);
+  // the badge can always grow to fit its scaled number.
   navBadge: {
     minWidth: 18,
-    height: 18,
-    borderRadius: 999,
+    minHeight: 18,
+    borderRadius: 9,
     // White on the Guard teal is 4.75:1 (the shared accentTeal gave 3.0:1).
     backgroundColor: guardColors.teal,
     alignItems: 'center',
@@ -4005,8 +4048,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   // Stage 1B: on the Notifications control's secondary-navy fill the teal badge alone is 2.12:1, below the 3:1
-  // non-text minimum. A 1dp white outline (10.08:1 against #28445F) defines it there. The border sits inside the
-  // badge's existing 18dp box, so its size and position are unchanged.
-  navBadgeOnHeader: { borderWidth: 1, borderColor: '#FFFFFF' },
-  navBadgeText: { color: colors.textOnBrand, fontFamily: guardFontFamily.bold, fontSize: 10, lineHeight: 14 },
+  // non-text minimum. A 1dp white outline (10.08:1 against #28445F) defines it there.
+  // Stage 4A: on the control's upper-right corner (guardHeaderBadgeOffset), outside the control's layout.
+  navBadgeOnHeader: { position: 'absolute', borderWidth: 1, borderColor: '#FFFFFF' },
+  // Stage 4A: above the end of the Offers label (guardOffersBadgeOffset), outside the label row's layout. The white
+  // outline separates it from the selected tab's teal indicator, which it may overlap.
+  navBadgeOnNav: { position: 'absolute', borderWidth: 1, borderColor: '#FFFFFF' },
+  navBadgeText: { color: colors.textOnBrand, fontFamily: guardFontFamily.bold, fontSize: 10, lineHeight: 14, textAlign: 'center' },
 });

@@ -12,6 +12,8 @@
  *   UX-T8   the layout matrix: 360x640, 375x667, 393x852, 430x932 at text scale 1.0, 1.3 and 2.0
  *   UX-T9   every header and bar control has a role, a label and a 44pt target (Emergency 48pt); nothing is clipped
  *   UX-T10  every file under src/components/guard/patrol is byte-identical to the verified build 22 release commit
+ *   UX-T21  Stage 4A: both badges grow with the text scale (never a fixed height), sit outside their control's layout,
+ *           and so never change the Notifications control, move Log out, or shorten the Offers label
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
  */
@@ -177,12 +179,13 @@ async function quiet(fn) {
   try { return await fn(); } finally { console.error = original; }
 }
 
-async function mountApp({ role = 'guard', shifts = [], attendance = [], appVariant } = {}) {
+async function mountApp({ role = 'guard', shifts = [], attendance = [], appVariant, notifications, fontScale } = {}) {
   FakeAppState.currentState = 'active';
   const fake = fakeApi({
     fetchCurrentUser: async () => userOf(role),
     listMyShifts: async () => shifts,
     listMyAttendance: async () => attendance,
+    ...(notifications ? { listMyNotifications: async () => notifications } : {}),
   });
   const overrides = {
     'src/services/api': fake.api,
@@ -197,6 +200,12 @@ async function mountApp({ role = 'guard', shifts = [], attendance = [], appVaria
     'src/screens/AdminDashboardScreen': { AdminDashboardScreen: () => null },
     'src/screens/ClientPortalScreen': { ClientPortalScreen: () => h(RNW.Text, null, 'Client portal') },
   };
+  // react-native-web always reports a text scale of 1; a test that needs another one supplies the layout directly.
+  if (fontScale !== undefined) {
+    overrides['src/components/guard/home/useGuardHomeLayout'] = {
+      useGuardHomeLayout: () => layoutRules.guardHomeLayout({ width: 360, height: 640, fontScale }),
+    };
+  }
   overrides['src/services/pushNotifications'] = loadWith('src/services/pushNotifications.ts', { overrides });
   const App = loadWith('App.tsx', { overrides, appVariant }).default;
   let renderer;
@@ -387,6 +396,87 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
   }
   // The Notifications control the dashboard passes in keeps its 44pt target.
   assert.match(read(SCREEN), /inboxButton: \{[^}]*minHeight: 44,/);
+});
+
+// ═══════════════════ UX-T21 Stage 4A badges ═══════════════════
+
+test('UX-T21-BADGES-SCALE-WITH-TEXT-AND-NEVER-MOVE-THE-HEADER-OR-THE-OFFERS-LABEL', async () => {
+  const screen = loadWith(SCREEN, { overrides: { 'src/services/api': fakeApi().api } });
+  const { unreadBadge } = loadWith('src/components/guard/guardInbox.ts');
+  // Sizes measured against the scaled badge text: 18dp at 1.0x (unchanged), 23dp at 1.3x, 32dp at 2.0x.
+  assert.deepEqual([1, 1.3, 2].map(screen.guardBadgeSize), [18, 23, 32]);
+  for (const bad of [0, -1, NaN, Infinity]) assert.equal(screen.guardBadgeSize(bad), 18, `${bad} falls back to 1.0x`);
+  assert.deepEqual(screen.guardBadgeBox(23), { minWidth: 23, minHeight: 23, borderRadius: 11.5 });
+  // The header badge overhangs the control by 4dp (the actions keep a 12dp gap, so Log out stays 8dp clear) and at
+  // 1.0x rises no further than the header's 8dp top padding.
+  assert.deepEqual([18, 23, 32].map((s) => screen.guardHeaderBadgeOffset(s)), [{ top: -8, right: -4 }, { top: -11, right: -4 }, { top: -17, right: -4 }]);
+  assert.deepEqual(screen.guardOffersBadgeOffset(32), { bottom: '100%', right: -8 });
+  const headerSrc = codeOf('src/components/guard/home/GuardHeader.tsx');
+  assert.match(headerSrc, /header: \{[^}]*paddingTop: spacing\.sm,/, 'the header keeps 8dp above the actions');
+  assert.match(headerSrc, /actions: \{[^}]*columnGap: spacing\.md, rowGap: spacing\.sm,/, '12dp between the controls, 8dp between wrapped rows');
+  // No fixed badge height anywhere: the box can always grow to fit its scaled number.
+  const styleBlock = (name) => { const s = codeOf(SCREEN); const i = s.indexOf(`  ${name}: {`); return s.slice(i, s.indexOf('}', i) + 1); };
+  assert.doesNotMatch(styleBlock('navBadge'), /\bheight:/);
+  assert.match(styleBlock('navBadgeOnHeader'), /position: 'absolute', borderWidth: 1, borderColor: '#FFFFFF'/, 'the Stage 1B outline is kept');
+  assert.match(styleBlock('navBadgeOnNav'), /position: 'absolute'/);
+  assert.doesNotMatch(codeOf(SCREEN), /allowFontScaling=\{false\}|maxFontSizeMultiplier/, 'badge text is never excluded from or capped in scaling');
+
+  const offered = (n) => Array.from({ length: n }, (_, i) => ({ ...liveShift(900 + i), siteName: `Offer ${i}`, status: 'offered',
+    start: new Date(NOW + (30 + i) * 3_600_000).toISOString(), end: new Date(NOW + (38 + i) * 3_600_000).toISOString() }));
+  const unread = (n) => Array.from({ length: n }, (_, i) => ({ id: 500 + i, type: 'shift_offered', title: `N${i}`, message: 'm', status: 'unread',
+    createdAt: new Date(NOW - i * 60_000).toISOString(), readAt: null }));
+  const notificationsControl = (root) => pressables(root, (p) => /^Notifications(, .+ unread)?$/.test(String(p.accessibilityLabel || '')))[0];
+  const offersTab = (root) => pressables(root, (p) => p.accessibilityRole === 'tab' && /^Offers/.test(String(p.accessibilityLabel)))[0];
+
+  for (const fontScale of [1, 1.3, 2]) {
+    const size = screen.guardBadgeSize(fontScale);
+    let baseline = null;
+    for (const [count, offers] of [[0, 0], [3, 3], [12, 12], [250, 12]]) {
+      const at = `@${fontScale}x, ${count} unread, ${offers} offers`;
+      const app = await mountApp({ shifts: [liveShift(), ...offered(offers)], notifications: unread(count), fontScale });
+      const root = app.renderer.root;
+      const control = notificationsControl(root);
+      assert.ok(control, `${at}: the Notifications control`);
+      const badges = byTestId(root, 'guard-header-unread-badge');
+      const label = unreadBadge(count);
+      assert.equal(control.props.accessibilityLabel, label ? `Notifications, ${label} unread` : 'Notifications', `${at}: label unchanged`);
+      assert.equal(badges.length, label ? 1 : 0, `${at}: a badge only when something is unread`);
+      // The control is styled identically with and without a badge: the badge never changes its width.
+      const controlStyle = JSON.stringify(flat(control.props.style));
+      if (baseline === null) baseline = controlStyle;
+      assert.equal(controlStyle, baseline, `${at}: the Notifications control is unchanged by the badge`);
+      if (label) {
+        const [badge] = badges;
+        assert.ok(isInside(badge, control), `${at}: the badge belongs to the Notifications control`);
+        assert.ok(texts(badge).includes(label), `${at}: shows ${label}`);
+        const s = flat(badge.props.style);
+        assert.equal(s.position, 'absolute', `${at}: outside the control's layout`);
+        assert.equal(s.height, undefined, `${at}: no fixed height`);
+        assert.equal(s.minHeight, size, `${at}: ${size}dp minimum`);
+        assert.equal(s.minWidth, size, `${at}: a circle at one digit, wider as needed`);
+        assert.deepEqual({ top: s.top, right: s.right }, screen.guardHeaderBadgeOffset(size), `${at}: on the upper-right corner`);
+        assert.equal(s.borderColor, '#FFFFFF');
+      }
+      const tab = offersTab(root);
+      assert.equal(tab.props.accessibilityLabel, offers ? `Offers, ${offers} pending` : 'Offers', `${at}: Offers label unchanged`);
+      const [offerBadge] = byTestId(tab, 'guard-offers-badge');
+      assert.equal(Boolean(offerBadge), offers > 0, `${at}: an Offers badge only with pending offers`);
+      // The label keeps its own one-line, shrink-no-further-than-60% rule and now the row's whole width: the badge is
+      // positioned above it, outside the row's layout, so it can never be what shortens or truncates "Offers".
+      const offersLabel = tab.findAll((n) => n.props?.children === 'Offers' && n.props.numberOfLines === 1)[0];
+      assert.ok(offersLabel && offersLabel.props.adjustsFontSizeToFit === true && offersLabel.props.minimumFontScale === 0.6, `${at}: label rule unchanged`);
+      if (offerBadge) {
+        const s = flat(offerBadge.props.style);
+        assert.equal(s.position, 'absolute', `${at}: the Offers badge is outside the label row's layout`);
+        assert.equal(s.bottom, '100%', `${at}: it sits above the label, not beside it`);
+        assert.equal(s.minHeight, size, `${at}: Offers badge ${size}dp minimum`);
+        assert.equal(s.height, undefined);
+        // The count is rendered as a number, exactly as before.
+        assert.ok(offerBadge.findAll((n) => n.props?.children === offers).length > 0, `${at}: shows ${offers}`);
+      }
+      await act(async () => app.renderer.unmount());
+    }
+  }
 });
 
 // ═══════════════════ UX-T2 Book Off ═══════════════════
