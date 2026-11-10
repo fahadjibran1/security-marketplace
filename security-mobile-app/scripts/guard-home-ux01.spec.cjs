@@ -21,6 +21,8 @@
  *   UX-T24  Stage 4B-S3: Shift Operations groups Welfare, Patrol, records and Book Off (no heading since S3B); the group
  *           is always mounted, so
  *           Book On, Book Off and No Shift never remount the Patrol panel; Emergency stays outside the scroll area
+ *   UX-T25  A11Y: Review Offers keeps its 36pt button but answers a 44pt hit area (4pt slop above and below, inside the
+ *           strip's padding), with the same label, handler and offer count, at normal and 2x text
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
  */
@@ -1185,6 +1187,40 @@ test('UX-T24-SHIFT-OPERATIONS-GROUPS-HOME-WITHOUT-EVER-REMOUNTING-THE-PATROL-PAN
   assert.deepEqual([probe.mounts, probe.unmounts], [1, 0], 'On Duty → No Shift never remounted the Patrol panel');
   await b.run(() => b.renderer.unmount());
   assert.equal(probe.unmounts, 1, 'unmounted once, with the app');
+});
+
+test('UX-T25-REVIEW-OFFERS-ANSWERS-A-44PT-HIT-AREA-WITHOUT-GROWING', async () => {
+  // Source: the button keeps its 36pt look; 4pt of hit slop above and below makes 44pt, inside the strip's 12pt padding.
+  const block = (name) => { const s = codeOf(SCREEN); const i = s.indexOf(`  ${name}: {`); return s.slice(i, s.indexOf('}', i) + 1); };
+  assert.match(block('homeOffersStripBtn'), /minHeight: 36,/, 'the visible button is unchanged');
+  assert.doesNotMatch(block('homeOffersStripBtn'), /\bheight:|padding(Vertical|Top|Bottom)?:/, 'no fixed height and no added padding');
+  assert.match(block('homeOffersStripBtnText'), /color: colors\.warning, fontWeight: '700', fontSize: 13/, 'type and colour unchanged');
+  const stripPad = Number(block('homeOffersStrip').match(/paddingVertical: (\d+)/)[1]);
+  const offered = (n) => Array.from({ length: n }, (_, i) => ({ ...liveShift(900 + i), siteName: `Offer ${i}`, status: 'offered',
+    start: new Date(NOW + (30 + i) * 3_600_000).toISOString(), end: new Date(NOW + (38 + i) * 3_600_000).toISOString() }));
+  for (const fontScale of [1, 2]) {
+    const at = `@${fontScale}x, 360dp`;
+    const { renderer, run } = await mountApp({ shifts: [liveShift(), ...offered(3)], fontScale });
+    const root = renderer.root;
+    const buttons = pressables(root, (p) => p.accessibilityLabel === 'Review shift offers' && p.accessibilityRole === 'button');
+    const [review] = buttons.filter((b) => texts(b).includes('Review Offers'));
+    assert.ok(review, `${at}: the Review Offers button`);
+    assert.equal(buttons.filter((b) => texts(b).includes('Review Offers')).length, 1, `${at}: exactly one`);
+    const slop = review.props.hitSlop;
+    assert.ok(slop, `${at}: a hit slop`);
+    const style = flat(review.props.style);
+    assert.equal(style.minHeight, 36, `${at}: 36pt visible minimum`);
+    assert.ok(style.minHeight + slop.top + slop.bottom >= 44, `${at}: at least 44pt to touch`);
+    assert.ok(slop.top <= stripPad && slop.bottom <= stripPad, `${at}: the extra area stays inside the strip's padding`);
+    assert.equal(slop.left, 0, `${at}: nothing added sideways (the message beside it is plain text)`);
+    assert.equal(slop.right, 0, `${at}: nothing added sideways`);
+    assert.ok(texts(root).includes('3 shift offers waiting for your response'), `${at}: offer count unchanged`);
+    // The same handler: it opens Offers.
+    await run(() => review.props.onPress());
+    const offersTab = pressables(root, (p) => p.accessibilityRole === 'tab' && /^Offers/.test(String(p.accessibilityLabel)))[0];
+    assert.equal(offersTab.props.accessibilityState?.selected, true, `${at}: Review Offers opens the Offers tab`);
+    await run(() => renderer.unmount());
+  }
 });
 
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════

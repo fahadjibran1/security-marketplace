@@ -2301,6 +2301,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             </Text>
             <Pressable
               style={styles.homeOffersStripBtn}
+              hitSlop={HOME_OFFERS_BUTTON_HIT_SLOP}
               onPress={() => setActiveTab('offers')}
               accessibilityRole="button"
               accessibilityLabel="Review shift offers"
@@ -3590,6 +3591,13 @@ function GuardCompaniesEntry({ count, onOpen }: { count: number; onOpen: () => v
     </Pressable>
   );
 }
+
+/**
+ * S4-UX-04B-A11Y: Review Offers keeps its 36dp button but answers touches 4dp above and below it, a 44dp hit area. The
+ * offers strip pads the button by 12dp vertically, so the extra area stays inside the strip, clear of any other
+ * control (the message beside it is plain text), and adds no height. A button that grows with large text keeps it.
+ */
+export const HOME_OFFERS_BUTTON_HIT_SLOP = { top: 4, bottom: 4, left: 0, right: 0 } as const;
 
 const styles = StyleSheet.create({
   companiesView: { gap: 16, paddingBottom: 24 },
