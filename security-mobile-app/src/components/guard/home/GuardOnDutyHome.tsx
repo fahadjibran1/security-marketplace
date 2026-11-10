@@ -275,8 +275,12 @@ export interface GuardShiftRecordsProps<K extends string> {
  */
 export const RECORD_TILE_MIN_WIDTH = 88;
 export const RECORD_TILE_MIN_HEIGHT = 48;
-/** S4-UX-04B-S1: the near-square tiles' minimum height when every record shares one row. */
-export const RECORD_TILE_COMPACT_MIN_HEIGHT = 64;
+/**
+ * S4-UX-04B-S1: the tiles' minimum height when every record shares one row. S4-UX-04B-S3A: 48 (was 64), the same as
+ * the other tiles and the Welfare action — the native review measured the taller tiles adding 8–16dp to Home. A tile
+ * still grows when its label needs a second line ("Site Request" on a 360dp phone).
+ */
+export const RECORD_TILE_COMPACT_MIN_HEIGHT = RECORD_TILE_MIN_HEIGHT;
 /** Gap between tiles, across and down (styles.tileRow). */
 const RECORD_TILE_GAP = spacing.sm;
 /** A tile's side padding: tighter when the tiles share one row, so a label's longest word has more room. */
@@ -359,7 +363,7 @@ export function GuardShiftRecords<K extends string>({ items, note, fontScale, on
           </Text>
         ))}
       </View>
-      {/* One row of near-square tiles when every label fits; 2 + 1 or one column with larger text (recordTileColumns). */}
+      {/* One row of tiles when every label fits; 2 + 1 or one column with larger text (recordTileColumns). */}
       <View style={styles.tileRow} onLayout={(e: LayoutEvent) => setRowWidth(e.nativeEvent.layout.width)} testID="guard-shift-records-tiles">
         {items.map((item) => (
           <Pressable

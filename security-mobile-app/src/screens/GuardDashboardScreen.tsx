@@ -3645,9 +3645,11 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 4,
   },
-  // S4-UX-04B-S3 — the Shift Operations group: no frame and no padding of its own (its cards keep theirs), the same
-  // 12dp rhythm as the rest of Home, a heading in the Guard section-label type, and a 1dp rule above Book Off.
-  homeOperations: { width: '100%', gap: 12 },
+  // S4-UX-04B-S3 — the Shift Operations group: no frame and no padding of its own (its cards keep theirs), a heading in
+  // the Guard section-label type, and a 1dp rule above Book Off. S4-UX-04B-S3A: 8dp inside the group (12dp between
+  // Home's groups): the cards' own borders already separate them, so the tighter spacing groups them without the extra
+  // height the native review measured.
+  homeOperations: { width: '100%', gap: 8 },
   homeOperationsLabel: { color: guardColors.navy, ...guardType.sectionLabel, letterSpacing: 0.8, textTransform: 'uppercase' },
   homeOperationsSeparator: { borderTopWidth: guardShape.cardBorderWidth, borderTopColor: guardColors.cardBorder },
   // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no

@@ -14,7 +14,7 @@
  *   UX-T10  every file under src/components/guard/patrol is byte-identical to the verified build 22 release commit
  *   UX-T21  Stage 4A: both badges grow with the text scale (never a fixed height), sit outside their control's layout,
  *           and so never change the Notifications control, move Log out, or shorten the Offers label
- *   UX-T22  Stage 4B-S1: the record tiles share one row of 64pt tiles when every label's longest (measured) word fits,
+ *   UX-T22  Stage 4B-S1: the record tiles share one row of 48pt tiles (S3A; was 64) when every label's longest word fits,
  *           then reflow to 2 + 1 or one column; no word broken, no text shrunk, every label and handler kept
  *   UX-T23  Stage 4B-S2: the Welfare status and its full-label action share a row only at normal text when everything
  *           fits; otherwise stacked as before. DUE / OVERDUE / MISSED / COMPLETED all keep every line, colour and handler
@@ -785,7 +785,9 @@ const RECORD_ITEMS = [
 test('UX-T22-RECORD-TILES-SHARE-ONE-ROW-WHEN-EVERY-WORD-FITS-THEN-REFLOW', async () => {
   const { recordTileColumns, recordLabelWords, GuardShiftRecords, RECORD_TILE_MIN_WIDTH, RECORD_TILE_MIN_HEIGHT, RECORD_TILE_COMPACT_MIN_HEIGHT } =
     loadWith('src/components/guard/home/GuardOnDutyHome.tsx');
-  assert.equal(RECORD_TILE_COMPACT_MIN_HEIGHT, 64);
+  // S4-UX-04B-S3A: one-row tiles are no taller than the others (48, at least 44pt); a label that needs two lines grows its tile.
+  assert.equal(RECORD_TILE_COMPACT_MIN_HEIGHT, 48);
+  assert.equal(RECORD_TILE_COMPACT_MIN_HEIGHT, RECORD_TILE_MIN_HEIGHT);
   assert.deepEqual(recordLabelWords('Site Request'), ['Site', 'Request']);
   const longest = (scale, titles) => titles.map((t) => Math.max(...recordLabelWords(t).map((w) => RECORD_WORDS[scale][w])));
   const three = ['Log Book', 'Site Request', 'Incident'];
@@ -1152,6 +1154,10 @@ test('UX-T24-SHIFT-OPERATIONS-GROUPS-HOME-WITHOUT-EVER-REMOUNTING-THE-PATROL-PAN
   const [bar] = byTestId(root, 'guard-on-duty-bar');
   assert.ok(bar && !isInside(bar, scroll), 'Emergency stays outside the scroll area');
   assert.ok(byTestId(group(), 'guard-shift-operations-separator')[0].props.accessibilityElementsHidden, 'the rule is hidden from screen readers');
+  // S4-UX-04B-S3A: 8dp inside the group (the cards' borders separate them), no frame or padding of its own.
+  const groupStyle = flat(group().props.style);
+  assert.equal(groupStyle.gap, 8);
+  for (const k of ['padding', 'paddingVertical', 'paddingTop', 'borderWidth', 'backgroundColor']) assert.equal(groupStyle[k], undefined, `the group adds no ${k}`);
   assert.equal(byLabel(group(), 'Record Welfare Check').length, 1);
   assert.deepEqual(pressables(byTestId(group(), 'guard-shift-records')[0], (p) => p.accessibilityRole === 'button').map((t) => texts(t)[0]), ['Log Book', 'Site Request', 'Incident']);
   // Book Off through the existing confirmation, then Off Duty with the last shift.
