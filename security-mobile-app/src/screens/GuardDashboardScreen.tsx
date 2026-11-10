@@ -139,6 +139,12 @@ import { guardColors, guardFontFamily, guardShape, guardType } from '../theme/gu
 import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 import { GuardHeader } from '../components/guard/home/GuardHeader';
+import {
+  PROFILE_UNAVAILABLE_MESSAGE,
+  guardProfileFieldsFrom,
+  planGuardProfileSave,
+  type GuardProfileFields,
+} from '../components/guard/profile/guardProfileSave';
 import { GuardOnDutyBar } from '../components/guard/home/GuardOnDutyBar';
 import { guardHomeMode, showOnDutyBar, upcomingShifts } from '../components/guard/home/guardHomeModel';
 import { guardEmergencyPresentation } from '../components/guard/home/guardEmergencyPresentation';
@@ -558,6 +564,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
+  // Profile save safety: the last record loaded from the server (null until one has loaded), whether the Guard has
+  // unsaved edits (a background refresh never overwrites them), and the form's own message.
+  const [loadedProfile, setLoadedProfile] = useState<GuardProfileFields | null>(null);
+  const profileEditedRef = useRef(false);
+  const [profileFormMessage, setProfileFormMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -1308,10 +1319,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       loadBankDetails();
       loadPayrollAdmin();
 
-      setFullName(myGuard.fullName || '');
-      setPhone(myGuard.phone || '');
+      const profileFields = guardProfileFieldsFrom(myGuard);
+      setLoadedProfile(profileFields);
+      if (!profileEditedRef.current) {
+        setFullName(profileFields.fullName);
+        setPhone(profileFields.phone);
+        setLocationSharing(profileFields.locationSharing);
+      }
       setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
-      setLocationSharing(myGuard.locationSharingEnabled ?? false);
       setShifts(shiftRows.map((shift) => ({ ...shift, status: normalizeShiftLifecycleStatus(shift.status) })));
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
@@ -1464,14 +1479,33 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     await loadData(true);
   }
 
+  function editProfileField(apply: () => void) {
+    profileEditedRef.current = true;
+    setProfileFormMessage(null);
+    apply();
+  }
+
   async function handleSaveProfile() {
+    const plan = planGuardProfileSave(loadedProfile, { fullName, phone, locationSharing });
+    if (plan.kind !== 'save') {
+      setProfileFormMessage({ tone: plan.kind === 'unchanged' ? 'info' : 'error', text: plan.message });
+      return;
+    }
     try {
       setSavingProfile(true);
-      await updateMyGuard({
-        fullName,
-        phone,
-        locationSharingEnabled: locationSharing,
-      });
+      setProfileFormMessage(null);
+      await updateMyGuard(plan.payload);
+      // The server kept every field that was not sent, so the saved record is the loaded one plus this change.
+      const saved: GuardProfileFields = {
+        fullName: plan.payload.fullName ?? loadedProfile!.fullName,
+        phone: plan.payload.phone ?? loadedProfile!.phone,
+        locationSharing: plan.payload.locationSharingEnabled ?? loadedProfile!.locationSharing,
+      };
+      setLoadedProfile(saved);
+      setFullName(saved.fullName);
+      setPhone(saved.phone);
+      setLocationSharing(saved.locationSharing);
+      profileEditedRef.current = false;
       pushFeedback('success', 'Profile updated', 'Your profile changes have been saved.');
       showAlert('Profile updated', 'Your guard profile has been saved successfully.');
     } catch (error) {
@@ -2418,6 +2452,27 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               style={styles.guardProfileCard}
             >
               <View style={styles.guardProfileBody}>
+                {!loadedProfile ? (
+                  // Nothing can be edited or saved until the Guard's own record has loaded: an empty form must never
+                  // reach the server as "".
+                  <View style={styles.guardProfileUnavailable} testID="guard-profile-unavailable">
+                    {loading ? (
+                      <Text style={styles.helperText}>Loading your profile…</Text>
+                    ) : (
+                      <>
+                        <Text style={styles.guardProfileUnavailableText} accessibilityRole="alert">{PROFILE_UNAVAILABLE_MESSAGE}</Text>
+                        <Pressable
+                          style={styles.guardProfileRetryBtn}
+                          onPress={() => loadData()}
+                          accessibilityRole="button"
+                          accessibilityLabel="Try loading your profile again"
+                        >
+                          <Text style={styles.guardProfileRetryText}>Try again</Text>
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                ) : null}
                 <View style={styles.guardProfileSection}>
                   <Text style={styles.guardSectionLabel}>Contact & identity</Text>
                   <View style={styles.guardProfileFields}>
@@ -2427,7 +2482,10 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         style={[styles.input, styles.guardProfileInput]}
                         placeholder="Your full legal name"
                         value={fullName}
-                        onChangeText={setFullName}
+                        onChangeText={(value: string) => editProfileField(() => setFullName(value))}
+                        editable={Boolean(loadedProfile) && !savingProfile}
+                        accessibilityLabel="Full name"
+                        testID="guard-profile-full-name"
                       />
                     </View>
                     <View style={styles.profileField}>
@@ -2438,7 +2496,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         editable={false}
                         selectTextOnFocus={false}
                       />
-                      <Text style={styles.profileFieldHint}>To update your SIA details, go to the Compliance tab.</Text>
+                      <Text style={styles.profileFieldHint}>
+                        To update your SIA licence, scroll down to Compliance summary and tap Manage compliance.
+                      </Text>
                     </View>
                     <View style={styles.profileField}>
                       <Text style={styles.profileFieldLabel}>Phone number</Text>
@@ -2446,8 +2506,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         style={[styles.input, styles.guardProfileInput]}
                         placeholder="Your contact number"
                         value={phone}
-                        onChangeText={setPhone}
+                        onChangeText={(value: string) => editProfileField(() => setPhone(value))}
                         keyboardType="phone-pad"
+                        editable={Boolean(loadedProfile) && !savingProfile}
+                        accessibilityLabel="Phone number"
+                        testID="guard-profile-phone"
                       />
                     </View>
                   </View>
@@ -2459,19 +2522,37 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       <Text style={styles.guardProfileSwitchTitle}>Live location sharing</Text>
                       <Text style={styles.guardProfileSwitchHint}>Keep on while you are deployed.</Text>
                     </View>
-                    <Switch value={locationSharing} onValueChange={setLocationSharing} />
+                    <Switch
+                      value={locationSharing}
+                      onValueChange={(value: boolean) => editProfileField(() => setLocationSharing(value))}
+                      disabled={!loadedProfile || savingProfile}
+                      accessibilityLabel="Live location sharing"
+                    />
                   </View>
                 </View>
+                {profileFormMessage ? (
+                  <Text
+                    style={profileFormMessage.tone === 'error' ? styles.guardProfileFormError : styles.helperText}
+                    accessibilityRole={profileFormMessage.tone === 'error' ? 'alert' : 'text'}
+                    testID="guard-profile-form-message"
+                  >
+                    {profileFormMessage.text}
+                  </Text>
+                ) : null}
                 <View style={styles.guardProfileActions}>
                   <Pressable
                     style={[
                       styles.primaryActionButton,
                       styles.guardHomeCta,
                       styles.guardProfileSaveCta,
-                      savingProfile && styles.buttonDisabled,
+                      (savingProfile || !loadedProfile) && styles.buttonDisabled,
                     ]}
                     onPress={handleSaveProfile}
-                    disabled={savingProfile}
+                    disabled={savingProfile || !loadedProfile}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save profile"
+                    accessibilityState={{ disabled: savingProfile || !loadedProfile, busy: savingProfile }}
+                    testID="guard-profile-save"
                   >
                     <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
                       {savingProfile ? 'Saving...' : 'Save profile'}
@@ -2667,21 +2748,23 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   {/* Licence status */}
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Driving Licence Status</Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {(['NONE', 'PROVISIONAL', 'FULL', 'OTHER_OR_FOREIGN'] as DrivingLicenceStatus[]).map((s) => (
                         <Pressable
                           key={s}
                           style={[
-                            styles.guardSecondaryBtn,
-                            driving?.licenceStatus === s && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            driving?.licenceStatus === s && styles.guardChoiceChipSelected,
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
                           onPress={() => handleLicenceStatusSelect(s)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: driving?.licenceStatus === s, disabled: drivingSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            driving?.licenceStatus === s && { color: colors.textOnBrand },
+                            driving?.licenceStatus === s && styles.guardChoiceChipTextSelected,
                           ]}>
                             {s === 'OTHER_OR_FOREIGN' ? 'Other/Foreign' : s.charAt(0) + s.slice(1).toLowerCase()}
                           </Text>
@@ -2767,21 +2850,23 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   {/* Primary travel method */}
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Primary way to get to work</Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {(['CAR', 'MOTORCYCLE', 'PUBLIC_TRANSPORT', 'BICYCLE', 'WALK', 'OTHER'] as PrimaryTravelMethod[]).map((m) => (
                         <Pressable
                           key={m}
                           style={[
-                            styles.guardSecondaryBtn,
-                            driving?.primaryTravelMethod === m && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            driving?.primaryTravelMethod === m && styles.guardChoiceChipSelected,
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
                           onPress={() => handleUpdateDrivingField({ primaryTravelMethod: m })}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: driving?.primaryTravelMethod === m, disabled: drivingSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            driving?.primaryTravelMethod === m && { color: colors.textOnBrand },
+                            driving?.primaryTravelMethod === m && styles.guardChoiceChipTextSelected,
                           ]}>
                             {m === 'PUBLIC_TRANSPORT' ? 'Public transport' : m.charAt(0) + m.slice(1).toLowerCase()}
                           </Text>
@@ -2796,21 +2881,24 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     <Text style={[styles.profileFieldHint, { fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
                       {driving?.maxTravelDistanceMiles != null ? `${driving.maxTravelDistanceMiles} miles` : 'Not set'}
                     </Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {[10, 20, 30, 50, 75, 100].map((d) => (
                         <Pressable
                           key={d}
                           style={[
-                            styles.guardSecondaryBtn,
-                            driving?.maxTravelDistanceMiles === d && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipSelected,
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
                           onPress={() => handleUpdateDrivingField({ maxTravelDistanceMiles: d })}
+                          accessibilityRole="radio"
+                          accessibilityLabel={`${d} miles`}
+                          accessibilityState={{ checked: driving?.maxTravelDistanceMiles === d, disabled: drivingSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            driving?.maxTravelDistanceMiles === d && { color: colors.textOnBrand },
+                            driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipTextSelected,
                           ]}>
                             {d}mi
                           </Text>
@@ -2882,21 +2970,23 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Relationship</Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {(['SPOUSE_PARTNER', 'PARENT', 'SIBLING', 'CHILD', 'RELATIVE', 'FRIEND', 'OTHER'] as EmergencyContactRelationship[]).map((r) => (
                         <Pressable
                           key={r}
                           style={[
-                            styles.guardSecondaryBtn,
-                            ecRelationshipInput === r && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            ecRelationshipInput === r && styles.guardChoiceChipSelected,
                             emergencyContactSaving && styles.buttonDisabled,
                           ]}
                           disabled={emergencyContactSaving}
                           onPress={() => setEcRelationshipInput(r)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: ecRelationshipInput === r, disabled: emergencyContactSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            ecRelationshipInput === r && { color: colors.textOnBrand },
+                            ecRelationshipInput === r && styles.guardChoiceChipTextSelected,
                           ]}>
                             {r === 'SPOUSE_PARTNER' ? 'Spouse/Partner' : r.charAt(0) + r.slice(1).toLowerCase()}
                           </Text>
@@ -2957,11 +3047,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                     </Pressable>
                     <Pressable
-                      style={[styles.guardSecondaryBtn, { backgroundColor: colors.accentTeal }, emergencyContactSaving && styles.buttonDisabled]}
+                      style={[styles.guardSecondaryBtn, styles.guardProfilePrimarySave, emergencyContactSaving && styles.buttonDisabled]}
                       onPress={handleSaveEmergencyContact}
                       disabled={emergencyContactSaving}
                     >
-                      <Text style={[styles.guardSecondaryBtnText, { color: colors.textOnBrand }]}>
+                      <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>
                         {emergencyContactSaving ? 'Saving…' : 'Save'}
                       </Text>
                     </Pressable>
@@ -3136,11 +3226,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                         </Pressable>
                         <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1, backgroundColor: colors.accentTeal }, bankSaving && styles.buttonDisabled]}
+                          style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
                           onPress={handleSaveBankDetails}
                           disabled={bankSaving}
                         >
-                          <Text style={styles.guardSecondaryBtnText}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                          <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -3229,11 +3319,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                         </Pressable>
                         <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1, backgroundColor: colors.accentTeal }, bankSaving && styles.buttonDisabled]}
+                          style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
                           onPress={handleSaveBankDetails}
                           disabled={bankSaving}
                         >
-                          <Text style={styles.guardSecondaryBtnText}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                          <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -3714,6 +3804,56 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
+  // S4 Profile release patch — choice chips (licence status, travel method, distance, relationship). Each chip is as
+  // wide as its label and the row wraps, so at 360dp and large text a label moves to the next line instead of breaking
+  // mid-word; never narrower or shorter than 44dp. Selected: Guard teal with white text (4.7:1, was 3.0:1 on #16A6A1).
+  guardChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  guardChoiceChip: {
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    maxWidth: '100%',
+    minWidth: 44,
+    minHeight: 44,
+    borderRadius: 14,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  guardChoiceChipSelected: { backgroundColor: guardColors.teal, borderColor: guardColors.teal },
+  guardChoiceChipTextSelected: { color: colors.textOnBrand },
+  // Profile Save buttons (emergency contact, bank details): Guard teal with white text (the bank Save was grey on
+  // #16A6A1, about 1.8:1).
+  guardProfilePrimarySave: { backgroundColor: guardColors.teal, borderColor: guardColors.teal },
+  guardProfilePrimarySaveText: { color: colors.textOnBrand },
+  // Profile save safety: shown instead of a usable form until the Guard's record has loaded.
+  guardProfileUnavailable: {
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerSurface,
+  },
+  guardProfileUnavailableText: { color: colors.danger, fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  guardProfileRetryBtn: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guardProfileRetryText: { color: colors.danger, fontSize: 14, fontWeight: '700' },
+  guardProfileFormError: { color: colors.danger, fontSize: 14, lineHeight: 20, fontWeight: '600' },
   flexGrow: { flex: 1 },
   helperText: { color: colors.textSecondary, lineHeight: 20 },
   primaryActionButton: { backgroundColor: colors.primaryNavy, borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },

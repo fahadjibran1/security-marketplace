@@ -23,6 +23,13 @@
  *           Book On, Book Off and No Shift never remount the Patrol panel; Emergency stays outside the scroll area
  *   UX-T25  A11Y: Review Offers keeps its 36pt button but answers a 44pt hit area (4pt slop above and below, inside the
  *           strip's padding), with the same label, handler and offer count, at normal and 2x text
+ *   UX-T26  Profile save rules: nothing before a record loads, never a blank name or a blanked phone, only changed fields
+ *   UX-T27  Profile after a failed load: no editing, no saving, a recoverable error, and Try again restores the form
+ *   UX-T28  Profile refuses an empty name or phone without calling the server
+ *   UX-T29  Profile valid edits: only the changes are sent, and a background refresh never overwrites unsaved edits
+ *   UX-T30  Profile save error: the Guard's edits stay and the next save sends them again
+ *   UX-T31  Profile choice chips wrap (no mid-word breaks), stay 44pt, keep labels and handlers; Guard teal for selected
+ *           chips and Save buttons; the SIA hint names the real Compliance summary control
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
  */
@@ -1221,6 +1228,228 @@ test('UX-T25-REVIEW-OFFERS-ANSWERS-A-44PT-HIT-AREA-WITHOUT-GROWING', async () =>
     assert.equal(offersTab.props.accessibilityState?.selected, true, `${at}: Review Offers opens the Offers tab`);
     await run(() => renderer.unmount());
   }
+});
+
+// ═══════════════════ UX-T26..T31 the Guard Profile release patch ═══════════════════
+
+const profileRules = loadTs('src/components/guard/profile/guardProfileSave.ts');
+
+/** A fake server record that, like PATCH /guards/me (Object.assign), keeps every field a request leaves out. */
+function profileServer({ failLoads = 0, failSaves = 0, record = { fullName: 'Dana Guard', phone: '07000 000001', locationSharingEnabled: false, siaLicenseNumber: 'SIA-FICTIONAL' } } = {}) {
+  const state = { loads: 0, saves: [], record: { ...record } };
+  const api = {
+    getMyGuard: async () => {
+      state.loads += 1;
+      if (state.loads <= failLoads) throw new Error('network down (fictional)');
+      return { ...state.record };
+    },
+    updateMyGuard: async (payload) => {
+      state.saves.push(payload);
+      if (state.saves.length <= failSaves) throw new Error('server unavailable (fictional)');
+      Object.assign(state.record, payload);
+      return { ...state.record };
+    },
+  };
+  return { state, api };
+}
+const openProfile = async (root, run) => run(() => byLabel(root, 'Profile')[0].props.onPress());
+const profileInput = (root, id) => byTestId(root, id)[0];
+const profileSave = (root) => byTestId(root, 'guard-profile-save')[0];
+
+test('UX-T26-PROFILE-SAVE-RULES-NEVER-SEND-BLANKS-OR-UNCHANGED-FIELDS', () => {
+  const { planGuardProfileSave: plan, guardProfileFieldsFrom: from } = profileRules;
+  const loaded = from({ fullName: 'Dana Guard', phone: '07000 000001', locationSharingEnabled: false });
+  assert.deepEqual(loaded, { fullName: 'Dana Guard', phone: '07000 000001', locationSharing: false });
+  assert.deepEqual(from({ fullName: null, phone: null, locationSharingEnabled: undefined }), { fullName: '', phone: '', locationSharing: false });
+  const form = (patch) => ({ ...loaded, ...patch });
+  assert.equal(plan(null, form({})).kind, 'unavailable', 'nothing can be saved before a record has loaded');
+  assert.equal(plan(null, form({})).message, profileRules.PROFILE_UNAVAILABLE_MESSAGE);
+  for (const fullName of ['', '   ']) assert.deepEqual(plan(loaded, form({ fullName })), { kind: 'invalid', message: profileRules.PROFILE_NAME_REQUIRED_MESSAGE }, `name ${JSON.stringify(fullName)}`);
+  for (const phone of ['', '  ']) assert.deepEqual(plan(loaded, form({ phone })), { kind: 'invalid', message: profileRules.PROFILE_PHONE_REQUIRED_MESSAGE }, `a stored phone is never blanked (${JSON.stringify(phone)})`);
+  assert.deepEqual(plan(loaded, form({})), { kind: 'unchanged', message: profileRules.PROFILE_UNCHANGED_MESSAGE });
+  assert.deepEqual(plan(loaded, form({ phone: ' 07000 000002 ' })), { kind: 'save', payload: { phone: '07000 000002' } }, 'only the phone, trimmed');
+  assert.deepEqual(plan(loaded, form({ fullName: ' Dana Q Guard ' })), { kind: 'save', payload: { fullName: 'Dana Q Guard' } }, 'only the name, trimmed');
+  assert.deepEqual(plan(loaded, form({ locationSharing: true })), { kind: 'save', payload: { locationSharingEnabled: true } }, 'only the switch');
+  // A Guard with no stored phone can still save other changes; the empty phone is simply not sent.
+  const noPhone = from({ fullName: 'Dana Guard', phone: '', locationSharingEnabled: false });
+  assert.deepEqual(plan(noPhone, { ...noPhone, fullName: 'Dana Q Guard' }), { kind: 'save', payload: { fullName: 'Dana Q Guard' } });
+  assert.deepEqual(plan(noPhone, { ...noPhone, phone: '07000 000003' }), { kind: 'save', payload: { phone: '07000 000003' } });
+});
+
+test('UX-T27-PROFILE-AFTER-A-FAILED-LOAD-CANNOT-BE-EDITED-OR-SAVED-AND-RECOVERS', async () => {
+  const server = profileServer({ failLoads: 1 });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: server.api });
+  const root = renderer.root;
+  await openProfile(root, run);
+  const [box] = byTestId(root, 'guard-profile-unavailable');
+  assert.ok(box, 'a recoverable error instead of a usable form');
+  assert.ok(texts(box).includes(profileRules.PROFILE_UNAVAILABLE_MESSAGE), 'says why nothing can be saved');
+  assert.equal(profileInput(root, 'guard-profile-full-name').props.editable, false, 'the name cannot be edited');
+  assert.equal(profileInput(root, 'guard-profile-phone').props.editable, false, 'the phone cannot be edited');
+  assert.equal(profileInput(root, 'guard-profile-full-name').props.value, '', 'the form is empty, as before');
+  const save = profileSave(root);
+  assert.equal(save.props.disabled, true, 'Save is disabled');
+  assert.equal(save.props.accessibilityState.disabled, true, 'and announced as disabled');
+  await run(() => save.props.onPress());
+  assert.equal(server.state.saves.length, 0, 'even a forced press sends nothing');
+  const [retry] = byLabel(box, 'Try loading your profile again');
+  assert.ok(retry && flat(retry.props.style).minHeight >= 44, 'Try again, at least 44pt');
+  await run(() => retry.props.onPress());
+  assert.equal(byTestId(root, 'guard-profile-unavailable').length, 0, 'the error clears once the record loads');
+  assert.equal(profileInput(root, 'guard-profile-full-name').props.value, 'Dana Guard', 'the stored name is shown');
+  assert.equal(profileInput(root, 'guard-profile-phone').props.value, '07000 000001', 'the stored phone is shown');
+  assert.equal(profileInput(root, 'guard-profile-full-name').props.editable, true);
+  assert.equal(profileSave(root).props.disabled, false, 'Save is available again');
+  assert.equal(server.state.saves.length, 0, 'nothing was sent along the way');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T28-PROFILE-REFUSES-AN-EMPTY-NAME-OR-PHONE-WITHOUT-CALLING-THE-SERVER', async () => {
+  const server = profileServer();
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: server.api });
+  const root = renderer.root;
+  await openProfile(root, run);
+  await run(() => profileInput(root, 'guard-profile-full-name').props.onChangeText('   '));
+  await run(() => profileSave(root).props.onPress());
+  assert.equal(server.state.saves.length, 0, 'a blank name is never sent');
+  const [message] = byTestId(root, 'guard-profile-form-message');
+  assert.equal(message.props.children, profileRules.PROFILE_NAME_REQUIRED_MESSAGE);
+  assert.equal(message.props.accessibilityRole, 'alert', 'announced to screen readers');
+  await run(() => profileInput(root, 'guard-profile-full-name').props.onChangeText('Dana Guard'));
+  assert.equal(byTestId(root, 'guard-profile-form-message').length, 0, 'editing clears the message');
+  await run(() => profileInput(root, 'guard-profile-phone').props.onChangeText(''));
+  await run(() => profileSave(root).props.onPress());
+  assert.equal(server.state.saves.length, 0, 'a stored phone is never blanked');
+  assert.equal(byTestId(root, 'guard-profile-form-message')[0].props.children, profileRules.PROFILE_PHONE_REQUIRED_MESSAGE);
+  assert.deepEqual(server.state.record, { fullName: 'Dana Guard', phone: '07000 000001', locationSharingEnabled: false, siaLicenseNumber: 'SIA-FICTIONAL' }, 'the stored record is untouched');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T29-PROFILE-SENDS-ONLY-CHANGES-AND-A-REFRESH-NEVER-OVERWRITES-UNSAVED-EDITS', async () => {
+  const server = profileServer();
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: server.api });
+  const root = renderer.root;
+  await openProfile(root, run);
+  await run(() => profileInput(root, 'guard-profile-phone').props.onChangeText('07000 000002'));
+  // A background refresh (here the Offers pull-to-refresh) re-reads the record while the edit is unsaved.
+  const loadsBefore = server.state.loads;
+  await run(() => byLabel(root, 'Offers')[0].props.onPress());
+  const workspace = root.findAll((n) => typeof n.props?.onRefresh === 'function' && Array.isArray(n.props.offers))[0];
+  assert.ok(workspace, 'the Offers workspace and its refresh');
+  await run(() => workspace.props.onRefresh());
+  assert.ok(server.state.loads > loadsBefore, 'the record really was re-read');
+  await openProfile(root, run);
+  assert.equal(profileInput(root, 'guard-profile-phone').props.value, '07000 000002', 'the unsaved edit survives the refresh');
+  await run(() => profileSave(root).props.onPress());
+  assert.deepEqual(server.state.saves, [{ phone: '07000 000002' }], 'only the changed field is sent');
+  assert.equal(server.state.record.fullName, 'Dana Guard', 'the name is kept');
+  assert.ok(texts(root).includes('Profile updated'), 'the existing success feedback');
+  // Saved: a later refresh shows the server's record again, and an unchanged form sends nothing.
+  await run(() => byLabel(root, 'Offers')[0].props.onPress());
+  await run(() => root.findAll((n) => typeof n.props?.onRefresh === 'function' && Array.isArray(n.props.offers))[0].props.onRefresh());
+  await openProfile(root, run);
+  assert.equal(profileInput(root, 'guard-profile-phone').props.value, '07000 000002');
+  await run(() => profileSave(root).props.onPress());
+  assert.equal(server.state.saves.length, 1, 'no change, no request');
+  assert.equal(byTestId(root, 'guard-profile-form-message')[0].props.children, profileRules.PROFILE_UNCHANGED_MESSAGE);
+  // The location switch saves on its own, too.
+  const sw = root.findAll((n) => n.props?.accessibilityLabel === 'Live location sharing' && typeof n.props.onValueChange === 'function')[0];
+  await run(() => sw.props.onValueChange(true));
+  await run(() => profileSave(root).props.onPress());
+  assert.deepEqual(server.state.saves[1], { locationSharingEnabled: true });
+  await run(() => renderer.unmount());
+});
+
+test('UX-T30-PROFILE-SAVE-ERROR-KEEPS-THE-EDITS-AND-THE-NEXT-SAVE-SENDS-THEM', async () => {
+  const server = profileServer({ failSaves: 1 });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: server.api });
+  const root = renderer.root;
+  await openProfile(root, run);
+  await run(() => profileInput(root, 'guard-profile-full-name').props.onChangeText('Dana Q Guard'));
+  await run(() => profileSave(root).props.onPress());
+  assert.deepEqual(server.state.saves, [{ fullName: 'Dana Q Guard' }]);
+  assert.ok(texts(root).includes('Profile update failed'), 'the existing failure feedback');
+  assert.equal(profileInput(root, 'guard-profile-full-name').props.value, 'Dana Q Guard', 'the edit is kept');
+  assert.equal(server.state.record.fullName, 'Dana Guard', 'nothing changed on the server');
+  assert.equal(profileSave(root).props.disabled, false, 'Save is available to try again');
+  await run(() => profileSave(root).props.onPress());
+  assert.deepEqual(server.state.saves[1], { fullName: 'Dana Q Guard' }, 'the retry sends the same change');
+  assert.equal(server.state.record.fullName, 'Dana Q Guard');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T31-PROFILE-CHIPS-WRAP-AT-44PT-GUARD-TEAL-AND-AN-ACCURATE-SIA-HINT', async () => {
+  const hex = (c) => { const n = c.replace('#', ''); return [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255); };
+  const lum = (c) => hex(c).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const server = profileServer();
+  const driving = { guardId: 107, licenceStatus: 'FULL', licenceNumberSet: false, licenceNumberMasked: null, licenceCategories: null, licenceExpiryDate: null,
+    willingToDriveToWork: null, ownsVehicle: null, hasVehicleAccess: null, primaryTravelMethod: 'PUBLIC_TRANSPORT', maxTravelDistanceMiles: 30 };
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: { ...server.api, getMyDrivingTransport: async () => driving, getMyEmergencyContact: async () => null } });
+  const root = renderer.root;
+  await openProfile(root, run);
+  const add =root.findAll((n) => typeof n.props?.onPress === 'function' && texts(n).includes('Add emergency contact'))[0];
+  assert.ok(add, 'Add emergency contact');
+  await run(() => add.props.onPress());
+  // A chip's label exactly as its Text renders it ("{d}mi" is two children).
+  const chipLabel = (chip) => { const t = chip.findAll((n) => n.type === RNW.Text)[0]; return [].concat(t.props.children).join(''); };
+  const radios = (group) => pressables(group, (p) => p.accessibilityRole === 'radio');
+  const groups = outermost(root.findAll((n) => n.props?.accessibilityRole === 'radiogroup' && n.props.style));
+  const groupOf = (label) => groups.find((g) => radios(g).some((c) => chipLabel(c) === label));
+  const expected = [
+    ['Full', ['None', 'Provisional', 'Full', 'Other/Foreign'], 'Full'],
+    ['Public transport', ['Car', 'Motorcycle', 'Public transport', 'Bicycle', 'Walk', 'Other'], 'Public transport'],
+    ['30mi', ['10mi', '20mi', '30mi', '50mi', '75mi', '100mi'], '30mi'],
+    ['Spouse/Partner', ['Spouse/Partner', 'Parent', 'Sibling', 'Child', 'Relative', 'Friend', 'Other'], null],
+  ];
+  for (const [probe, labels, selected] of expected) {
+    const group = groupOf(probe);
+    assert.ok(group, `${probe}: a choice group`);
+    const row = flat(group.props.style);
+    assert.equal(row.flexWrap, 'wrap', `${probe}: the row wraps`);
+    const chips = radios(group);
+    assert.deepEqual(chips.map(chipLabel), labels, `${probe}: the same labels, in order`);
+    for (const chip of chips) {
+      const s = flat(chip.props.style);
+      const label = chipLabel(chip);
+      assert.ok(s.minHeight >= 44 && s.minWidth >= 44, `${label}: at least 44pt`);
+      assert.equal(s.flex, undefined, `${label}: no flex:1 squeezing every chip into one row`);
+      assert.equal(s.flexShrink, 0, `${label}: never squeezed below its label`);
+      assert.equal(s.maxWidth, '100%', `${label}: a label wider than the row wraps between words inside its own chip`);
+      assert.ok(!chip.findAll((n) => n.props?.numberOfLines !== undefined).length, `${label}: never truncated`);
+      const isSelected = label === selected;
+      assert.equal(chip.props.accessibilityState.checked, isSelected, `${label}: selection announced`);
+      const textColour = flat(chip.findAll((n) => n.type === RNW.Text)[0].props.style).color;
+      if (isSelected) {
+        assert.equal(s.backgroundColor, '#087F8C', `${label}: Guard teal when selected`);
+        assert.equal(textColour, '#FFFFFF');
+        assert.ok(contrast('#FFFFFF', s.backgroundColor) >= 4.5, `${label}: selected text at least 4.5:1`);
+      } else {
+        assert.ok(contrast(textColour, s.backgroundColor) >= 4.5, `${label}: unselected text at least 4.5:1`);
+      }
+    }
+  }
+  // The relationship handler is unchanged: tapping a chip selects it.
+  const parent = radios(groupOf('Spouse/Partner')).find((c) => chipLabel(c) === 'Parent');
+  await run(() => parent.props.onPress());
+  const nowParent = radios(groupOf('Spouse/Partner')).find((c) => chipLabel(c) === 'Parent');
+  assert.equal(nowParent.props.accessibilityState.checked, true, 'Parent is selected');
+  assert.equal(flat(nowParent.props.style).backgroundColor, '#087F8C');
+  // Emergency contact Save: Guard teal, white text.
+  const ecSave = root.findAll((n) => typeof n.props?.onPress === 'function' && texts(n).includes('Save') && flat(n.props.style).backgroundColor === '#087F8C');
+  assert.ok(ecSave.length >= 1, 'the emergency contact Save is Guard teal');
+  for (const b of ecSave) assert.equal(flat(b.findAll((n) => n.props?.children === 'Save')[0].props.style).color, '#FFFFFF');
+  // Source: every Profile Save on teal now has white text, and the old low-contrast teal is gone from the screen.
+  const src = codeOf(SCREEN);
+  assert.doesNotMatch(src, /colors\.accentTeal/, 'no #16A6A1 fills left on the Guard screen');
+  assert.equal(src.split('styles.guardProfilePrimarySave,').length - 1, 3, 'emergency contact Save and both bank Saves');
+  assert.equal(src.split('styles.guardProfilePrimarySaveText]').length - 1, 3, 'each with white text');
+  assert.ok(contrast('#FFFFFF', '#087F8C') >= 4.5);
+  // SIA: the hint names the real control on this page; there is no Compliance tab.
+  assert.doesNotMatch(read(SCREEN), /Compliance tab/);
+  assert.ok(texts(root).includes('To update your SIA licence, scroll down to Compliance summary and tap Manage compliance.'));
+  assert.match(read('src/components/guard/GuardCompliancePanel.tsx'), /title="Compliance summary"[\s\S]*>Manage compliance</, 'the hint matches the panel');
+  await run(() => renderer.unmount());
 });
 
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════
