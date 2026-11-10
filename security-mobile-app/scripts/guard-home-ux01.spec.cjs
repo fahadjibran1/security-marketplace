@@ -18,7 +18,8 @@
  *           then reflow to 2 + 1 or one column; no word broken, no text shrunk, every label and handler kept
  *   UX-T23  Stage 4B-S2: the Welfare status and its full-label action share a row only at normal text when everything
  *           fits; otherwise stacked as before. DUE / OVERDUE / MISSED / COMPLETED all keep every line, colour and handler
- *   UX-T24  Stage 4B-S3: Shift Operations groups Welfare, Patrol, records and Book Off; the group is always mounted, so
+ *   UX-T24  Stage 4B-S3: Shift Operations groups Welfare, Patrol, records and Book Off (no heading since S3B); the group
+ *           is always mounted, so
  *           Book On, Book Off and No Shift never remount the Patrol panel; Emergency stays outside the scroll area
  *
  * What this cannot prove: how a phone actually draws it. Rendered screenshots are a separate checkpoint.
@@ -1144,10 +1145,10 @@ test('UX-T24-SHIFT-OPERATIONS-GROUPS-HOME-WITHOUT-EVER-REMOUNTING-THE-PATROL-PAN
   const [bookOn] = byLabel(byTestId(root, 'guard-shift-card')[0], 'Book On now');
   assert.ok(bookOn, 'the existing Book On');
   await a.run(() => bookOn.props.onPress());
-  // On Duty: the heading, then the existing parts in order, Book Off last and set apart by a rule.
+  // On Duty: the existing parts in order, Book Off last and set apart by a rule. S4-UX-04B-S3B: no heading of its own.
   assert.equal(byTestId(root, 'guard-shift-summary').length, 1, 'on duty after Book On');
-  const heading = group().findAll((n) => n.props?.accessibilityRole === 'header' && n.props.children === 'Shift operations');
-  assert.ok(heading.length > 0, 'the Shift operations heading, announced as a header');
+  assert.ok(!texts(group()).some((t) => /^shift operations$/i.test(t)), 'no Shift operations heading');
+  assert.equal(group().findAll((n) => n.props?.accessibilityRole === 'header').length, 0, 'the group adds no header of its own');
   assert.deepEqual(order(group(), ids), ids, 'Welfare, Patrol, records, rule, Book Off');
   assert.equal(isInside(byTestId(root, 'guard-shift-summary')[0], group()), false, 'the compact summary stays above, outside the group');
   const [scroll] = scrollViews(root);

@@ -2220,12 +2220,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 No Shift) at one fixed position, and every child inside it keeps a fixed position too (each is either
                 always rendered or a closed conditional), so the Patrol panel keeps its component identity through Book
                 On, phase changes and Book Off, and unsent patrol evidence stays reachable afterwards. Off duty only the
-                Patrol slot can show; the heading belongs to the live shift. Emergency stays outside the scroll area. */}
+                Patrol slot can show. S4-UX-04B-S3B: no heading of its own — the cards name themselves, and the native
+                review measured the heading as the remaining extra height. Emergency stays outside the scroll area. */}
             <View style={styles.homeOperations} testID="guard-shift-operations">
-              {homeShiftLive ? (
-                <Text style={styles.homeOperationsLabel} accessibilityRole="header">Shift operations</Text>
-              ) : null}
-
               {/* ── Welfare Check ── every value is the backend's, via the operations projection on this shift
                   (guardWelfareCard). The Guard and the control room read the same status, next due time and counts,
                   because nothing here recomputes them. Presented directly above Patrol, so both stay in view. */}
@@ -3645,12 +3642,10 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 4,
   },
-  // S4-UX-04B-S3 — the Shift Operations group: no frame and no padding of its own (its cards keep theirs), a heading in
-  // the Guard section-label type, and a 1dp rule above Book Off. S4-UX-04B-S3A: 8dp inside the group (12dp between
-  // Home's groups): the cards' own borders already separate them, so the tighter spacing groups them without the extra
-  // height the native review measured.
+  // S4-UX-04B-S3 — the Shift Operations group: no frame and no padding of its own (its cards keep theirs), and a 1dp
+  // rule above Book Off. S4-UX-04B-S3A: 8dp inside the group (12dp between Home's groups): the cards' own borders
+  // already separate them. S4-UX-04B-S3B: no heading (removed with its gap).
   homeOperations: { width: '100%', gap: 8 },
-  homeOperationsLabel: { color: guardColors.navy, ...guardType.sectionLabel, letterSpacing: 0.8, textTransform: 'uppercase' },
   homeOperationsSeparator: { borderTopWidth: guardShape.cardBorderWidth, borderTopColor: guardColors.cardBorder },
   // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no
   // padding) when it renders null. The inner -1 hides the panel's own top divider against the card edge.
