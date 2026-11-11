@@ -135,7 +135,7 @@ async function main() {
     await auth.register({ email, password, role: 'guard' as any, fullName: `${label} Guard`, phone: '07700000000', siaLicenseNumber: siaNumber } as any);
     await verify(email);
     const s: any = await auth.login({ email, password });
-    return { userId: s.user.id as number, guardId: s.user.guardId as number, siaNumber };
+    return { userId: s.user.id as number, guardId: s.user.guardId as number, siaNumber, token: s.accessToken as string };
   };
 
   // ── the previous resolveCompanyContext, verbatim in behaviour (ea85cd4) ───────────────────────
@@ -220,15 +220,18 @@ async function main() {
     // Tenant isolation over HTTP: each company sees only its own Guards' compliance, both ways round.
     const gA = await registerGuard('ga');
     const gB = await registerGuard('gb');
-    const link = async (owner: { token: string; companyId: number }, guardId: number) => {
-      const r = await fetch(`${base}/company-guards`, {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${owner.token}` },
-        body: JSON.stringify({ companyId: owner.companyId, guardId }),
+    // A Guard joins a company by accepting that company's invitation (a company cannot add a Guard by naming their id).
+    const link = async (owner: { token: string }, guard: { token: string }) => {
+      const post = (path: string, token: string, body: unknown) => fetch(`${base}${path}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body),
       });
-      assert.equal(r.status, 201);
+      const invitation = await post('/company-guards/invitations', owner.token, {});
+      assert.equal(invitation.status, 201);
+      const accepted = await post('/guards/me/invitations/accept', guard.token, { code: (await invitation.json()).code });
+      assert.equal(accepted.status, 201);
     };
-    await link(A, gA.guardId);
-    await link(B, gB.guardId);
+    await link(A, gA);
+    await link(B, gB);
     const statusesOf = async (token: string) =>
       (await (await fetch(`${base}/compliance/statuses`, { headers: { authorization: `Bearer ${token}` } })).json()).map((s: any) => s.guardId);
     assert.deepEqual(await statusesOf(A.token), [gA.guardId]);
@@ -298,9 +301,9 @@ async function main() {
     // Six Guards in company A with every kind of row, plus the same Guards' rows in company B that
     // must never appear in A's view.
     const guards = [gA, ...(await Promise.all(['g1', 'g2', 'g3', 'g4', 'g5'].map((l) => registerGuard(l))))];
-    for (const g of guards.slice(1)) await link(A, g.guardId);
-    await link(B, guards[2].guardId);
-    await link(B, guards[3].guardId);
+    for (const g of guards.slice(1)) await link(A, g);
+    await link(B, guards[2]);
+    await link(B, guards[3]);
     const ukDay = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
     const record = async (owner: { token: string }, body: object) => {
       const r = await fetch(`${base}/compliance/checks`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${owner.token}` }, body: JSON.stringify(body) });

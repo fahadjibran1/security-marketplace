@@ -569,7 +569,10 @@ async function seed(t: Target) {
       const g = await auth.login({ email: p.email, password: pass });
       registerSecret(g.accessToken);
       guards[key] = { guardId: g.user.guardId, token: g.accessToken };
-      await api('POST', '/company-guards', ownerToken, { companyId, guardId: g.user.guardId });
+      // Joins the workforce the way a real guard does: the company issues an invitation and the guard accepts it.
+      const invitation = await api('POST', '/company-guards/invitations', ownerToken, {});
+      registerSecret(invitation?.code);
+      await api('POST', '/guards/me/invitations/accept', g.accessToken, { code: invitation.code });
       const day = (n: number) => new Date(Date.now() + n * 24 * HOUR).toISOString().slice(0, 10);
       await api('POST', '/compliance/checks', ownerToken, { guardId: g.user.guardId, kind: 'sia', outcome: 'confirmed', method: 'sia_public_register', licenceNumber: p.sia, checkDate: day(0), expiryDate: day(365), checkedByName: 'UAT Checker', evidenceReference: 'UAT test record — not a real check' });
       await api('POST', '/compliance/checks', ownerToken, { guardId: g.user.guardId, kind: 'right_to_work', outcome: 'confirmed', method: 'manual_document', rightToWorkExcuse: 'continuous', checkDate: day(0), checkedByName: 'UAT Checker', evidenceReference: 'UAT test record — not a real check' });

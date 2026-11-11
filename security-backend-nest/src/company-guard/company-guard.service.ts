@@ -16,6 +16,11 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
 
+export const LINK_REQUIRES_INVITATION_MESSAGE =
+  'Guards join your workforce by accepting an invitation from your company.';
+export const REACTIVATION_REQUIRES_INVITATION_MESSAGE =
+  'A guard rejoins your workforce only by accepting a new invitation. To lift a block, set the guard to Inactive, then send an invitation.';
+
 @Injectable()
 export class CompanyGuardService {
   constructor(
@@ -79,71 +84,73 @@ export class CompanyGuardService {
     return this.createForCompany(company.id, dto);
   }
 
+  /**
+   * Platform ADMIN only: create a relationship directly (operator support path). Audited, because it
+   * is the one way to put a guard into a workforce without that guard accepting an invitation.
+   */
   async createForUser(user: JwtPayload, dto: CreateCompanyGuardDto): Promise<CompanyGuard> {
     if (user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Direct guard-pool membership requires platform administration or an accepted application');
     }
-    return this.create(dto);
+    const saved = await this.create(dto);
+    await this.auditLogService.log({
+      company: { id: saved.company.id },
+      user: { id: user.sub },
+      action: 'company_guard.admin_linked',
+      entityType: 'company_guard',
+      entityId: saved.id,
+      beforeData: null,
+      afterData: {
+        status: saved.status,
+        relationshipType: saved.relationshipType ?? null,
+        guardId: saved.guard.id,
+        companyId: saved.company.id,
+      },
+    });
+    return saved;
   }
 
   /**
-   * Company-authorised link: creates or confirms an ACTIVE CompanyGuard for the
-   * authenticated company. Does not run compliance/eligibility checks — those
-   * happen at shift-assignment time. Idempotent if relationship already ACTIVE.
+   * A company user asking to link a guard by id. A company cannot put a guard into its workforce by
+   * naming one: a new relationship comes only from the guard accepting this company's invitation
+   * (CompanyGuardInvitationService.accept) or from the company hiring the guard's own application
+   * (ensureRelationship), and a relationship the company has set INACTIVE or BLOCKED is renewed only
+   * by a fresh accepted invitation.
+   *
+   * The only thing still answered here is the idempotent no-op for a guard who is already ACTIVE in
+   * this company, which tells the caller nothing it cannot already see. Every other case — no
+   * relationship, INACTIVE, BLOCKED, or an id that matches no guard at all — takes the same single
+   * query and gets the same 403, so the response never says whether a guard exists.
    */
   async linkForCompanyUser(user: JwtPayload, guardId: number): Promise<CompanyGuard> {
     const { company } = await this.membershipService.resolveCompanyContext(
       user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
     );
 
-    const guard = await this.guardService.findOne(guardId);
-
     const existing = await this.companyGuardRepo.findOne({
-      where: { company: { id: company.id }, guard: { id: guard.id } },
+      where: { company: { id: company.id }, guard: { id: guardId } },
     });
 
-    if (existing) {
-      if (existing.status === CompanyGuardStatus.ACTIVE) {
-        return existing;
-      }
-      // Re-activate previously INACTIVE/BLOCKED relationship
-      const before = { status: existing.status };
-      existing.status = CompanyGuardStatus.ACTIVE;
-      const saved = await this.companyGuardRepo.save(existing);
-      await this.auditLogService.log({
-        company: { id: company.id },
-        user: { id: user.sub },
-        action: 'company_guard.linked',
-        entityType: 'company_guard',
-        entityId: saved.id,
-        beforeData: before,
-        afterData: { status: CompanyGuardStatus.ACTIVE, guardId: guard.id, companyId: company.id },
-      });
-      return saved;
+    if (existing?.status === CompanyGuardStatus.ACTIVE) {
+      return existing;
     }
 
-    const row = this.companyGuardRepo.create({
-      company,
-      guard,
-      status: CompanyGuardStatus.ACTIVE,
-      relationshipType: CompanyGuardRelationshipType.APPROVED_CONTRACTOR,
-    });
-    const saved = await this.companyGuardRepo.save(row);
     await this.auditLogService.log({
       company: { id: company.id },
       user: { id: user.sub },
-      action: 'company_guard.linked',
+      action: 'company_guard.link_refused',
       entityType: 'company_guard',
-      entityId: saved.id,
+      entityId: existing?.id ?? null,
       beforeData: null,
-      afterData: { status: CompanyGuardStatus.ACTIVE, guardId: guard.id, companyId: company.id },
+      afterData: { requestedGuardId: guardId, companyId: company.id, existingStatus: existing?.status ?? null },
     });
-    return saved;
+    throw new ForbiddenException(LINK_REQUIRES_INVITATION_MESSAGE);
   }
 
   /**
-   * Company-authorised status update: ACTIVE ↔ INACTIVE / BLOCKED.
-   * Tenant-scoped — company resolved from membership, never trusted from client.
+   * Company-authorised status update: ACTIVE → INACTIVE / BLOCKED, and BLOCKED ↔ INACTIVE.
+   * Never back to ACTIVE (see below). Tenant-scoped — company resolved from membership, never
+   * trusted from client.
    */
   async updateStatusForCompanyUser(
     user: JwtPayload,
@@ -160,6 +167,13 @@ export class CompanyGuardService {
 
     if (!relation) {
       throw new NotFoundException('Company guard relationship not found.');
+    }
+
+    // A company may end or block a relationship, and may lift a block to INACTIVE, but it cannot
+    // make a relationship ACTIVE again on its own: the guard rejoins only by accepting a new
+    // invitation. Setting an ACTIVE relationship to ACTIVE remains a harmless no-op.
+    if (dto.status === CompanyGuardStatus.ACTIVE && relation.status !== CompanyGuardStatus.ACTIVE) {
+      throw new ForbiddenException(REACTIVATION_REQUIRES_INVITATION_MESSAGE);
     }
 
     const before = { status: relation.status };

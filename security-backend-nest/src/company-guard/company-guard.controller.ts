@@ -31,9 +31,10 @@ export class CompanyGuardController {
   }
 
   /**
-   * Platform ADMIN: direct create with trusted companyId from DTO.
-   * Company GUARDS_MANAGE users: link an existing guard into their own company,
-   *   companyId from DTO is ignored (resolved from membership).
+   * Platform ADMIN: direct create with trusted companyId from DTO (audited).
+   * Company users: refused unless the guard is already ACTIVE in their own company (idempotent
+   *   no-op). New and renewed relationships come from an accepted invitation or a hire. companyId
+   *   from the DTO is ignored for company users (resolved from membership).
    */
   @Post()
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
@@ -45,8 +46,8 @@ export class CompanyGuardController {
   }
 
   /**
-   * Update CompanyGuard status (ACTIVE / INACTIVE / BLOCKED).
-   * Tenant-scoped — company resolved from membership.
+   * Update CompanyGuard status. A company may set INACTIVE or BLOCKED, and lift a block to INACTIVE;
+   * it cannot set a relationship back to ACTIVE. Tenant-scoped — company resolved from membership.
    */
   @Patch(':id')
   @Roles(...COMPANY_VIEW_ROLES)
