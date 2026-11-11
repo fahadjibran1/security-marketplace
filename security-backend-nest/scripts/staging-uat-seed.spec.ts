@@ -144,7 +144,7 @@ test('SEED-06-LOGINS-ARE-KEPT-AS-EACH-ACCOUNT-IS-CREATED', () => {
   assert.equal(registers.length, 2, 'owner, then the guard loop');
   assert.ok(writes.length >= 2);
   assert.ok(writes[0] > registers[0] && writes[0] < seedBody.indexOf("api('POST', '/clients'"), 'owner login saved before the first client');
-  assert.ok(writes[1] > registers[1] && writes[1] < seedBody.indexOf("api('POST', '/company-guards'"), 'each guard login saved before its first link');
+  assert.ok(writes[1] > registers[1] && writes[1] < seedBody.indexOf("api('POST', '/company-guards/invitations'"), 'each guard login saved before its first invitation');
   assert.ok(writes[writes.length - 1] < seedBody.indexOf("api('POST', '/shifts'"), 'all saved before any shift step');
 });
 

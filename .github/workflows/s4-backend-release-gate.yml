@@ -128,6 +128,7 @@ jobs:
       PATROL_ALERT_ATOMIC_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_patrol_alert_atomic
       PATROL_OPERATIONS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_patrol_operations
       S3_ACCEPTANCE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_s3_acceptance
+      COMPANY_GUARD_LINK_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_guard_link
 
     steps:
       - name: Checkout repository
@@ -243,7 +244,7 @@ jobs:
       - name: Create compliance, alert security and database performance certification databases
         shell: bash
         run: |
-          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation s4_perf_p2 s4_perf_p3 s4_live_ops_correctness s4_shift_reconciliation s4_shift_edit_security s4_reacceptance s4_shift_amendment s4_m64_migration s4_m65_migration s4_welfare_push s4_m66_migration s4_guard_notifications s4_replace_guard s4_welfare_alert s4_welfare_monitoring s4_operations_export s4_early_book_off s4_m67_migration s4_manual_attendance s4_timesheet_review s4_m68_migration s4_patrol_foundation s4_m69_migration s4_patrol_schedule s4_m70_migration s4_patrol_evidence s4_m71_migration s4_patrol_reconciliation s4_m72_migration s4_m73_migration s4_patrol_recovery s4_patrol_dashboard s4_patrol_evidence_thumbnails s4_m74_migration s4_patrol_site_setup s4_patrol_evidence_b1 s4_patrol_monitor s4_m75_migration s4_patrol_assignment s4_patrol_alert_atomic s4_patrol_operations s4_s3_acceptance; do
+          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation s4_perf_p2 s4_perf_p3 s4_live_ops_correctness s4_shift_reconciliation s4_shift_edit_security s4_reacceptance s4_shift_amendment s4_m64_migration s4_m65_migration s4_welfare_push s4_m66_migration s4_guard_notifications s4_replace_guard s4_welfare_alert s4_welfare_monitoring s4_operations_export s4_early_book_off s4_m67_migration s4_manual_attendance s4_timesheet_review s4_m68_migration s4_patrol_foundation s4_m69_migration s4_patrol_schedule s4_m70_migration s4_patrol_evidence s4_m71_migration s4_patrol_reconciliation s4_m72_migration s4_m73_migration s4_patrol_recovery s4_patrol_dashboard s4_patrol_evidence_thumbnails s4_m74_migration s4_patrol_site_setup s4_patrol_evidence_b1 s4_patrol_monitor s4_m75_migration s4_patrol_assignment s4_patrol_alert_atomic s4_patrol_operations s4_s3_acceptance s4_company_guard_link; do
             PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE $db;"
           done
 
@@ -262,7 +263,7 @@ jobs:
       # The expired-offer rule, the shift-offer lifecycle, rota assignment concurrency and scheduling safety. These
       # suites do not build a schema, so they run here, on the CI database the compiled migrations have just built.
       # They may only touch that database, and they must leave none of their own rows behind for the steps that follow.
-      - name: Run shift-offer, rota assignment and scheduling safety certification on the migrated CI database
+      - name: Run shift-offer, rota assignment, scheduling safety and company-guard lifecycle certification on the migrated CI database
         shell: bash
         env:
           ROTA_SLOT_TEST_DB_URL: postgresql://s4:s4_test_password@localhost:5432/s4_release_gate
@@ -275,9 +276,10 @@ jobs:
           npm run test:shift-offers
           npm run test:rota-assignment-concurrency
           npm run test:scheduling-safety
-          left=$(PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -tAc "SELECT (SELECT count(*) FROM companies WHERE name LIKE 'SO-LIFECYCLE-TEST%' OR name LIKE 'RAC-TEST%' OR name LIKE 'SS-TEST%') + (SELECT count(*) FROM users WHERE email LIKE '%@SO-LIFECYCLE-TEST.example' OR email LIKE '%@RAC-TEST.example' OR email LIKE '%@SS-TEST.example')")
+          npm run test:company-guards
+          left=$(PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -tAc "SELECT (SELECT count(*) FROM companies WHERE name LIKE 'SO-LIFECYCLE-TEST%' OR name LIKE 'RAC-TEST%' OR name LIKE 'SS-TEST%' OR name LIKE 'CG-LIFECYCLE-TEST%') + (SELECT count(*) FROM users WHERE email LIKE '%@SO-LIFECYCLE-TEST.example' OR email LIKE '%@RAC-TEST.example' OR email LIKE '%@SS-TEST.example' OR email LIKE '%@CG-LIFECYCLE-TEST.example')")
           if [ "$left" != "0" ]; then echo "The suites left $left test rows behind."; exit 1; fi
-          echo 'Shift-offer, rota assignment and scheduling safety suites passed and left no test rows behind.'
+          echo 'Shift-offer, rota assignment, scheduling safety and company-guard lifecycle suites passed and left no test rows behind.'
 
       - name: Capture entity-to-migration schema drift
         shell: bash

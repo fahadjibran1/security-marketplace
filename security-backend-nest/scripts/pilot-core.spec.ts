@@ -189,9 +189,13 @@ async function main() {
     });
     assert.equal(site.status, 201, errText(site));
     const siteId: number = site.body.id;
+    // Each Guard joins the workforce the real way: the company issues an invitation and the Guard accepts it.
+    // (A company cannot add a Guard by naming their id.)
     for (const k of ['A', 'B', 'C', 'D'] as const) {
-      const link = await api('POST', '/company-guards', co.token, { companyId: co.companyId, guardId: gid[k] });
-      assert.equal(link.status, 201, errText(link));
+      const invitation = await api('POST', '/company-guards/invitations', co.token, {});
+      assert.equal(invitation.status, 201, errText(invitation));
+      const accepted = await api('POST', '/guards/me/invitations/accept', guards[k].token, { code: invitation.body.code });
+      assert.equal(accepted.status, 201, errText(accepted));
     }
 
     // A non-compliant Guard cannot be offered work (compliance gate is untouched by this pack). The block is a

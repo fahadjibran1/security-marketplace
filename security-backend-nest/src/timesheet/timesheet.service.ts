@@ -65,7 +65,12 @@ export class TimesheetService {
   }
 
   async findForCompany(userId: number, userRole: UserRole): Promise<Timesheet[]> {
-    const { company } = await this.membershipService.resolveCompanyContext(userId, userRole);
+    // timesheets.view is held by every company membership role (owner, admin, operations, control
+    // room, HR/compliance, finance, viewer), so this changes no one's access today; it makes the read
+    // follow the permission matrix instead of bare membership.
+    const { company } = await this.membershipService.resolveCompanyContext(
+      userId, userRole, CompanyPermission.TIMESHEETS_VIEW,
+    );
 
     const timesheets = await this.timesheetRepo.find({
       where: { company: { id: company.id } },

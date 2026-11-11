@@ -318,7 +318,10 @@ async function main() {
     await verify(email);
     const g = await login(email);
     guardIds.push(g.user.guardId);
-    const link = await api('POST', '/company-guards', token, { companyId, guardId: g.user.guardId });
+    // Joins the workforce the real way: company invitation, guard acceptance.
+    const invitation = await api('POST', '/company-guards/invitations', token, {});
+    assert.equal(invitation.status, 201, JSON.stringify(invitation.body));
+    const link = await api('POST', '/guards/me/invitations/accept', g.accessToken, { code: invitation.body.code });
     assert.equal(link.status, 201, JSON.stringify(link.body));
     if (i < 4) {
       const ukDay = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);

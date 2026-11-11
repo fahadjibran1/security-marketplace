@@ -4,15 +4,17 @@
  * Requires: ROTA_SLOT_TEST_DB_URL (defaults to rehearsal DB at port 54322).
  *
  * Tests certified:
- *   LINK               Company GUARDS_MANAGE links unlinked guard → ACTIVE relationship created
- *   LINK-IDEMPOTENT    Same guard linked twice → single row, second call returns existing ACTIVE
- *   LINK-REACTIVATE    BLOCKED guard re-linked → status back to ACTIVE
- *   LINK-DUPLICATE     Concurrent link requests → exactly one row, no duplicate
+ *   LINK-REFUSED       Company GUARDS_MANAGE cannot link an unlinked guard by id → 403, no row created
+ *   LINK-ENUMERATION   Unknown guard id and existing unlinked guard id get the identical 403 (no existence signal)
+ *   LINK-IDEMPOTENT    Guard already ACTIVE in this company → no-op returns existing ACTIVE, single row
+ *   LINK-NO-REACTIVATE BLOCKED / INACTIVE guard re-linked by id → 403, status unchanged
+ *   LINK-DUPLICATE     Concurrent link requests for an unlinked guard → both refused, no row
+ *   ADMIN-LINK         Platform ADMIN direct create still works and is audited; a company role cannot use it
  *   DISCOVERY-OWNER    Legacy company owner resolves company via membership fallback
  *   DISCOVERY-STAFF    COMPANY_STAFF resolves same company via membership
  *   STATUS-INACTIVE    ACTIVE → INACTIVE via PATCH
  *   STATUS-BLOCKED     ACTIVE → BLOCKED via PATCH
- *   STATUS-REACTIVATE  BLOCKED → ACTIVE via PATCH
+ *   STATUS-NO-REACTIVATE  BLOCKED / INACTIVE → ACTIVE via PATCH refused; BLOCKED → INACTIVE (unblock) allowed
  *   TENANT-READ        Company B cannot read Company A relationships
  *   TENANT-WRITE       Company B cannot mutate Company A relationship
  *   MULTI-COMPANY      Guard linked to A and B independently; block in A does not affect B
@@ -21,7 +23,7 @@
  *   BLOCKED-DIRECT-SHIFT  createForUser blocked for BLOCKED guard
  *   BLOCKED-OFFER-ACCEPT  respondForGuard acceptance blocked for BLOCKED guard
  *   HISTORY-PRESERVED  ACTIVE → BLOCKED does not delete shifts, audit logs, or guard profile
- *   AUDIT-LINK         company_guard.linked audit event on new link
+ *   AUDIT-LINK-REFUSED company_guard.link_refused audit event on a refused link; no company_guard.linked event
  *   AUDIT-STATUS       company_guard.status_changed audit event on PATCH
  */
 
@@ -54,7 +56,11 @@ import { Shift } from '../src/shift/entities/shift.entity';
 import { ShiftService } from '../src/shift/shift.service';
 import { Site } from '../src/site/entities/site.entity';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
-import { CompanyGuardService } from '../src/company-guard/company-guard.service';
+import {
+  CompanyGuardService,
+  LINK_REQUIRES_INVITATION_MESSAGE,
+  REACTIVATION_REQUIRES_INVITATION_MESSAGE,
+} from '../src/company-guard/company-guard.service';
 import { UpdateCompanyGuardDto } from '../src/company-guard/dto/update-company-guard.dto';
 import { AttendanceEvent } from '../src/attendance/entities/attendance.entity';
 import { DailyLog } from '../src/daily-log/entities/daily-log.entity';
@@ -320,24 +326,51 @@ async function cleanup(ds: DataSource) {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-async function testLink(ds: DataSource) {
+const isLinkRefusal = (err: any) =>
+  err instanceof ForbiddenException && err.message === LINK_REQUIRES_INVITATION_MESSAGE;
+
+async function testLinkRefused(ds: DataSource) {
   const { company } = await createCompany(ds, 'link');
   const { guard } = await createGuard(ds, 'link-g1');
 
   const jwt = makeCompanyJwt(999001);
   const svc = makeCompanyGuardService(ds, company);
-  const result = await svc.linkForCompanyUser(jwt, guard.id);
-
-  equal(result.status, CompanyGuardStatus.ACTIVE);
-  equal(result.guard.id, guard.id);
-  equal(result.company.id, company.id);
+  await rejects(() => svc.linkForCompanyUser(jwt, guard.id), isLinkRefusal, 'Unlinked guard cannot be linked by id');
 
   const row = await ds.getRepository(CompanyGuard).findOne({
     where: { company: { id: company.id }, guard: { id: guard.id } },
   });
-  ok(row, 'Row created in DB');
-  equal(row!.status, CompanyGuardStatus.ACTIVE);
-  console.log('PASS LINK: unlinked guard → ACTIVE relationship');
+  equal(row, null, 'No relationship row created');
+  console.log('PASS LINK-REFUSED: unlinked guard → 403, no relationship created');
+}
+
+async function testLinkEnumeration(ds: DataSource) {
+  const { company } = await createCompany(ds, 'link-enum');
+  const { guard } = await createGuard(ds, 'link-enum-g1');
+  const [{ max }] = await ds.query('SELECT COALESCE(MAX(id), 0) AS max FROM guard_profiles');
+  const unknownGuardId = Number(max) + 100000;
+
+  const svc = makeCompanyGuardService(ds, company);
+  const capture = async (guardId: number) => {
+    try {
+      await svc.linkForCompanyUser(makeCompanyJwt(999005), guardId);
+      return { thrown: false, type: '', status: 0, message: '' };
+    } catch (err: any) {
+      return { thrown: true, type: err.constructor.name, status: err.getStatus?.(), message: err.message };
+    }
+  };
+  const unknown = await capture(unknownGuardId);
+  const existing = await capture(guard.id);
+
+  ok(unknown.thrown && existing.thrown, 'Both requests refused');
+  equal(unknown.type, 'ForbiddenException', 'Unknown id is 403, not 404');
+  equal(unknown.status, 403);
+  equal(existing.type, unknown.type, 'Same exception type');
+  equal(existing.status, unknown.status, 'Same HTTP status');
+  equal(existing.message, unknown.message, 'Same message');
+  const rows = await ds.getRepository(CompanyGuard).count({ where: { company: { id: company.id } } });
+  equal(rows, 0, 'No relationship rows created');
+  console.log('PASS LINK-ENUMERATION: unknown and existing guard ids are indistinguishable (403, same message)');
 }
 
 async function testLinkIdempotent(ds: DataSource) {
@@ -358,21 +391,26 @@ async function testLinkIdempotent(ds: DataSource) {
   console.log('PASS LINK-IDEMPOTENT: re-link ACTIVE → still ACTIVE, single row');
 }
 
-async function testLinkReactivate(ds: DataSource) {
+async function testLinkNoReactivate(ds: DataSource) {
   const { company } = await createCompany(ds, 'link-react');
-  const { guard } = await createGuard(ds, 'link-react-g1');
-  await linkGuardToCompany(ds, company, guard, CompanyGuardStatus.BLOCKED);
-
-  const jwt = makeCompanyJwt(999003);
   const svc = makeCompanyGuardService(ds, company);
-  const result = await svc.linkForCompanyUser(jwt, guard.id);
+  const jwt = makeCompanyJwt(999003);
 
-  equal(result.status, CompanyGuardStatus.ACTIVE, 'Re-link of BLOCKED → ACTIVE');
-  const rows = await ds.getRepository(CompanyGuard).find({
-    where: { company: { id: company.id }, guard: { id: guard.id } },
-  });
-  equal(rows.length, 1, 'Single row, no duplicate');
-  console.log('PASS LINK-REACTIVATE: BLOCKED guard re-linked → ACTIVE, single row');
+  for (const status of [CompanyGuardStatus.BLOCKED, CompanyGuardStatus.INACTIVE]) {
+    // Labels stay distinct within their last 13 characters: createGuard derives the SIA number from them.
+    const { guard } = await createGuard(ds, `lnr-${status.toLowerCase()}`);
+    const rel = await linkGuardToCompany(ds, company, guard, status);
+
+    await rejects(() => svc.linkForCompanyUser(jwt, guard.id), isLinkRefusal, `${status} relationship cannot be re-linked`);
+
+    const row = await ds.getRepository(CompanyGuard).findOneOrFail({ where: { id: rel.id } });
+    equal(row.status, status, `${status} relationship unchanged`);
+    const rows = await ds.getRepository(CompanyGuard).count({
+      where: { company: { id: company.id }, guard: { id: guard.id } },
+    });
+    equal(rows, 1, 'Single row, no duplicate');
+  }
+  console.log('PASS LINK-NO-REACTIVATE: BLOCKED and INACTIVE re-link by id → 403, status unchanged');
 }
 
 async function testLinkDuplicate(ds: DataSource) {
@@ -382,19 +420,46 @@ async function testLinkDuplicate(ds: DataSource) {
   const jwt = makeCompanyJwt(999004);
   const svc = makeCompanyGuardService(ds, company);
 
-  // Concurrent: both should resolve to a single ACTIVE row
-  const [r1, r2] = await Promise.allSettled([
+  const results = await Promise.allSettled([
     svc.linkForCompanyUser(jwt, guard.id),
     svc.linkForCompanyUser(jwt, guard.id),
   ]);
 
-  const rows = await ds.getRepository(CompanyGuard).find({
+  for (const result of results) {
+    equal(result.status, 'rejected', 'Concurrent link refused');
+    ok(isLinkRefusal((result as PromiseRejectedResult).reason), 'Refused with the invitation message');
+  }
+  const rows = await ds.getRepository(CompanyGuard).count({
     where: { company: { id: company.id }, guard: { id: guard.id } },
   });
-  equal(rows.length, 1, 'Exactly one row after concurrent link');
-  const successes = [r1, r2].filter((r) => r.status === 'fulfilled');
-  ok(successes.length >= 1, 'At least one succeeded');
-  console.log('PASS LINK-DUPLICATE: concurrent link → exactly one row');
+  equal(rows, 0, 'No row after concurrent link attempts');
+  console.log('PASS LINK-DUPLICATE: concurrent link attempts → both refused, no row');
+}
+
+async function testAdminLink(ds: DataSource) {
+  const { company } = await createCompany(ds, 'admin-link');
+  const { guard } = await createGuard(ds, 'admin-link-g1');
+  const auditCapture = makeCapturingAudit();
+  const svc = makeCompanyGuardService(ds, company, auditCapture);
+
+  // A company role cannot reach the admin path even if it calls it directly.
+  await rejects(
+    () => svc.createForUser(makeCompanyJwt(999006, UserRole.COMPANY_ADMIN), { companyId: company.id, guardId: guard.id }),
+    (err: any) => err instanceof ForbiddenException,
+    'Company role refused on the admin path',
+  );
+  equal(await ds.getRepository(CompanyGuard).count({ where: { company: { id: company.id } } }), 0, 'No row from refused admin call');
+
+  const adminJwt: JwtPayload = { sub: 999007, role: UserRole.ADMIN, email: `admin@${TEST_PREFIX}.example`, status: UserStatus.ACTIVE };
+  const created = await svc.createForUser(adminJwt, { companyId: company.id, guardId: guard.id });
+  equal(created.status, CompanyGuardStatus.ACTIVE, 'Admin direct create still works');
+
+  const entry = auditCapture.captured.find((e) => e.action === 'company_guard.admin_linked');
+  ok(entry, 'company_guard.admin_linked audit event captured');
+  equal(entry!.entityId, created.id);
+  equal((entry!.afterData as any)?.guardId, guard.id);
+  equal((entry!.afterData as any)?.companyId, company.id);
+  console.log('PASS ADMIN-LINK: admin direct create works and is audited; company role refused');
 }
 
 async function testDiscoveryOwner(ds: DataSource) {
@@ -415,6 +480,8 @@ async function testDiscoveryStaff(ds: DataSource) {
   const { company } = await createCompany(ds, 'disc-staff');
   const staffUser = await createStaffMember(ds, company, 'disc-staff-s1');
   const { guard } = await createGuard(ds, 'disc-staff-g1');
+
+  await linkGuardToCompany(ds, company, guard);
 
   const jwt = makeCompanyJwt(staffUser.id, UserRole.COMPANY_STAFF);
   const svc = makeCompanyGuardService(ds, company);
@@ -456,18 +523,36 @@ async function testStatusBlocked(ds: DataSource) {
   console.log('PASS STATUS-BLOCKED: ACTIVE → BLOCKED');
 }
 
-async function testStatusReactivate(ds: DataSource) {
+async function testStatusNoReactivate(ds: DataSource) {
   const { company } = await createCompany(ds, 'status-react');
-  const { guard } = await createGuard(ds, 'status-react-g1');
-  const rel = await linkGuardToCompany(ds, company, guard, CompanyGuardStatus.BLOCKED);
-
   const jwt = makeCompanyJwt(999012);
   const svc = makeCompanyGuardService(ds, company);
-  const dto: UpdateCompanyGuardDto = { status: CompanyGuardStatus.ACTIVE };
-  const result = await svc.updateStatusForCompanyUser(jwt, rel.id, dto);
+  const toActive: UpdateCompanyGuardDto = { status: CompanyGuardStatus.ACTIVE };
 
-  equal(result.status, CompanyGuardStatus.ACTIVE, 'BLOCKED → ACTIVE');
-  console.log('PASS STATUS-REACTIVATE: BLOCKED → ACTIVE');
+  for (const status of [CompanyGuardStatus.BLOCKED, CompanyGuardStatus.INACTIVE]) {
+    const { guard } = await createGuard(ds, `str-${status.toLowerCase()}`);
+    const rel = await linkGuardToCompany(ds, company, guard, status);
+    await rejects(
+      () => svc.updateStatusForCompanyUser(jwt, rel.id, toActive),
+      (err: any) => err instanceof ForbiddenException && err.message === REACTIVATION_REQUIRES_INVITATION_MESSAGE,
+      `${status} → ACTIVE refused`,
+    );
+    const row = await ds.getRepository(CompanyGuard).findOneOrFail({ where: { id: rel.id } });
+    equal(row.status, status, `${status} unchanged after refused reactivation`);
+  }
+
+  // Lifting a block to INACTIVE is still allowed (it lets a fresh invitation be accepted).
+  const { guard: blockedGuard } = await createGuard(ds, 'status-unblock');
+  const blocked = await linkGuardToCompany(ds, company, blockedGuard, CompanyGuardStatus.BLOCKED);
+  const unblocked = await svc.updateStatusForCompanyUser(jwt, blocked.id, { status: CompanyGuardStatus.INACTIVE });
+  equal(unblocked.status, CompanyGuardStatus.INACTIVE, 'BLOCKED → INACTIVE allowed');
+
+  // ACTIVE → ACTIVE stays a harmless no-op.
+  const { guard: activeGuard } = await createGuard(ds, 'status-active-noop');
+  const active = await linkGuardToCompany(ds, company, activeGuard, CompanyGuardStatus.ACTIVE);
+  const same = await svc.updateStatusForCompanyUser(jwt, active.id, toActive);
+  equal(same.status, CompanyGuardStatus.ACTIVE, 'ACTIVE → ACTIVE no-op allowed');
+  console.log('PASS STATUS-NO-REACTIVATE: BLOCKED/INACTIVE → ACTIVE refused; BLOCKED → INACTIVE and ACTIVE no-op allowed');
 }
 
 async function testTenantRead(ds: DataSource) {
@@ -530,10 +615,9 @@ async function testMultiCompany(ds: DataSource) {
     'Company B blocked — no relationship',
   );
 
-  // Link guard to B
-  const jwtB = makeCompanyJwt(999031);
+  // Guard joins B through an authorised workflow (the hire path), not by B naming them
   const svcB = makeCompanyGuardService(ds, compB);
-  await svcB.linkForCompanyUser(jwtB, guard.id);
+  await svcB.ensureRelationship({ companyId: compB.id, guardId: guard.id });
   await svcB.ensureActiveRelationship(compB.id, guard.id); // must not throw now
 
   // Block in Company A only
@@ -570,10 +654,10 @@ async function testGlobalApprovalIndependence(ds: DataSource) {
   equal(refreshed.approvalStatus, approvalBefore, 'approvalStatus unchanged after block');
   equal(refreshed.isApproved, true, 'isApproved unchanged after block');
 
-  // Link again
-  await svc.linkForCompanyUser(jwt, guard.id);
+  // A refused re-link attempt does not touch it either
+  await rejects(() => svc.linkForCompanyUser(jwt, guard.id), isLinkRefusal, 'Re-link of BLOCKED refused');
   const refreshed2 = await ds.getRepository(GuardProfile).findOneOrFail({ where: { id: guard.id } });
-  equal(refreshed2.approvalStatus, approvalBefore, 'approvalStatus unchanged after re-link');
+  equal(refreshed2.approvalStatus, approvalBefore, 'approvalStatus unchanged after refused re-link');
   console.log('PASS GLOBAL-APPROVAL-INDEPENDENCE: link/block operations do not mutate GuardProfile.approvalStatus');
 }
 
@@ -721,13 +805,15 @@ async function testAuditLink(ds: DataSource) {
     auditCapture.stub as any,
   );
 
-  await svc.linkForCompanyUser(jwt, guard.id);
+  await rejects(() => svc.linkForCompanyUser(jwt, guard.id), isLinkRefusal, 'Link refused');
 
-  const linkEntry = auditCapture.captured.find((e) => e.action === 'company_guard.linked');
-  ok(linkEntry, 'company_guard.linked audit event captured');
-  equal((linkEntry!.afterData as any)?.guardId, guard.id);
-  equal((linkEntry!.afterData as any)?.companyId, company.id);
-  console.log('PASS AUDIT-LINK: company_guard.linked event captured');
+  ok(!auditCapture.captured.some((e) => e.action === 'company_guard.linked'), 'No company_guard.linked event');
+  const refusal = auditCapture.captured.find((e) => e.action === 'company_guard.link_refused');
+  ok(refusal, 'company_guard.link_refused audit event captured');
+  equal((refusal!.afterData as any)?.requestedGuardId, guard.id);
+  equal((refusal!.afterData as any)?.companyId, company.id);
+  equal((refusal!.afterData as any)?.existingStatus, null);
+  console.log('PASS AUDIT-LINK-REFUSED: company_guard.link_refused event captured; nothing linked');
 }
 
 async function testAuditStatus(ds: DataSource) {
@@ -778,15 +864,17 @@ async function run() {
   try {
     await cleanup(ds);
 
-    await testLink(ds);
+    await testLinkRefused(ds);
+    await testLinkEnumeration(ds);
     await testLinkIdempotent(ds);
-    await testLinkReactivate(ds);
+    await testLinkNoReactivate(ds);
     await testLinkDuplicate(ds);
+    await testAdminLink(ds);
     await testDiscoveryOwner(ds);
     await testDiscoveryStaff(ds);
     await testStatusInactive(ds);
     await testStatusBlocked(ds);
-    await testStatusReactivate(ds);
+    await testStatusNoReactivate(ds);
     await testTenantRead(ds);
     await testTenantWrite(ds);
     await testMultiCompany(ds);
@@ -798,7 +886,7 @@ async function run() {
     await testAuditLink(ds);
     await testAuditStatus(ds);
 
-    console.log('\n✓ All company-guard-lifecycle tests passed (19/19)');
+    console.log('\n✓ All company-guard-lifecycle tests passed (21/21)');
   } finally {
     await cleanup(ds);
     await ds.destroy();
