@@ -46,6 +46,13 @@ export type CompanyGuardInvitationsPanelProps = {
   onCreate: (payload: CreateCompanyGuardInvitationPayload) => Promise<CompanyGuardInvitationCreated>;
   onRevoke: (invitationId: number) => Promise<void>;
   onRefresh: () => void;
+  /**
+   * A one-off request (from Active Workforce, "Invite again") to open the invitation form, optionally with a
+   * 16-digit SIA licence number to restrict the code to that Guard. A new `key` opens the form again.
+   */
+  inviteRequest?: { key: number; siaLicenceNumber?: string } | null;
+  /** Called once the request has opened the form, so a later remount does not open it again. */
+  onInviteRequestHandled?: () => void;
 };
 
 export function CompanyGuardInvitationsPanel({
@@ -55,6 +62,8 @@ export function CompanyGuardInvitationsPanel({
   onCreate,
   onRevoke,
   onRefresh,
+  inviteRequest,
+  onInviteRequestHandled,
 }: CompanyGuardInvitationsPanelProps) {
   const [inviteOpen, setInviteOpen] = React.useState(false);
   const [relationshipType, setRelationshipType] =
@@ -81,6 +90,19 @@ export function CompanyGuardInvitationsPanel({
     setInviteOpen(false);
     resetForm();
   }, [resetForm]);
+
+  const inviteRequestKey = inviteRequest?.key;
+  React.useEffect(() => {
+    if (!inviteRequest || !canManageGuards) return;
+    const sia = (inviteRequest.siaLicenceNumber ?? '').replace(/\s/g, '');
+    setRelationshipType('APPROVED_CONTRACTOR');
+    setSiaLicence(/^\d{16}$/.test(sia) ? sia : '');
+    setFormError(null);
+    setInviteOpen(true);
+    onInviteRequestHandled?.();
+    // Only a new request (a new key) opens the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteRequestKey]);
 
   const dismissIssued = React.useCallback(() => {
     setIssued(null);

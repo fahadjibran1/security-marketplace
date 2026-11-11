@@ -1466,6 +1466,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const [companyGuards, setCompanyGuards] = React.useState<CompanyGuard[]>([]);
   const [guardInvitations, setGuardInvitations] = React.useState<CompanyGuardInvitation[]>([]);
   const [invitationsLoading, setInvitationsLoading] = React.useState(false);
+  // "Invite again" from Active Workforce opens the existing invitation form (see CompanyGuardInvitationsPanel).
+  const [guardInviteRequest, setGuardInviteRequest] =
+    React.useState<{ key: number; siaLicenceNumber?: string } | null>(null);
   const [screeningOutcomes, setScreeningOutcomes] = React.useState<CompanyScreeningOutcome[]>([]);
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [applications, setApplications] = React.useState<JobApplication[]>([]);
@@ -3902,7 +3905,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     [refreshGuardInvitations],
   );
 
-  const handleUpdateGuardStatus = async (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => {
+  // A company never sets a Guard Active: they rejoin by accepting an invitation.
+  const handleUpdateGuardStatus = async (companyGuardId: number, status: 'INACTIVE' | 'BLOCKED') => {
     await updateCompanyGuard(companyGuardId, status);
     await loadData(true);
   };
@@ -5631,9 +5635,12 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
               onNavigateToAvailability={(guardId) => openGuardWorkspace('availability', guardId)}
               screeningOutcomes={screeningOutcomes}
               onNavigateToShiftOffers={() => setActiveSection('shift-offers')}
+              onInviteAgain={(prefill) => setGuardInviteRequest({ key: Date.now(), ...prefill })}
             />
             <CompanyGuardInvitationsPanel
               invitations={guardInvitations}
+              inviteRequest={guardInviteRequest}
+              onInviteRequestHandled={() => setGuardInviteRequest(null)}
               loading={invitationsLoading}
               canManageGuards={
                 user?.companyPermissions

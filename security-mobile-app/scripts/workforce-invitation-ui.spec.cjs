@@ -323,6 +323,49 @@ async function main() {
     );
   });
 
+  // ══ RELATIONSHIP STATUS: a company never sets a Guard back to Active ═════
+
+  await test('C-28 no Reactivate action and the status callback cannot ask for ACTIVE', () => {
+    assert.ok(!/Reactivate/.test(workspace), 'no Reactivate label or copy');
+    assert.ok(!/'reactivate'/.test(workspace), 'no reactivate action type');
+    assert.ok(!/'ACTIVE' as const/.test(workspace), 'no status change maps to ACTIVE');
+    assert.match(workspace, /onUpdateGuardStatus: \(companyGuardId: number, status: 'INACTIVE' \| 'BLOCKED'\) => Promise<void>;/);
+    assert.match(dashboard, /handleUpdateGuardStatus = async \(companyGuardId: number, status: 'INACTIVE' \| 'BLOCKED'\)/);
+  });
+
+  await test('C-29 a blocked Guard offers Remove block, which sets Inactive and explains the invitation step', () => {
+    assert.match(workspace, /qvStatus === 'BLOCKED' \? \(\s*<Button\s+label="Remove block"[\s\S]*?requestStatusChange\('unblock', quickView\)/);
+    assert.match(workspace, /pendingAction\.type === 'block' \? 'BLOCKED' as const : 'INACTIVE' as const/, 'unblock maps to INACTIVE');
+    assert.match(workspace, /They become Active only when they accept it\./);
+  });
+
+  await test('C-30 an inactive Guard offers Invite again, which opens the existing invitation form', () => {
+    assert.match(workspace, /<Button\s+label="Invite again"[\s\S]*?onPress=\{\(\) => inviteAgain\(quickView\)\}/);
+    assert.match(workspace, /onInviteAgain\?\.\(\/\^\\d\{16\}\$\/\.test\(sia\) \? \{ siaLicenceNumber: sia \} : \{\}\)/, 'only a 16-digit licence from the relationship record is prefilled');
+    assert.match(dashboard, /onInviteAgain=\{\(prefill\) => setGuardInviteRequest\(\{ key: Date\.now\(\), \.\.\.prefill \}\)\}/);
+    assert.match(dashboard, /inviteRequest=\{guardInviteRequest\}/);
+    assert.match(invitePanel, /if \(!inviteRequest \|\| !canManageGuards\) return;/, 'only a manager can open the form');
+    assert.match(invitePanel, /setSiaLicence\(\/\^\\d\{16\}\$\/\.test\(sia\) \? sia : ''\);/);
+    assert.match(invitePanel, /setInviteOpen\(true\);\s*onInviteRequestHandled\?\.\(\);/, 'the request is consumed once');
+    assert.match(dashboard, /onInviteRequestHandled=\{\(\) => setGuardInviteRequest\(null\)\}/, 'a remount does not reopen the form');
+    // Invite again goes through the same create call as Invite Guard; no other link path exists.
+    assert.ok(!/companyGuardId|guardId/.test(invitePanel.slice(invitePanel.indexOf('inviteRequestKey'), invitePanel.indexOf('const dismissIssued'))));
+    for (const [name, source] of [['dashboard', dashboard], ['workspace', workspace], ['invitations panel', invitePanel]]) {
+      assert.ok(!/\blinkGuard\b|\bcreateCompanyGuard\(/.test(source), `${name} makes no company-side link call`);
+    }
+  });
+
+  await test('C-31 a rejected status change closes the dialog and shows the reason; success still closes both', () => {
+    const confirm = workspace.slice(workspace.indexOf('const confirmStatusChange'), workspace.indexOf('const inviteAgain'));
+    assert.match(confirm, /if \(!pendingAction \|\| statusChanging\) return;/, 'no double submit while loading');
+    assert.match(confirm, /setStatusChanging\(true\);/);
+    assert.match(confirm, /await onUpdateGuardStatus\(pendingAction\.companyGuardId, nextStatus\);\s*setPendingAction\(null\);\s*setQuickView\(null\);/);
+    assert.match(confirm, /catch \(error\) \{[\s\S]*?setPendingAction\(null\);[\s\S]*?setStatusError\(formatApiErrorMessage\(error,/);
+    assert.match(confirm, /finally \{\s*setStatusChanging\(false\);/);
+    assert.match(workspace, /\{statusError \? \(\s*<View style=\{styles\.drawerError\} accessibilityRole="alert">/);
+    assert.match(workspace, /loading=\{statusChanging\}/, 'dialog loading state preserved');
+  });
+
   console.log(`\nPhase C workforce invitation UI: ${count}/${count} PASS`);
 }
 

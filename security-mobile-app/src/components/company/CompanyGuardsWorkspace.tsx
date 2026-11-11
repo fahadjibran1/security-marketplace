@@ -9,6 +9,7 @@ import type {
   Shift,
 } from '../../types/models';
 import { colors, radii, spacing, typography } from '../../theme';
+import { formatApiErrorMessage } from '../../services/api';
 import { Button } from '../ui/Button';
 import { Drawer } from '../ui/Drawer';
 import { ConfirmationDialog } from '../ui/ConfirmationDialog';
@@ -38,7 +39,9 @@ const IS_WEB = typeof document !== 'undefined';
 type FilterKey = 'all' | 'active' | 'needs-attention' | 'on-shift' | 'blocked';
 
 type PendingAction = {
-  type: 'block' | 'inactive' | 'reactivate';
+  // A company can never set a Guard back to Active: they rejoin only by accepting a new invitation.
+  // 'unblock' lifts a block to Inactive.
+  type: 'block' | 'inactive' | 'unblock';
   companyGuardId: number;
   guardName: string;
   futureReadyCount: number;
@@ -57,7 +60,12 @@ export type CompanyGuardsWorkspaceProps = {
   onRefresh: () => void;
   canManageGuards: boolean;
   canPayAdmin: boolean;
-  onUpdateGuardStatus: (companyGuardId: number, status: 'ACTIVE' | 'INACTIVE' | 'BLOCKED') => Promise<void>;
+  onUpdateGuardStatus: (companyGuardId: number, status: 'INACTIVE' | 'BLOCKED') => Promise<void>;
+  /**
+   * Opens the existing invitation form for an Inactive Guard. `siaLicenceNumber` is passed only when this
+   * company's own relationship record already shows it. Accepting the invitation is the Guard's decision.
+   */
+  onInviteAgain?: (prefill: { siaLicenceNumber?: string }) => void;
   onOpenPayAdmin: (guardId: number, guardName: string) => void;
   /** Opens Compliance focused on this Guard. Only offered when `canViewCompliance`. */
   onNavigateToCompliance: (guardId: number) => void;
@@ -235,6 +243,7 @@ export function CompanyGuardsWorkspace({
   canViewCompliance,
   canViewAvailability,
   onNavigateToShiftOffers,
+  onInviteAgain,
 }: CompanyGuardsWorkspaceProps) {
   const [filter, setFilter] = React.useState<FilterKey>('active');
   const [search, setSearch] = React.useState('');
@@ -246,6 +255,8 @@ export function CompanyGuardsWorkspace({
   const [quickView, setQuickView] = React.useState<CompanyGuard | null>(null);
   const [pendingAction, setPendingAction] = React.useState<PendingAction | null>(null);
   const [statusChanging, setStatusChanging] = React.useState(false);
+  const [statusError, setStatusError] = React.useState<string | null>(null);
+  React.useEffect(() => { setStatusError(null); }, [quickView]);
 
   // ── Summary metrics ────────────────────────────────────────────────────────
   const totalCount = companyGuards.length;
@@ -304,23 +315,32 @@ export function CompanyGuardsWorkspace({
     const guardId = cg.guard?.id;
     const guardName = cg.guard?.fullName ?? 'this guard';
     const counts = getGuardShiftCounts(guardId, shifts);
+    setStatusError(null);
     setPendingAction({ type, companyGuardId: cg.id, guardName, ...counts });
   };
 
   const confirmStatusChange = async () => {
-    if (!pendingAction) return;
-    const nextStatus =
-      pendingAction.type === 'block' ? 'BLOCKED' as const
-      : pendingAction.type === 'inactive' ? 'INACTIVE' as const
-      : 'ACTIVE' as const;
+    if (!pendingAction || statusChanging) return;
+    const nextStatus = pendingAction.type === 'block' ? 'BLOCKED' as const : 'INACTIVE' as const;
     setStatusChanging(true);
     try {
       await onUpdateGuardStatus(pendingAction.companyGuardId, nextStatus);
       setPendingAction(null);
       setQuickView(null);
+    } catch (error) {
+      // Close the dialog and keep the Guard's panel open with the reason, so the action can be retried.
+      setPendingAction(null);
+      setStatusError(formatApiErrorMessage(error, 'The guard status could not be changed. Please try again.'));
     } finally {
       setStatusChanging(false);
     }
+  };
+
+  const inviteAgain = (cg: CompanyGuard) => {
+    // Prefill only a licence number this company's own relationship record already shows.
+    const sia = (cg.guard?.siaLicenseNumber || cg.guard?.siaLicenceNumber || '').replace(/\s/g, '');
+    setQuickView(null);
+    onInviteAgain?.(/^\d{16}$/.test(sia) ? { siaLicenceNumber: sia } : {});
   };
 
   // ── Confirmation copy ─────────────────────────────────────────────────────
@@ -361,9 +381,9 @@ export function CompanyGuardsWorkspace({
       };
     }
     return {
-      title: `Reactivate ${guardName}?`,
-      message: `Reactivation restores the company relationship only.\n\nThe guard must still pass compliance, screening and availability checks before new work can be assigned.`,
-      confirmLabel: 'Reactivate',
+      title: `Remove block for ${guardName}?`,
+      message: `${guardName} will be set to Inactive. They will not receive work from your company.\n\nTo work with them again, send a new invitation. They become Active only when they accept it.`,
+      confirmLabel: 'Remove block',
       variant: 'standard' as const,
     };
   };
@@ -605,13 +625,19 @@ export function CompanyGuardsWorkspace({
                         onPress={() => requestStatusChange('inactive', quickView)}
                       />
                     </>
-                  ) : (
+                  ) : qvStatus === 'BLOCKED' ? (
                     <Button
-                      label="Reactivate"
-                      variant="primary"
-                      onPress={() => requestStatusChange('reactivate', quickView)}
+                      label="Remove block"
+                      variant="secondary"
+                      onPress={() => requestStatusChange('unblock', quickView)}
                     />
-                  )
+                  ) : onInviteAgain ? (
+                    <Button
+                      label="Invite again"
+                      variant="primary"
+                      onPress={() => inviteAgain(quickView)}
+                    />
+                  ) : null
                 ) : null}
                 {canPayAdmin ? (
                   <Button
@@ -624,6 +650,16 @@ export function CompanyGuardsWorkspace({
                   />
                 ) : null}
               </View>
+              {statusError ? (
+                <View style={styles.drawerError} accessibilityRole="alert">
+                  <Text style={styles.drawerErrorText}>{statusError}</Text>
+                </View>
+              ) : null}
+              {canManageGuards && qvStatus === 'INACTIVE' ? (
+                <Text style={styles.drawerHint}>
+                  This guard becomes Active again only by accepting a new invitation from your company.
+                </Text>
+              ) : null}
               {canViewCompliance || canViewAvailability ? (
                 <View style={[styles.actionButtons, styles.actionButtonsSecondary]}>
                   {canViewCompliance ? (
@@ -914,6 +950,17 @@ const styles = StyleSheet.create({
   drawerWarningText: {
     fontSize: 13,
     color: colors.warning,
+    lineHeight: 18,
+  },
+  drawerError: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    backgroundColor: colors.dangerSurface,
+    borderRadius: radii.sm,
+  },
+  drawerErrorText: {
+    fontSize: 13,
+    color: colors.danger,
     lineHeight: 18,
   },
   drawerWarningLink: {
