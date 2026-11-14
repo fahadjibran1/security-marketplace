@@ -20,6 +20,12 @@
  *   USABLE                the records still carry guard id and name, and every company route still answers
  *   ADMIN / GUARD-OWNED   Platform Admin and guard-owned responses keep their existing shape
  *   HIRE / INVITATION     invitation acceptance and hiring still create the ACTIVE relationship
+ *   COVERAGE              every controller a company user can reach (discovered from route metadata and RolesGuard,
+ *                         not from a list) has the interceptor, a tested response contract, or an evidenced exception
+ *   COVERAGE-NEGATIVE     that check rejects new unprotected controllers, unenforced @Roles, company methods on admin
+ *                         controllers, removed interceptors, unprobed GET handlers and stale or unevidenced exemptions
+ *   CONTRACT              every contract-exempt GET handler, read by every company role, carries no account data,
+ *                         guard email, internal note or other tenant's guard
  *   SCOPE                 the defence-in-depth projection is attached to exactly the listed company controllers,
  *                         is not global, and leaves admin, guard and non-entity responses untouched
  *
@@ -32,9 +38,15 @@ process.env.TZ = 'UTC';
 
 import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
-import { StreamableFile, ValidationPipe } from '@nestjs/common';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { Controller, Get, RequestMethod, StreamableFile, UseGuards, ValidationPipe } from '@nestjs/common';
 import { NestFactory, ModulesContainer, ModuleRef } from '@nestjs/core';
 import * as bcrypt from 'bcrypt';
+import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
+import { RolesGuard } from '../src/common/guards/roles.guard';
+import { Roles, ROLES_KEY } from '../src/common/decorators/roles.decorator';
+import { COMPANY_VIEW_ROLES, isCompanyRole, UserRole } from '../src/user/entities/user.entity';
 import { DataSource } from 'typeorm';
 import { AuthService } from '../src/auth/auth.service';
 import { AdminOperatorService } from '../src/admin-operator/admin-operator.service';
@@ -102,6 +114,228 @@ const FORBIDDEN_KEYS = [
 const FORBIDDEN_GUARD_KEYS = ['approvalStatus', 'notes', 'status', 'availability', 'user', 'email'];
 const GUARD_KEYS = new Set(['guard', 'guards', 'applicant', 'guardProfile']);
 const USER_KEYS = new Set(['user', 'uploadedBy', 'actor', 'createdBy', 'reviewedBy', 'acknowledgedBy', 'closedBy']);
+
+// ═══════════════════════ Controller coverage (COVERAGE / COVERAGE-NEGATIVE) ═══════════════════════
+//
+// Which controllers a company user can reach is discovered from the running app's route metadata, exactly as
+// RolesGuard decides it, not from a hand-kept list:
+//   - a handler's effective roles are its own @Roles, else its controller's (Reflector.getAllAndOverride order);
+//   - @Roles only restricts anything when RolesGuard is attached (class or method). There is no global guard;
+//   - a handler is company-reachable when its roles are not enforced, are empty, or include a company role.
+// Every controller with at least one company-reachable handler must then be protected in one of three ways:
+//   1. INTERCEPTOR  CompanyResponsePrivacyInterceptor on the class, and its route in COMPANY_PRIVACY_SCOPED_ROUTES;
+//   2. CONTRACT     it returns purpose-built objects, and every company-reachable GET handler is read below by every
+//                   company role (CONTRACT group) and checked for account data, guard emails, internal notes and
+//                   other tenants' guards — or names the concrete reason it cannot be read here;
+//   3. EXCEPTION    it is not a company data surface (self-service, health) or returns guard data by design to
+//                   permitted roles; the reason is written down and the specs that pin it must be in test:release.
+// A controller that is reachable and has none of these fails COVERAGE, so a new company controller cannot silently
+// bypass the projection. COVERAGE-NEGATIVE proves the check rejects such controllers.
+
+interface HandlerInfo { name: string; verb: string; path: string }
+interface ControllerInfo { name: string; path: string; covered: boolean; companyHandlers: HandlerInfo[] }
+
+/** Route metadata → which handlers of one controller a company user can reach, the way RolesGuard decides it. */
+function describeController(metatype: any, interceptor: unknown): ControllerInfo {
+  const guardsOf = (target: object): unknown[] => Reflect.getMetadata('__guards__', target) ?? [];
+  const classGuards = guardsOf(metatype);
+  const classRoles: UserRole[] | undefined = Reflect.getMetadata(ROLES_KEY, metatype);
+  const companyHandlers: HandlerInfo[] = [];
+  for (const name of Object.getOwnPropertyNames(metatype.prototype)) {
+    if (name === 'constructor') continue;
+    const handler = Object.getOwnPropertyDescriptor(metatype.prototype, name)?.value;
+    if (typeof handler !== 'function') continue;
+    const path = Reflect.getMetadata('path', handler);
+    if (path === undefined) continue; // not a route handler
+    const roles: UserRole[] | undefined = Reflect.getMetadata(ROLES_KEY, handler) ?? classRoles;
+    const enforced = [...classGuards, ...guardsOf(handler)].includes(RolesGuard);
+    const reachable = !enforced || !roles || roles.length === 0 || roles.some((r) => isCompanyRole(r));
+    if (reachable) companyHandlers.push({ name, verb: RequestMethod[Reflect.getMetadata('method', handler) ?? 0], path: String(path) });
+  }
+  const covered = (Reflect.getMetadata('__interceptors__', metatype) ?? []).includes(interceptor);
+  return { name: metatype.name, path: String(Reflect.getMetadata('path', metatype)), covered, companyHandlers };
+}
+
+/** A probe reads a GET handler as every company role; `skip` says why that handler cannot be read here. */
+type Probe = string | { skip: string };
+type Exemption =
+  | { kind: 'contract'; reason: string; evidence: string[]; probes: Record<string, Probe> }
+  | { kind: 'exception'; reason: string; evidence: string[] };
+
+/** The fixture ids the probes need. */
+interface ProbeIds { siteId: number; shiftId: number; guardId: number; today: string }
+
+/**
+ * Every company-reachable controller that does not use the interceptor, with why it is safe and how that is proven.
+ * Adding a controller here is a security decision: prefer the interceptor (COMPANY_PRIVACY_SCOPED_ROUTES).
+ */
+function companyPrivacyExemptions(ids: ProbeIds): Record<string, Exemption> {
+  const { siteId, shiftId, guardId, today } = ids;
+  const monthStart = `${today.slice(0, 8)}01`;
+  const d = new Date(`${today}T00:00:00Z`);
+  const monday = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+  const binary = (spec: string) => ({ skip: `binary file stream, no JSON body; access is pinned by ${spec}` });
+  const detail = (list: string) => ({ skip: `one item of ${list}, served by the same presenter; no such item exists in these fixtures` });
+  const readOnlyWorkflow = 'read-only presenters built field by field (no TypeORM entity is returned)';
+  return {
+    // ── Not company data surfaces ──
+    HealthController: { kind: 'exception', reason: 'liveness/readiness only; no account or tenant data', evidence: ['deploy-manifest.spec.ts', 'http-security-headers.spec.ts'] },
+    AuthController: { kind: 'exception', reason: "self-service: register/login/refresh/logout and GET /auth/me return only the caller's own account", evidence: ['auth-session.spec.ts', 'gate2-account-lifecycle.spec.ts'] },
+    AccountRecoveryController: { kind: 'exception', reason: 'self-service password reset and email verification; responses carry no account data', evidence: ['gate2-account-lifecycle.spec.ts'] },
+    AccountController: { kind: 'exception', reason: "self-service deletion of the caller's own account", evidence: ['gate2-account-lifecycle.spec.ts'] },
+    // ── Guard data by design, to permitted roles only ──
+    GuardPersonnelController: {
+      kind: 'exception',
+      reason: 'HR/payroll records (employment, emergency contact, driving, bank, payroll admin) a company holds for its own guards, by '
+        + 'design; an unrelated company is refused, bank details are masked and payroll admin has its own company response DTO',
+      evidence: ['company-guard-link-security.spec.ts', 'company-managed-assignability.spec.ts', 'p1gb-product-correction.spec.ts'],
+    },
+    // ── Purpose-built responses, read below by every company role ──
+    CompanyGuardInvitationController: { kind: 'contract', reason: 'invitation codes and their status; no guard or account objects', evidence: ['company-guard-link-security.spec.ts'], probes: { list: '/company-guards/invitations' } },
+    CoverageController: {
+      kind: 'contract', reason: readOnlyWorkflow, evidence: ['operational-coverage.spec.ts', 'live-operations-consistency.spec.ts'],
+      probes: { shifts: '/coverage/shifts', operations: `/coverage/operations?shiftIds=${shiftId}`, sites: '/coverage/sites', eligibleGuards: `/coverage/shifts/${shiftId}/eligible-guards` },
+    },
+    ShiftAmendmentController: {
+      kind: 'contract', reason: 'amendments are returned through ShiftAmendmentService.present(); staff list is name and id', evidence: ['shift-amendment.spec.ts'],
+      probes: { listForShift: `/shifts/${shiftId}/amendments`, listStaff: '/shift-amendments/staff', getPolicy: '/shift-amendments/policy', findOne: detail('GET /shifts/:shiftId/amendments') },
+    },
+    ReportController: {
+      kind: 'contract', reason: 'aggregated report rows built field by field', evidence: ['early-book-off.spec.ts'],
+      probes: {
+        getShiftAttendance: `/reports/shift-attendance?from=${monthStart}&to=${today}`, getWelfareMonitoring: `/reports/welfare-monitoring?from=${monthStart}&to=${today}`, getMarginReport: `/reports/margin?startDate=${monthStart}&endDate=${today}`,
+        getFinancialConsistency: `/reports/financial-consistency?from=${monthStart}&to=${today}`, getIncidentReport: `/reports/incidents?startDate=${monthStart}&endDate=${today}`, getWelfareReport: `/reports/welfare?startDate=${monthStart}&endDate=${today}`,
+        getSiteRiskReport: `/reports/sites-risk?startDate=${monthStart}&endDate=${today}`,
+      },
+    },
+    SchedulerController: {
+      kind: 'contract', reason: 'payroll and invoice suggestions are plain summary objects', evidence: ['company-response-privacy.spec.ts (CONTRACT probes only)'],
+      probes: { getPayrollSuggestions: '/payroll/suggestions', getInvoiceSuggestions: '/invoices/suggestions' },
+    },
+    ScreeningController: {
+      kind: 'contract', reason: 'screening outcomes only (SEC-019); no evidence files or account data', evidence: ['guard-profile-response-security.spec.ts'],
+      probes: { outcomes: '/screening/company/outcomes', outcome: `/screening/company/guards/${guardId}/outcome` },
+    },
+    FinanceController: {
+      kind: 'contract', reason: 'financial aggregates; no guard or account objects', evidence: ['company-response-privacy.spec.ts (CONTRACT probes only)'],
+      probes: { getSummary: '/finance/summary', getReceivables: '/finance/receivables', getReconciliation: '/finance/reconciliation' },
+    },
+    RotaSlotController: {
+      kind: 'contract', reason: 'rota slots and positions through the rota presenter', evidence: ['shift-edit-security.spec.ts', 'replace-guard.spec.ts'],
+      probes: { list: '/rota-slots', findOne: detail('GET /rota-slots') },
+    },
+    RotaController: { kind: 'contract', reason: 'week view through the rota presenter', evidence: ['perf-stability-p2.spec.ts'], probes: { getWeek: `/rota/week?weekCommencing=${monday}` } },
+    PatrolConfigController: {
+      kind: 'contract', reason: 'patrol configuration, runs and exceptions through patrol presenters', evidence: ['patrol-foundation.spec.ts', 'patrol-schedule.spec.ts', 'patrol-dashboard-reads.spec.ts'],
+      probes: {
+        getPolicies: '/patrols/policies', getSiteSetup: `/patrols/sites/${siteId}/setup`, listSchedules: '/patrols/schedules', getSchedule: detail('GET /patrols/schedules'),
+        listCheckpoints: '/patrols/checkpoints', getCheckpoint: detail('GET /patrols/checkpoints'), checkpointLabel: binary('patrol-foundation.spec.ts'),
+        listRoutes: '/patrols/routes', getRoute: detail('GET /patrols/routes'), overview: `/patrols/overview?date=${today}`, windowsForDay: `/patrols/windows/day?date=${today}`,
+        listRuns: '/patrols/runs', getRun: detail('GET /patrols/runs'), getRunEvidence: detail('GET /patrols/runs'), listExceptions: '/patrols/exceptions', listHolds: '/patrols/holds',
+      },
+    },
+    PatrolEvidenceController: {
+      kind: 'contract', reason: 'evidence metadata through the evidence presenter; files are streamed', evidence: ['patrol-evidence.spec.ts', 'patrol-evidence-b1.spec.ts', 'patrol-recovery-grants.spec.ts'],
+      probes: {
+        evidenceTree: '/patrols/evidence/tree', evidencePatrols: `/patrols/evidence/patrols?siteId=${siteId}&date=${today}`, stamped: binary('patrol-evidence-b1.spec.ts'), download: binary('patrol-evidence.spec.ts'),
+        thumbnails: detail('GET /patrols/runs'), usage: '/patrols/storage-usage', listExports: '/patrols/exports', getExport: detail('GET /patrols/exports'),
+        downloadExport: binary('patrol-evidence.spec.ts'), listRecoveryGrants: '/patrols/recovery-grants',
+      },
+    },
+    PatrolMonitorController: {
+      kind: 'contract', reason: 'monitor summary rows built field by field', evidence: ['patrol-monitor.spec.ts'],
+      probes: { summary: `/patrols/monitor/summary?date=${today}`, site: `/patrols/monitor/sites/${siteId}?date=${today}` },
+    },
+    PatrolOperationsController: {
+      kind: 'contract', reason: 'attention queue and investigation views through patrol presenters', evidence: ['patrol-operations.spec.ts'],
+      probes: { attention: '/patrols/operations/attention', investigation: detail('GET /patrols/exceptions') },
+    },
+  };
+}
+
+/** The specs test:release runs, for checking that an exemption's evidence is actually executed. */
+function releaseSpecs(): string {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  return String(pkg.scripts['test:release']);
+}
+
+/**
+ * Every reason a set of controllers is not protected. Pure: the real app and the synthetic negative cases both go
+ * through it.
+ */
+function assessCoverage(controllers: ControllerInfo[], exemptions: Record<string, Exemption>, scopedRoutes: readonly string[]): string[] {
+  const violations: string[] = [];
+  const reachable = controllers.filter((c) => c.companyHandlers.length > 0);
+  const release = releaseSpecs();
+  for (const c of reachable) {
+    const handlers = c.companyHandlers.map((h) => `${h.verb} ${h.path} [${h.name}]`).join(', ');
+    if (c.covered) {
+      if (!scopedRoutes.includes(c.path)) violations.push(`${c.name} (@${c.path}) has the interceptor but is not listed in COMPANY_PRIVACY_SCOPED_ROUTES`);
+      if (exemptions[c.name]) violations.push(`${c.name} has the interceptor and an exemption; remove the exemption`);
+      continue;
+    }
+    const exemption = exemptions[c.name];
+    if (!exemption) {
+      violations.push(`UNPROTECTED ${c.name} (@${c.path}) is reachable by company users (${handlers}) without the privacy interceptor or a documented exemption`);
+      continue;
+    }
+    if (exemption.kind === 'contract') {
+      for (const h of c.companyHandlers.filter((x) => x.verb === 'GET')) {
+        if (!(h.name in exemption.probes)) violations.push(`UNPROBED ${c.name}.${h.name} (GET ${h.path}) is company-reachable but has no contract probe or stated reason`);
+      }
+      for (const name of Object.keys(exemption.probes)) {
+        if (!c.companyHandlers.some((h) => h.name === name && h.verb === 'GET')) violations.push(`STALE probe ${c.name}.${name}: no such company-reachable GET handler`);
+      }
+    }
+  }
+  for (const [name, exemption] of Object.entries(exemptions)) {
+    const c = reachable.find((x) => x.name === name);
+    if (!c) violations.push(`STALE exemption ${name}: no such company-reachable controller`);
+    else if (c.covered) continue; // reported above
+    if (!exemption.reason.trim()) violations.push(`exemption ${name} gives no reason`);
+    if (exemption.evidence.length === 0) violations.push(`exemption ${name} names no evidence`);
+    for (const spec of exemption.evidence) {
+      const file = spec.split(' ')[0];
+      const npmScript = /\(npm run (test:[\w-]+)\)/.exec(spec)?.[1];
+      const executed = npmScript ? release.includes(`npm run ${npmScript}`) : release.includes(`scripts/${file}`) && fs.existsSync(path.join(__dirname, file));
+      if (!executed) violations.push(`exemption ${name}: evidence "${spec}" is not run by test:release`);
+    }
+  }
+  return violations;
+}
+
+// Synthetic controllers for COVERAGE-NEGATIVE. They are never registered in a module; they only carry route metadata.
+@Controller('synthetic-company-entities')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(...COMPANY_VIEW_ROLES)
+class SyntheticUnsafeCompanyController { @Get() list() { return []; } }
+
+@Controller('synthetic-any-authenticated')
+@UseGuards(JwtAuthGuard)
+class SyntheticNoRolesController { @Get() list() { return []; } }
+
+@Controller('synthetic-roles-not-enforced')
+@UseGuards(JwtAuthGuard)
+@Roles(UserRole.ADMIN)
+class SyntheticRolesWithoutGuardController { @Get() list() { return []; } }
+
+@Controller('synthetic-admin-with-company-method')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+class SyntheticCompanyMethodController {
+  @Get() adminList() { return []; }
+  @Get('company') @Roles(...COMPANY_VIEW_ROLES) companyList() { return []; }
+}
+
+@Controller('synthetic-admin-only')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+class SyntheticAdminOnlyController { @Get() list() { return []; } }
+
+@Controller('synthetic-guard-only')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.GUARD)
+class SyntheticGuardOnlyController { @Get() list() { return []; } }
 
 async function main() {
   const { buildTypeOrmOptions } = await import('../src/database/typeorm.config');
@@ -556,6 +790,104 @@ async function main() {
       if (shifts.status !== 200) fail(`/shifts/my → ${shifts.status}`);
       const own = await api('GET', `/guards/${gActive.guardId}`, gActive.token);
       if (own.status !== 200 || own.body.user?.email !== gActive.email) fail('guard GET /guards/:id (own) changed');
+    });
+
+    // ───────────────── Controller coverage, discovered from route metadata ─────────────────
+    let privacyMod: any = null;
+    try {
+      privacyMod = require('../src/common/privacy/company-response-privacy');
+    } catch {
+      privacyMod = null;
+    }
+    const realControllers: ControllerInfo[] = [];
+    for (const m of app.get(ModulesContainer).values()) {
+      for (const wrapper of m.controllers.values()) {
+        if (wrapper.metatype) realControllers.push(describeController(wrapper.metatype, privacyMod?.CompanyResponsePrivacyInterceptor));
+      }
+    }
+    const shiftA = await one(`SELECT id FROM shifts WHERE "companyId" = $1 AND "guardId" = $2 ORDER BY id LIMIT 1`, [A, gActive.guardId]);
+    const probeIds: ProbeIds = { siteId, shiftId: shiftA.id, guardId: gActive.guardId!, today: new Date().toISOString().slice(0, 10) };
+    const exemptions = companyPrivacyExemptions(probeIds);
+    const scoped: readonly string[] = privacyMod?.COMPANY_PRIVACY_SCOPED_ROUTES ?? [];
+
+    await group('COVERAGE: every company-reachable controller has the interceptor, a tested response contract or an evidenced exception', (fail) => {
+      if (!privacyMod) return fail('company response projection module is not present');
+      const reachable = realControllers.filter((c) => c.companyHandlers.length > 0);
+      for (const v of assessCoverage(realControllers, exemptions, scoped)) fail(v);
+      const covered = reachable.filter((c) => c.covered).length;
+      const kinds = Object.values(exemptions).reduce<Record<string, number>>((acc, e) => ({ ...acc, [e.kind]: (acc[e.kind] ?? 0) + 1 }), {});
+      console.log(`     (${realControllers.length} controllers; ${reachable.length} company-reachable: ${covered} interceptor, `
+        + `${kinds.contract ?? 0} contract, ${kinds.exception ?? 0} exception)`);
+      if (reachable.length < covered + 1 || covered !== scoped.length) fail(`discovery looks wrong: ${reachable.length} reachable, ${covered} covered, ${scoped.length} listed`);
+    });
+
+    await group('COVERAGE-NEGATIVE: the coverage check rejects unsafe controllers and removed protection', (fail) => {
+      if (!privacyMod) return fail('company response projection module is not present');
+      const I = privacyMod.CompanyResponsePrivacyInterceptor;
+      const expectRejected = (label: string, controllers: ControllerInfo[], match: RegExp, ex = exemptions) => {
+        const found = assessCoverage(controllers, ex, scoped).filter((v) => match.test(v));
+        if (found.length === 0) fail(`${label}: not rejected`);
+        else console.log(`     rejected ${label}: ${found[0]}`);
+      };
+      const expectAccepted = (label: string, controllers: ControllerInfo[]) => {
+        const found = assessCoverage(controllers, exemptions, scoped);
+        if (found.length) fail(`${label}: wrongly rejected (${found.join('; ')})`);
+      };
+      const withExtra = (metatype: any) => [...realControllers, describeController(metatype, I)];
+
+      expectRejected('new company controller returning entities, no protection', withExtra(SyntheticUnsafeCompanyController), /UNPROTECTED SyntheticUnsafeCompanyController/);
+      expectRejected('new controller open to any authenticated user (no @Roles)', withExtra(SyntheticNoRolesController), /UNPROTECTED SyntheticNoRolesController/);
+      expectRejected('new controller whose @Roles is not enforced (no RolesGuard)', withExtra(SyntheticRolesWithoutGuardController), /UNPROTECTED SyntheticRolesWithoutGuardController/);
+      expectRejected('company method on an otherwise admin-only controller', withExtra(SyntheticCompanyMethodController), /UNPROTECTED SyntheticCompanyMethodController .*companyList/);
+      expectAccepted('admin-only controller', withExtra(SyntheticAdminOnlyController));
+      expectAccepted('guard-only controller', withExtra(SyntheticGuardOnlyController));
+
+      const without = (name: string) => realControllers.map((c) => (c.name === name ? { ...c, covered: false } : c));
+      for (const name of ['ShiftController', 'CompanyGuardController', 'GuardProfileController']) {
+        expectRejected(`interceptor removed from ${name}`, without(name), new RegExp(`UNPROTECTED ${name}\\b`));
+      }
+      const newGet = realControllers.map((c) => (c.name === 'CoverageController'
+        ? { ...c, companyHandlers: [...c.companyHandlers, { name: 'syntheticGuardDump', verb: 'GET', path: 'guards' }] } : c));
+      expectRejected('new GET handler on a contract-exempt controller without a probe', newGet, /UNPROBED CoverageController\.syntheticGuardDump/);
+      const { CoverageController: _dropped, ...withoutCoverageExemption } = exemptions;
+      expectRejected('exemption withdrawn from an uncovered controller', realControllers, /UNPROTECTED CoverageController/, withoutCoverageExemption);
+      expectRejected('exemption left behind for a controller that no longer exists', realControllers.filter((c) => c.name !== 'FinanceController'), /STALE exemption FinanceController/);
+      expectRejected('interceptor added to an unlisted controller', realControllers.map((c) => (c.name === 'FinanceController' ? { ...c, covered: true } : c)), /FinanceController .*not listed/);
+      expectRejected('exemption evidence that test:release does not run', realControllers, /evidence "no-such\.spec\.ts" is not run/,
+        { ...exemptions, FinanceController: { ...exemptions.FinanceController, evidence: ['no-such.spec.ts'] } });
+    });
+
+    // Every contract-exempt GET handler, read by every company role; the bodies must carry nothing about accounts.
+    // Patrol Management is a per-company switch; turn it on for company A so the patrol presenters really answer.
+    await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id = $1`, [A]);
+    const contractReads: Array<{ role: string; route: string; res: Res }> = [];
+    for (const exemption of Object.values(exemptions)) {
+      if (exemption.kind !== 'contract') continue;
+      for (const probe of Object.values(exemption.probes)) {
+        if (typeof probe !== 'string') continue;
+        for (const { role, s } of sessions) contractReads.push({ role, route: probe, res: await api('GET', probe, s.token) });
+      }
+    }
+    await group('CONTRACT: contract-exempt controllers answer and carry no account data, guard emails, notes or other tenants', (fail) => {
+      const guardEmailsAll = [gActive, gInactive, gBlocked, gApplicant, gHire, gOther].map((g) => g.email.toLowerCase());
+      for (const r of contractReads) {
+        // Not vacuous: the owner must get a real body from every probe; other roles may be refused by permission.
+        if (r.role === 'owner' && (r.res.status < 200 || r.res.status >= 300)) fail(`owner GET ${r.route} → ${r.res.status} ${errText(r.res)}`);
+        // Same rule as USABLE: older routes resolve the company from the owner profile only and answer staff 404.
+        const legacyOwnerOnly = r.res.status === 404 && errText(r.res) === 'Company not found';
+        if (r.role !== 'owner' && !(r.res.status < 300 || r.res.status === 403 || legacyOwnerOnly)) fail(`${r.role} GET ${r.route} → ${r.res.status} ${errText(r.res)}`);
+        if (r.res.status >= 300) continue;
+        const text = r.res.text.toLowerCase();
+        if (r.res.text.includes(NOTE)) fail(`${r.role} ${r.route}: internal guard note text`);
+        for (const email of guardEmailsAll) if (text.includes(email)) fail(`${r.role} ${r.route}: a guard's account email`);
+        if (r.res.text.includes(gOther.fullName)) fail(`${r.role} ${r.route}: another company's guard`);
+        walk(r.res.body, (obj, key, p) => {
+          for (const k of [...FORBIDDEN_KEYS, 'lastLoginAt']) if (k in obj) fail(`${r.route} ${p}.${k}`);
+          if (GUARD_KEYS.has(key) && obj && typeof obj === 'object' && 'user' in obj) fail(`${r.route} ${p}.user (guard account)`);
+        });
+      }
+      const probed = new Set(contractReads.map((r) => r.route)).size;
+      console.log(`     (${probed} contract routes read by ${sessions.length} company roles)`);
     });
 
     await group('SCOPE: the projection is attached to exactly the listed company controllers and is not global', async (fail) => {
