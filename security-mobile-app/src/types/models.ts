@@ -600,6 +600,8 @@ export interface AvailabilityOverridePayload {
 export interface GuardLeavePayload {
   id?: number;
   guardId?: number;
+  /** Guard requests only: the ACTIVE employer chosen when the guard has several (GET /leave/mine/companies). */
+  companyId?: number;
   leaveType: GuardLeaveType | string;
   startAt: string;
   endAt: string;

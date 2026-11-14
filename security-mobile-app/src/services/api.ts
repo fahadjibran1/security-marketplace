@@ -1196,6 +1196,11 @@ export function saveGuardLeave(payload: GuardLeavePayload) {
   });
 }
 
+/** The companies the signed-in guard can send a leave request to: ACTIVE employers only ({ companyId, name }). */
+export function listMyLeaveCompanies() {
+  return request<GuardDocumentUploadCompany[]>('/leave/mine/companies');
+}
+
 export function saveMyGuardLeave(payload: GuardLeavePayload) {
   return request<GuardLeave>('/leave/mine', {
     method: 'POST',

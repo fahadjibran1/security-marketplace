@@ -155,6 +155,8 @@ jobs:
       # the in-flight state and a withdrawn offer; scans every Guard surface for hand-rolled overlays.
       - name: Verify guard shift offers can be accepted and declined
         run: npm run test:guard-shift-offers
+      - name: Guard leave company selection (SEC-001B 2B)
+        run: npm run test:guard-leave-company
       # Guard release audit (20 Oct 2026): End Shift booked off on one tap, even hours early, and the Guard
       # interface mixed check in / check out with Book On / Book Off. Runs the Book Off confirmation decision
       # across the 15-minute early boundary, checks the screen only books off after confirming, and scans the
