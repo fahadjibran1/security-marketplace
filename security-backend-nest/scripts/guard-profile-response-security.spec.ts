@@ -7,6 +7,11 @@ import { GuardApprovalStatus, GuardAvailability } from '../src/guard-profile/ent
 import { UserRole, UserStatus } from '../src/user/entities/user.entity';
 import { toGuardDto, toCompanyDto, toAdminDto } from '../src/guard-profile/dto/guard-profile-response.mappers';
 import { GuardProfileService } from '../src/guard-profile/guard-profile.service';
+import { CompanyMembershipRole } from '../src/company-membership/company-membership-types';
+import { CompanyGuardStatus } from '../src/company-guard/entities/company-guard.entity';
+
+// The broadest company view (Owner, ACTIVE relationship): what is absent here is absent for every company user.
+const OWNER_ACTIVE = { membershipRole: CompanyMembershipRole.OWNER, relationshipStatus: CompanyGuardStatus.ACTIVE };
 
 type Test = { name: string; run: () => void | Promise<void> };
 const tests: Test[] = [];
@@ -340,47 +345,47 @@ test('toGuardDto: result contains siaLicenseNumber as read-only display', () => 
 });
 
 test('toCompanyDto: result does not contain notes', () => {
-  const result = toCompanyDto(buildMockEntity({ notes: 'secret admin note' }));
+  const result = toCompanyDto(buildMockEntity({ notes: 'secret admin note' }), OWNER_ACTIVE);
   assert(!('notes' in result), 'notes present in toCompanyDto result');
 });
 
 test('toCompanyDto: result does not contain isApproved', () => {
-  const result = toCompanyDto(buildMockEntity({ isApproved: true }));
+  const result = toCompanyDto(buildMockEntity({ isApproved: true }), OWNER_ACTIVE);
   assert(!('isApproved' in result), 'isApproved present in toCompanyDto result');
 });
 
 test('toCompanyDto: result does not contain legacy status varchar', () => {
-  const result = toCompanyDto(buildMockEntity({ status: 'approved' }));
+  const result = toCompanyDto(buildMockEntity({ status: 'approved' }), OWNER_ACTIVE);
   assert(!('status' in result), 'legacy status varchar present in toCompanyDto result');
 });
 
 test('toCompanyDto: result does not contain raw rightToWorkStatus', () => {
-  const result = toCompanyDto(buildMockEntity({ rightToWorkStatus: 'permanent' }));
+  const result = toCompanyDto(buildMockEntity({ rightToWorkStatus: 'permanent' }), OWNER_ACTIVE);
   assert(!('rightToWorkStatus' in result), 'rightToWorkStatus present in toCompanyDto — use /compliance/statuses');
 });
 
 test('toCompanyDto: result does not contain raw rightToWorkExpiryDate', () => {
-  const result = toCompanyDto(buildMockEntity({ rightToWorkExpiryDate: '2030-01-01' }));
+  const result = toCompanyDto(buildMockEntity({ rightToWorkExpiryDate: '2030-01-01' }), OWNER_ACTIVE);
   assert(!('rightToWorkExpiryDate' in result), 'rightToWorkExpiryDate present in toCompanyDto');
 });
 
-test('toCompanyDto: result.user does not contain passwordHash', () => {
+test('toCompanyDto: result carries no user account at all (so no passwordHash)', () => {
   const entity = buildMockEntity();
   (entity.user as any).passwordHash = '$2b$10$hashed';
-  const result = toCompanyDto(entity);
-  assert(!('passwordHash' in (result.user as any)), 'user.passwordHash leaked in toCompanyDto');
+  const result = toCompanyDto(entity, OWNER_ACTIVE);
+  assert(!('user' in result), 'user account present in toCompanyDto');
 });
 
-test('toCompanyDto: result.user does not contain role', () => {
-  const result = toCompanyDto(buildMockEntity());
-  assert(!('role' in (result.user as any)), 'user.role leaked in toCompanyDto');
+test('toCompanyDto: result carries no user account at all (so no role)', () => {
+  const result = toCompanyDto(buildMockEntity(), OWNER_ACTIVE);
+  assert(!('user' in result), 'user account present in toCompanyDto');
 });
 
 // Phase A: a company must not be shown platform-global approval. It says nothing about whether S4
 // has looked at this guard, and 'approved' would be read as an S4 endorsement. Screening state is
 // served separately and honestly by GET /screening/company/outcomes.
 test('toCompanyDto: result does not contain legacy approvalStatus', () => {
-  const result = toCompanyDto(buildMockEntity({ approvalStatus: GuardApprovalStatus.APPROVED }));
+  const result = toCompanyDto(buildMockEntity({ approvalStatus: GuardApprovalStatus.APPROVED }), OWNER_ACTIVE);
   assert(!('approvalStatus' in result), 'legacy platform approval leaked to a company');
 });
 
@@ -439,7 +444,7 @@ test('Guard DTO is fail-closed: hypothetical NINO field on entity does not appea
 test('Company DTO is fail-closed: hypothetical NINO field on entity does not appear in company response', () => {
   const entity = buildMockEntity();
   (entity as any).nationalInsuranceNumber = 'AB123456C';
-  const result = toCompanyDto(entity) as any;
+  const result = toCompanyDto(entity, OWNER_ACTIVE) as any;
   assert(
     !('nationalInsuranceNumber' in result),
     'toCompanyDto auto-included a new entity field — mapper is NOT fail-closed.',

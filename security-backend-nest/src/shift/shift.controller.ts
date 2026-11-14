@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ShiftService } from './shift.service';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UpdateShiftDto } from './dto/update-shift.dto';
@@ -12,8 +12,10 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('shifts')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ShiftController {
   constructor(

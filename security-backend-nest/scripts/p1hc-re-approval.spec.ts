@@ -402,8 +402,9 @@ test('RBAC-1 controller: revise-approved-time route exists on controller', () =>
 
 test('RBAC-2 controller: revise-approved-time uses COMPANY_ADMIN_ROLES', () => {
   const ctrl = backend('client-weekly-approval/client-weekly-approval.controller.ts');
-  // Find the route decorated with revise-approved-time (the path appears inside ':id/revise-approved-time')
-  const routeIdx = ctrl.indexOf('revise-approved-time');
+  // Anchor on the route decorator itself. A bare 'revise-approved-time' first matches the DTO import, whose
+  // window can reach an unrelated route's @Roles and pass (or fail) for reasons that have nothing to do with this one.
+  const routeIdx = ctrl.indexOf("@Patch(':id/revise-approved-time')");
   assert(routeIdx !== -1, 'revise-approved-time route not found in controller');
   // @Roles(...COMPANY_ADMIN_ROLES) immediately follows the @Patch decorator on the next line
   const routeBlock = ctrl.slice(routeIdx, routeIdx + 300);

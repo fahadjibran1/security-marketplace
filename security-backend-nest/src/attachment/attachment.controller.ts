@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards, UseInterceptors } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -7,9 +7,11 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { AttachmentService } from './attachment.service';
 import { CreateAttachmentDto } from './dto/create-attachment.dto';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('attachments')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 export class AttachmentController {
   constructor(private readonly attachmentService: AttachmentService) {}
 

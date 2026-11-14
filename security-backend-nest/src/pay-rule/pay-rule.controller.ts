@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put, UseGuards, UseInterceptors } from '@nestjs/common';
 
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -8,8 +8,10 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES } from '../user/entities/user.entity';
 import { UpsertPayRuleConfigDto } from './dto/upsert-pay-rule-config.dto';
 import { PayRuleService } from './pay-rule.service';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('pay-rules')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PayRuleController {
   constructor(private readonly payRuleService: PayRuleService) {}

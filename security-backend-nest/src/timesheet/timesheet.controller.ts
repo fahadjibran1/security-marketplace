@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, UseGuards, UseInterceptors } from '@nestjs/common';
 import { TimesheetService } from './timesheet.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -8,8 +8,10 @@ import { UpdateTimesheetDto } from './dto/update-timesheet.dto';
 import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('timesheets')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TimesheetController {
   constructor(private readonly timesheetService: TimesheetService) {}

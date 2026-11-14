@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -9,8 +9,10 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { AvailabilityService } from './availability.service';
 import { UpsertAvailabilityOverrideDto } from './dto/upsert-availability-override.dto';
 import { UpsertAvailabilityRuleDto } from './dto/upsert-availability-rule.dto';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('availability')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AvailabilityController {
   constructor(private readonly availabilityService: AvailabilityService) {}

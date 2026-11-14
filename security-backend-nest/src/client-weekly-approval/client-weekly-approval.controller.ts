@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Patch, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Patch, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -10,8 +10,10 @@ import { CreateWeeklyApprovalDto } from './dto/create-weekly-approval.dto';
 import { ResubmitApprovalDto } from './dto/resubmit-approval.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { ReviseApprovedTimeDto } from './dto/revise-approved-time.dto';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('timesheets/weekly-approvals')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ClientWeeklyApprovalController {
   constructor(private readonly service: ClientWeeklyApprovalService) {}

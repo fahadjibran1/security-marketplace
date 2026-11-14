@@ -15,6 +15,7 @@ import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
+import { CompanyWorkforceRelationDto, toCompanyWorkforceRelationDto } from './dto/company-workforce-response';
 
 export const LINK_REQUIRES_INVITATION_MESSAGE =
   'Guards join your workforce by accepting an invitation from your company.';
@@ -35,17 +36,29 @@ export class CompanyGuardService {
     return this.companyGuardRepo.find();
   }
 
-  async findAllForUser(user: JwtPayload): Promise<CompanyGuard[]> {
+  /** Platform Admin: the full relationship records (unchanged). Company users: see findWorkforceForCompanyUser. */
+  async findAllForUser(user: JwtPayload): Promise<CompanyGuard[] | CompanyWorkforceRelationDto[]> {
     if (user.role === UserRole.ADMIN) {
       return this.findAll();
     }
+    return this.findWorkforceForCompanyUser(user);
+  }
 
-    const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.GUARDS_VIEW);
+  /**
+   * The company's workforce list, projected for the caller: the relationship itself, and the guard as the caller's
+   * membership role and that relationship's status allow (toCompanyWorkforceGuardDto). Never the guard's account,
+   * the company owner's account, notes or approval flags.
+   */
+  async findWorkforceForCompanyUser(user: JwtPayload): Promise<CompanyWorkforceRelationDto[]> {
+    const { company, membershipRole } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.GUARDS_VIEW,
+    );
 
-    return this.companyGuardRepo.find({
+    const relations = await this.companyGuardRepo.find({
       where: { company: { id: company.id } },
       order: { createdAt: 'DESC' },
     });
+    return relations.map((relation) => toCompanyWorkforceRelationDto(relation, membershipRole));
   }
 
   /**
@@ -122,8 +135,8 @@ export class CompanyGuardService {
    * relationship, INACTIVE, BLOCKED, or an id that matches no guard at all — takes the same single
    * query and gets the same 403, so the response never says whether a guard exists.
    */
-  async linkForCompanyUser(user: JwtPayload, guardId: number): Promise<CompanyGuard> {
-    const { company } = await this.membershipService.resolveCompanyContext(
+  async linkForCompanyUser(user: JwtPayload, guardId: number): Promise<CompanyWorkforceRelationDto> {
+    const { company, membershipRole } = await this.membershipService.resolveCompanyContext(
       user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
     );
 
@@ -132,7 +145,7 @@ export class CompanyGuardService {
     });
 
     if (existing?.status === CompanyGuardStatus.ACTIVE) {
-      return existing;
+      return toCompanyWorkforceRelationDto(existing, membershipRole);
     }
 
     await this.auditLogService.log({
@@ -156,8 +169,8 @@ export class CompanyGuardService {
     user: JwtPayload,
     companyGuardId: number,
     dto: UpdateCompanyGuardDto,
-  ): Promise<CompanyGuard> {
-    const { company } = await this.membershipService.resolveCompanyContext(
+  ): Promise<CompanyWorkforceRelationDto> {
+    const { company, membershipRole } = await this.membershipService.resolveCompanyContext(
       user.sub, user.role, CompanyPermission.GUARDS_MANAGE,
     );
 
@@ -188,7 +201,7 @@ export class CompanyGuardService {
       beforeData: before,
       afterData: { status: dto.status, guardId: relation.guard.id, companyId: company.id },
     });
-    return saved;
+    return toCompanyWorkforceRelationDto(saved, membershipRole);
   }
 
   // Linking is a workforce-membership decision, not a deployment. It runs no deployment gate, so the

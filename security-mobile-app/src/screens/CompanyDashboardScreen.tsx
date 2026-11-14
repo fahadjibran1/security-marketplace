@@ -2893,7 +2893,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
   const linkedGuardOptions = React.useMemo(
     () =>
       linkedGuards.map((guard) => ({
-        label: `${guard.fullName} · ${guard.phone}`,
+        label: [guard.fullName, guard.phone].filter(Boolean).join(' · '),
         value: String(guard.id),
       })),
     [linkedGuards],

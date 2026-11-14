@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, UseGuards, forwardRef } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, UseGuards, forwardRef, UseInterceptors } from '@nestjs/common';
 import { CompanyService } from './company.service';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -10,6 +10,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyPermission } from '../company-membership/company-membership-types';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 // RB-006: findAll()/findOne(:id) are platform-admin-only — they return/target
 // any tenant's record with no ownership filter. Company-side roles (company,
@@ -17,6 +18,7 @@ import { CompanyPermission } from '../company-membership/company-membership-type
 // findMine(), which derives the record from the authenticated JWT (user.sub),
 // never from a client-supplied id.
 @Controller('companies')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CompanyController {
   constructor(

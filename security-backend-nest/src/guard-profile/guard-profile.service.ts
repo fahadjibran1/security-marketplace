@@ -12,6 +12,7 @@ import { CompanyMembershipService } from '../company-membership/company-membersh
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { User } from '../user/entities/user.entity';
+import { CompanyGuardAccess } from './dto/guard-profile-response.mappers';
 
 @Injectable()
 export class GuardProfileService {
@@ -49,16 +50,17 @@ export class GuardProfileService {
     return this.guardRepo.find();
   }
 
-  async findAllForUser(user: JwtPayload): Promise<GuardProfile[]> {
-    if (user.role === UserRole.ADMIN) {
-      return this.findAll();
-    }
-
+  /**
+   * A company user's workforce guards (every relationship status), each paired with what decides how much of the
+   * guard that user is shown (toCompanyDto): their own membership role and the company's relationship status.
+   * Both come from the server — the membership and the relationship row — never from the client.
+   */
+  async findAllForCompanyUser(user: JwtPayload): Promise<Array<{ guard: GuardProfile; access: CompanyGuardAccess }>> {
     if (!isCompanyRole(user.role)) {
       throw new NotFoundException('Guard profiles not found');
     }
 
-    const { company } = await this.membershipService.resolveCompanyContext(
+    const { company, membershipRole } = await this.membershipService.resolveCompanyContext(
       user.sub, user.role, CompanyPermission.GUARDS_VIEW,
     );
 
@@ -67,7 +69,23 @@ export class GuardProfileService {
       order: { createdAt: 'DESC' },
     });
 
-    return links.map((link) => link.guard);
+    return links.map((link) => ({ guard: link.guard, access: { membershipRole, relationshipStatus: link.status } }));
+  }
+
+  /** One guard this company has a relationship with (any status), as findAllForCompanyUser pairs it. */
+  async findOneForCompanyUser(user: JwtPayload, id: number): Promise<{ guard: GuardProfile; access: CompanyGuardAccess }> {
+    const guard = await this.findOne(id);
+    const { company, membershipRole } = await this.membershipService.resolveCompanyContext(
+      user.sub, user.role, CompanyPermission.GUARDS_VIEW,
+    );
+
+    const link = await this.companyGuardRepo.findOne({
+      where: { company: { id: company.id }, guard: { id: guard.id } },
+    });
+    if (!link) {
+      throw new NotFoundException('Guard profile not found');
+    }
+    return { guard, access: { membershipRole, relationshipStatus: link.status } };
   }
 
   /** The same rows findOne returns, for several Guards in one query (missing ids are simply absent). */
@@ -83,23 +101,13 @@ export class GuardProfileService {
   }
 
   async findOneForUser(user: JwtPayload, id: number): Promise<GuardProfile> {
+    if (isCompanyRole(user.role)) {
+      return (await this.findOneForCompanyUser(user, id)).guard;
+    }
+
     const guard = await this.findOne(id);
 
     if (user.role === UserRole.ADMIN) {
-      return guard;
-    }
-
-    if (isCompanyRole(user.role)) {
-      const { company } = await this.membershipService.resolveCompanyContext(
-        user.sub, user.role, CompanyPermission.GUARDS_VIEW,
-      );
-
-      const link = await this.companyGuardRepo.findOne({
-        where: { company: { id: company.id }, guard: { id: guard.id } },
-      });
-      if (!link) {
-        throw new NotFoundException('Guard profile not found');
-      }
       return guard;
     }
 

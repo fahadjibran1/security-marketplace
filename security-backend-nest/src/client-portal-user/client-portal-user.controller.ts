@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Put, UseGuards, UseInterceptors } from '@nestjs/common';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -8,8 +8,10 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { COMPANY_ADMIN_ROLES } from '../user/entities/user.entity';
 import { UpsertClientPortalUserDto } from './dto/upsert-client-portal-user.dto';
 import { ClientPortalUserService } from './client-portal-user.service';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('client-portal-users')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ClientPortalUserController {
   constructor(private readonly clientPortalUserService: ClientPortalUserService) {}

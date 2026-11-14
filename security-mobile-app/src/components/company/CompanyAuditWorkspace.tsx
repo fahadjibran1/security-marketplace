@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 
 import { formatApiErrorMessage, listCompanyAuditLogs } from '../../services/api';
 import { AuditLog } from '../../types/models';
+import { actorLabel } from './incidentReport';
 import { colors } from '../../theme';
 
 type WebSelectProps = {
@@ -154,7 +155,7 @@ export function CompanyAuditWorkspace() {
                     </View>
                     <Text style={styles.badge}>{expanded ? 'Hide details' : 'View details'}</Text>
                   </View>
-                  <Text style={styles.helperText}>User: {log.user?.email || `User #${log.user?.id ?? 'unknown'}`}</Text>
+                  <Text style={styles.helperText}>User: {actorLabel(log.user, { fallback: `User #${log.user?.id ?? 'unknown'}` })}</Text>
                   {expanded ? (
                     <View style={styles.diffGrid}>
                       <View style={styles.diffBox}>

@@ -1,13 +1,15 @@
-import { Controller, Get, Param, ParseIntPipe, Patch, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Patch, Req, UseGuards, UseInterceptors } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { NotificationService } from './notification.service';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
 @Controller('notifications')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 

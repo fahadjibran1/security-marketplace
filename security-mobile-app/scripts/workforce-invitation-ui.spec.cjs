@@ -366,6 +366,44 @@ async function main() {
     assert.match(workspace, /loading=\{statusChanging\}/, 'dialog loading state preserved');
   });
 
+  // ══ MINIMISED COMPANY RESPONSES ════════════════════════════════════════════
+  // The API now gives each company role only what it needs: Finance and Viewer see a guard's name and id, a former
+  // guard has no phone, SIA expiry or right-to-work, nested guards are {id, fullName}, and a guard actor has a name
+  // but no email. These screens must render every one of those shapes without "undefined".
+
+  await test('C-32 the Live Ops guard picker label tolerates a guard without a phone', () => {
+    assert.ok(!/label: `\$\{guard\.fullName\} · \$\{guard\.phone\}`/.test(dashboard), 'no unconditional phone in the label');
+    assert.match(dashboard, /label: \[guard\.fullName, guard\.phone\]\.filter\(Boolean\)\.join\(' · '\)/);
+  });
+
+  await test('C-33 the workforce list and drawer render without phone, SIA expiry or right-to-work', () => {
+    assert.match(workspace, /<PrimaryCell label=\{guard\.fullName\} subtitle=\{guard\.phone\}/, 'PrimaryCell omits an empty subtitle');
+    assert.match(read('src/components/ui/TableFoundation.tsx'), /\{subtitle \? <Text/);
+    assert.match(workspace, /<DrawerRow label="Phone" value=\{qvGuard\.phone \|\| '—'\} \/>/);
+    assert.match(workspace, /\{qvGuard\.rightToWorkStatus \? \(/, 'right-to-work row only when present');
+    assert.match(workspace, /siaExpiryLabel\(qvGuard\.siaExpiryDate\)/);
+  });
+
+  await test('C-34 the audit trail names a guard actor that has no email', () => {
+    const audit = read('src/components/company/CompanyAuditWorkspace.tsx');
+    assert.match(audit, /User: \{actorLabel\(log\.user, \{ fallback: `User #\$\{log\.user\?\.id \?\? 'unknown'\}` \}\)\}/);
+    const { actorLabel } = loadTs('src/components/company/incidentReport.ts');
+    assert.equal(actorLabel({ id: 7, firstName: 'Sam Guard', lastName: null }, { fallback: 'User #7' }), 'Sam Guard');
+    assert.equal(actorLabel({ id: 8, firstName: 'Ops', lastName: 'Staff', email: 'ops@example.test' }), 'Ops Staff');
+    assert.equal(actorLabel({ id: 9, firstName: null, lastName: null, email: 'ops@example.test' }), 'ops@example.test');
+    assert.equal(actorLabel({ id: 10, firstName: null, lastName: null }, { fallback: 'User #10' }), 'User #10');
+  });
+
+  await test('C-35 no company screen reads a nested guard or company user account', () => {
+    const dir = path.join(root, 'src/components/company');
+    const sources = fs.readdirSync(dir).filter((f) => /\.tsx?$/.test(f)).map((f) => [f, read(`src/components/company/${f}`)]);
+    sources.push(['CompanyDashboardScreen.tsx', dashboard]);
+    for (const [file, source] of sources) {
+      assert.ok(!/guard\??\.user\b/.test(source), `${file} reads guard.user`);
+      assert.ok(!/company\??\.user\b/.test(source), `${file} reads company.user`);
+    }
+  });
+
   console.log(`\nPhase C workforce invitation UI: ${count}/${count} PASS`);
 }
 

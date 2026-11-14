@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put, UseGuards, UseInterceptors } from '@nestjs/common';
 
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -8,8 +8,10 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { UpsertGuardLeaveDto } from './dto/upsert-guard-leave.dto';
 import { LeaveService } from './leave.service';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('leave')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class LeaveController {
   constructor(private readonly leaveService: LeaveService) {}

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -13,8 +13,10 @@ import { VerifyGuardDocumentDto } from './dto/verify-guard-document.dto';
 import { RecordComplianceCheckDto } from './dto/record-compliance-check.dto';
 import { GuardComplianceCheckService } from './guard-compliance-check.service';
 import { GuardComplianceService, GuardComplianceStatus } from './guard-compliance.service';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('compliance')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ComplianceController {
   constructor(

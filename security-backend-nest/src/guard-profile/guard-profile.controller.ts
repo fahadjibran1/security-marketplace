@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, UseGuards, UseInterceptors } from '@nestjs/common';
 import { GuardProfileService } from './guard-profile.service';
 import { CreateGuardProfileDto } from './dto/create-guard-profile.dto';
 import { UpdateGuardProfileDto } from './dto/update-guard-profile.dto';
@@ -7,10 +7,12 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
+import { COMPANY_VIEW_ROLES, isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('guards')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class GuardProfileController {
   constructor(private readonly guardService: GuardProfileService) {}
@@ -18,11 +20,11 @@ export class GuardProfileController {
   @Get()
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
   async findAll(@CurrentUser() user: JwtPayload) {
-    const entities = await this.guardService.findAllForUser(user);
     if (user.role === UserRole.ADMIN) {
-      return entities.map(toAdminDto);
+      return (await this.guardService.findAll()).map(toAdminDto);
     }
-    return entities.map(toCompanyDto);
+    const entries = await this.guardService.findAllForCompanyUser(user);
+    return entries.map(({ guard, access }) => toCompanyDto(guard, access));
   }
 
   @Get('me')
@@ -36,10 +38,13 @@ export class GuardProfileController {
   @Get(':id')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   async findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    if (isCompanyRole(user.role)) {
+      const { guard, access } = await this.guardService.findOneForCompanyUser(user, id);
+      return toCompanyDto(guard, access);
+    }
     const entity = await this.guardService.findOneForUser(user, id);
     if (user.role === UserRole.ADMIN) return toAdminDto(entity);
-    if (user.role === UserRole.GUARD) return toGuardDto(entity);
-    return toCompanyDto(entity);
+    return toGuardDto(entity);
   }
 
   @Post()

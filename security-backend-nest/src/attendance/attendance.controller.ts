@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Put, UseGuards, UseInterceptors } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { ManualAttendanceService } from './manual-attendance.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -9,8 +9,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { AttendanceAuthorisationDto, CorrectAttendanceDto, ManualAttendanceDto } from './dto/manual-attendance.dto';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('attendance')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard)
 export class AttendanceController {
   constructor(

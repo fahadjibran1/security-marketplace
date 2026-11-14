@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards, UseInterceptors } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -6,9 +6,11 @@ import { AuditLogService } from './audit-log.service';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('audit-logs')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 

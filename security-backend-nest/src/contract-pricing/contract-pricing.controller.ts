@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -10,8 +10,10 @@ import { ContractPricingService } from './contract-pricing.service';
 import { ContractPricingQueryDto } from './dto/contract-pricing-query.dto';
 import { CreateContractPricingRuleDto } from './dto/create-contract-pricing-rule.dto';
 import { UpdateContractPricingRuleDto } from './dto/update-contract-pricing-rule.dto';
+import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
 
 @Controller('contract-pricing')
+@UseInterceptors(CompanyResponsePrivacyInterceptor)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ContractPricingController {
   constructor(private readonly contractPricingService: ContractPricingService) {}
