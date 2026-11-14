@@ -16,6 +16,8 @@ import { clearStoredSession, loadStoredSession, persistSession } from './src/ser
 import { AuthSession } from './src/types/models';
 import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
+import { guardColors } from './src/theme/guard';
+import { loadGuardFonts } from './src/theme/guardFonts';
 import Constants from 'expo-constants';
 import { productLabelFor, resolveAppVariant } from './src/services/appVariant';
 import { configureWelfareNotifications, registerWelfarePush, subscribeTokenChanges, subscribeWelfareResponses, unregisterWelfarePush, type DevicePushToken, type PushRegistration } from './src/services/pushNotifications';
@@ -36,6 +38,16 @@ export default function App() {
   const [accountLink, setAccountLink] = useState<AccountLink | null>(() =>
     IS_WEB && typeof window !== 'undefined' ? takeAccountLink(window.location, window.history) : null,
   );
+
+  // S4-UX Stage 2: the Guard Home's Inter fonts load alongside the session restore. Only the Guard workspace waits for
+  // them, and never for more than GUARD_FONT_TIMEOUT_MS: loaded, failed or timed out, it then renders (a failure falls
+  // back to the system font). Other workspaces never wait.
+  const [guardFontsSettled, setGuardFontsSettled] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadGuardFonts().then(() => { if (live) setGuardFontsSettled(true); });
+    return () => { live = false; };
+  }, []);
 
   useEffect(() => installAttendanceLocationTransport(), []);
   // Welfare Check notifications. A tap is held here until a Guard session is showing; it is submitted straight away
@@ -114,18 +126,26 @@ export default function App() {
 
   return <SafeAreaProvider><AppErrorBoundary onSignOut={session ? handleLogout : undefined}>
     {accountLink ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AccountLinkScreen link={accountLink} onDone={leaveAccountLink} /></SafeAreaView>
-    : booting ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
+    : booting || (surface === 'guard' && !guardFontsSettled) ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
     : !session ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AuthScreen onLoggedIn={handleLoggedIn} noticeMessage={authNotice} onDismissNotice={() => setAuthNotice(null)} /></SafeAreaView>
-    : <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/><View style={styles.screenContainer}>
-        {surface !== 'company' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={[styles.productLabel, APP_VARIANT === 'uat' ? styles.uatLabel : null]}>{PRODUCT_LABEL}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
+    : <SafeAreaView style={styles.safeArea} edges={surface === 'guard' ? GUARD_SAFE_AREA_EDGES : ['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/>{surface === 'guard' ? <SafeAreaView edges={['top']} style={styles.guardStatusBarBackdrop} testID="guard-status-bar-backdrop" /> : null}<View style={styles.screenContainer}>
+        {surface !== 'company' && surface !== 'guard' ? <View style={styles.topBar}><View style={styles.brandBlock}><Text style={styles.brandMark}>{brand.shortBrand}</Text><View><Text style={styles.surfaceName}>{surfaceLabel}</Text><Text style={[styles.productLabel, APP_VARIANT === 'uat' ? styles.uatLabel : null]}>{PRODUCT_LABEL}</Text></View></View><Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}><Text style={styles.logoutText}>Log out</Text></Pressable></View> : null}
         {surface === 'guard' && pushState === 'denied' && !pushNoticeDismissed ? <Pressable accessibilityRole="button" accessibilityHint="Dismiss" onPress={() => setPushNoticeDismissed(true)} style={styles.pushNotice}><Text style={styles.pushNoticeText}>Notifications are off, so Welfare Check reminders will not appear. Your Welfare Checks still work in S4. Turn notifications on for S4 in your phone's Settings.  ✕</Text></Pressable> : null}
         {surface === 'guard' && welfareTap ? <View key={welfareTap.intent.key} style={styles.promptHost}><WelfareCheckPrompt intent={welfareTap.intent} sessionLive={welfareTap.sessionLive} onClose={() => setWelfareTap(null)} /></View> : null}
-        {surface === 'admin' ? <AdminDashboardScreen /> : surface === 'company' ? <CompanyDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : surface === 'client' ? <ClientPortalScreen user={session.user} /> : surface === 'guard' ? <GuardDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : <View style={styles.loadingContainer}><StatePanel title="Access denied" message="This account cannot open an S4 workspace. Log out and contact an administrator." tone="error" /></View>}
+        {surface === 'admin' ? <AdminDashboardScreen /> : surface === 'company' ? <CompanyDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} /> : surface === 'client' ? <ClientPortalScreen user={session.user} /> : surface === 'guard' ? <GuardDashboardScreen user={session.user} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} productLabel={PRODUCT_LABEL} productIsUat={APP_VARIANT === 'uat'} /> : <View style={styles.loadingContainer}><StatePanel title="Access denied" message="This account cannot open an S4 workspace. Log out and contact an administrator." tone="error" /></View>}
       </View></SafeAreaView>}
   </AppErrorBoundary></SafeAreaProvider>;
 }
 
+// S4-UX-01.2a — a Guard's safe areas. The status bar shows light content, but the top inset used to be painted with the
+// light page background, so the clock and icons were white on near-white (Android edge-to-edge and iOS alike). For a
+// Guard the top inset is now a navy backdrop that continues into the navy Guard header. The bottom inset is left to
+// the Guard tab bar, which already pads itself by insets.bottom; insetting here as well doubled the gap and showed a
+// grey strip under the tab bar. Other surfaces keep all four edges, exactly as before.
+const GUARD_SAFE_AREA_EDGES: Array<'top' | 'right' | 'bottom' | 'left'> = ['right', 'left'];
+
 const styles = StyleSheet.create({
+  guardStatusBarBackdrop: { backgroundColor: guardColors.navy },
   safeArea: { flex: 1, backgroundColor: colors.background, ...(IS_WEB ? { height: '100vh', overflow: 'hidden' } : null) },
   screenContainer: { flex: 1, minHeight: 0, ...(IS_WEB ? { overflow: 'hidden' } : null) },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
