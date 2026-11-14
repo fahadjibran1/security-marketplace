@@ -137,8 +137,9 @@ const FIXTURE = [
     const byId = (id) => rows.find((row) => row.guardId === id);
     assert.equal(byId(20).status, 'unknown', 'unrecognised backend status');
     assert.equal(byId(30).status, 'unknown', 'ACTIVE link without a summary');
-    assert.equal(byId(31).status, 'unknown', 'BLOCKED link without a summary');
     assert.equal(byId(30).summary, null);
+    // SEC-001B 2A: the backend's live compliance population is ACTIVE only; a former Guard never reappears as Unknown.
+    assert.equal(byId(31), undefined, 'BLOCKED relationships are outside the compliance population');
     assert.equal(byId(32), undefined, 'INACTIVE relationships are outside the compliance population');
     assert.equal(rows.filter((row) => row.guardId === 1).length, 1, 'a Guard with a summary is not duplicated');
     assert.equal(model.normalizeStatus(undefined), 'unknown');

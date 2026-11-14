@@ -4,7 +4,7 @@
  * Requires a real PostgreSQL database with all migrations applied.
  *
  * Environment variables:
- *   ROTA_SLOT_TEST_DB_URL — connection URL (defaults to local dev DB at port 54322)
+ *   ROTA_SLOT_TEST_DB_URL — a disposable local s4_ test database; required, no default (see test-database-guard.ts)
  *
  * Usage:
  *   npm run test:rota-slot
@@ -25,6 +25,8 @@
 
 import 'reflect-metadata';
 
+import { assertDisposableTestDatabase, requireDisposableTestDatabaseUrl } from './test-database-guard';
+
 import { deepEqual, equal, ok, rejects } from 'node:assert/strict';
 import { DataSource } from 'typeorm';
 
@@ -42,13 +44,8 @@ import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 const TEST_PREFIX = 'ROTA-TEST';
 
-const dbUrl =
-  process.env.ROTA_SLOT_TEST_DB_URL ||
-  'postgresql://postgres:postgres@127.0.0.1:54322/s4_migration_rehearsal';
-
-if (!process.env.ROTA_SLOT_TEST_DB_URL) {
-  console.warn('[rota-slot] ROTA_SLOT_TEST_DB_URL not set — using local dev DB at 127.0.0.1:54322');
-}
+// Fails closed before any connection: no default database (SEC-001B 2A test-database guard).
+const dbUrl = requireDisposableTestDatabaseUrl('ROTA_SLOT_TEST_DB_URL');
 
 // ── Stubs for external service dependencies ──────────────────────────────────
 
@@ -585,6 +582,7 @@ async function main() {
       NODE_ENV: 'test',
     }),
   );
+  await assertDisposableTestDatabase(dbUrl);
   await dataSource.initialize();
 
   try {

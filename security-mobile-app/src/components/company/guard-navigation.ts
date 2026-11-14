@@ -84,6 +84,16 @@ export type AvailabilityTargetPlan = {
   guardFilter: string;
 };
 
+/**
+ * The Guards whose availability and leave this Company can work with: ACTIVE relationships only (SEC-001B 2A). The
+ * backend refuses availability and leave writes for INACTIVE and BLOCKED Guards and no longer returns their own
+ * availability, so a former Guard is not offered in the availability workspace's selector. The Company's historical
+ * leave and availability rows for former Guards still appear in the lists.
+ */
+export function activeAvailabilityGuards<T extends { status?: string | null; guard?: { id: number } | null }>(companyGuards: T[]): T[] {
+  return companyGuards.filter((link) => String(link.status ?? '').toUpperCase() === 'ACTIVE');
+}
+
 /** Strict: the target must be one of the Company's loaded Guards. Otherwise show everyone — never an unrelated Guard. */
 export function planAvailabilityTarget(
   companyGuards: Array<{ guard?: { id: number } | null }>,

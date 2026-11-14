@@ -15,35 +15,28 @@
  * they do not exercise the full graph or lifecycle.
  *
  * Required env var:
- *   APP_BOOT_DATABASE_URL — postgres connection URL for a real test database
- *   (falls back to P1I_DATABASE_URL then the local dev DB at port 54322)
+ *   APP_BOOT_DATABASE_URL — a disposable local s4_ test database with migrations applied.
+ *   Required: there is no fallback (see test-database-guard.ts).
  *
  * Optional:
  *   APP_BOOT_ENC_KEY  — 64-char hex string (GUARD_DATA_ENCRYPTION_KEY)
  *   APP_BOOT_HMAC_KEY — 64-char hex string (GUARD_DATA_HMAC_KEY)
  *
  * Run:
- *   APP_BOOT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/p1i_membership_test \
+ *   APP_BOOT_DATABASE_URL=postgresql://s4:s4_test_password@127.0.0.1:<disposable port>/s4_release_gate \
  *   ts-node -r tsconfig-paths/register scripts/app-boot.spec.ts
  */
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module';
+import { assertDisposableTestDatabase, requireDisposableTestDatabaseUrl } from './test-database-guard';
 
 // ── Test environment setup ──────────────────────────────────────────────────
 // These assignments run AFTER import hoisting but BEFORE NestFactory.create()
 // is called, so ConfigModule and TypeOrmModule pick them up correctly.
 
-const dbUrl =
-  process.env.APP_BOOT_DATABASE_URL ||
-  process.env.P1I_DATABASE_URL ||
-  'postgresql://postgres:postgres@127.0.0.1:54322/p1i_membership_test';
-
-if (!process.env.APP_BOOT_DATABASE_URL && !process.env.P1I_DATABASE_URL) {
-  console.warn(
-    '[app-boot] APP_BOOT_DATABASE_URL not set — using local dev DB at 127.0.0.1:54322',
-  );
-}
+// Fails closed before any connection: no default database (SEC-001B 2A test-database guard).
+const dbUrl = requireDisposableTestDatabaseUrl('APP_BOOT_DATABASE_URL');
 
 // Boot in test mode: skip production-only config assertions in validateRuntimeEnv
 process.env.NODE_ENV = 'test';
@@ -69,6 +62,13 @@ async function main() {
   console.log('\n── Full Application Boot Certification ──────────────────────────────────');
   console.log(`  Database : ${dbUrl.replace(/:\/\/[^@]+@/, '://***@')}`);
   console.log(`  NODE_ENV : ${process.env.NODE_ENV}`);
+
+  // Read-only check of the server before Nest opens its pool; a refusal exits non-zero before Nest connects.
+  await assertDisposableTestDatabase(dbUrl).catch((err: unknown) => {
+    console.error('\nFULL APPLICATION BOOT: FAIL');
+    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
 
   let app: Awaited<ReturnType<typeof NestFactory.create>> | null = null;
 

@@ -13,7 +13,7 @@ import {
 } from '../../services/api';
 import { CompanyGuard, GuardAvailabilityOverride, GuardAvailabilityRule, GuardLeave } from '../../types/models';
 import { colors } from '../../theme';
-import { GuardNavTarget, planAvailabilityTarget } from './guard-navigation';
+import { GuardNavTarget, activeAvailabilityGuards, planAvailabilityTarget } from './guard-navigation';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -68,7 +68,7 @@ export function CompanyAvailabilityWorkspace({
         listAvailabilityOverrides(guardId),
         listGuardLeave(),
       ]);
-      setGuards(nextGuards);
+      setGuards(activeAvailabilityGuards(nextGuards));
       setGuardsLoaded(true);
       setRules(nextRules);
       setOverrides(nextOverrides);

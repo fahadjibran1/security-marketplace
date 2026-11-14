@@ -339,11 +339,10 @@ async function main() {
         await docRepo.save(docRepo.create({ guard: { id: g.guardId } as any, company: { id: A.companyId } as any, type: type as any, originalFileName: `v-${type}.pdf`, uploadCompletedAt: new Date(), verified: true }));
       }
     }
-    // A BLOCKED link is listed too; an ended one is not (as before).
-    await ds.query('UPDATE company_guards SET status = $1 WHERE "companyId" = $2 AND "guardId" = $3', [CompanyGuardStatus.BLOCKED, A.companyId, guards[5].guardId]);
-
+    // SEC-001B 2A: the live compliance list holds ACTIVE relationships only. A BLOCKED or ended link is not listed
+    // (checked as PS-10b below, after the six-Guard batching measurements).
     const links = await ds.getRepository(CompanyGuard).find({ where: { company: { id: A.companyId } }, order: { id: 'DESC' } });
-    const listed = links.filter((l) => [CompanyGuardStatus.ACTIVE, CompanyGuardStatus.BLOCKED].includes(l.status) && l.guard);
+    const listed = links.filter((l) => l.status === CompanyGuardStatus.ACTIVE && l.guard);
     const normalise = (value: unknown) => JSON.parse(JSON.stringify(value));
     const perGuard = normalise(await Promise.all(listed.map((l) => compliance.getGuardSummary(l.guard.id, A.companyId))));
     const { result: batched, connections } = await connectionsFor(() => compliance.listStatusesForCompanyUser(A.userId, UserRole.COMPANY));
@@ -369,7 +368,7 @@ async function main() {
     const bView = normalise(await compliance.listStatusesForCompanyUser(B.userId, UserRole.COMPANY));
     const bPerGuard = normalise(await Promise.all(
       (await ds.getRepository(CompanyGuard).find({ where: { company: { id: B.companyId } }, order: { id: 'DESC' } }))
-        .filter((l) => [CompanyGuardStatus.ACTIVE, CompanyGuardStatus.BLOCKED].includes(l.status))
+        .filter((l) => l.status === CompanyGuardStatus.ACTIVE)
         .map((l) => compliance.getGuardSummary(l.guard.id, B.companyId)),
     ));
     assert.deepEqual(bView, bPerGuard);
@@ -377,6 +376,11 @@ async function main() {
     for (const s of bView) for (const d of s.documents) assert.ok(String(d.originalFileName ?? '').startsWith('b'), 'only company B documents in B');
     assert.deepEqual(normalise(await compliance.getGuardSummariesForCompany([], A.companyId)), []);
     pass('PS-10 tenant isolation: the same Guards seen by company B show only B\'s documents, records and checks');
+
+    await ds.query('UPDATE company_guards SET status = $1 WHERE "companyId" = $2 AND "guardId" = $3', [CompanyGuardStatus.BLOCKED, A.companyId, guards[5].guardId]);
+    const afterBlock = normalise(await compliance.listStatusesForCompanyUser(A.userId, UserRole.COMPANY));
+    assert.deepEqual(afterBlock, perGuard.filter((s: any) => s.guardId !== guards[5].guardId), 'a BLOCKED Guard leaves the live list; the others are unchanged');
+    pass('PS-10b SEC-001B 2A: a BLOCKED relationship is not on the live compliance list');
   } finally {
     diag.detach();
     await app.close();

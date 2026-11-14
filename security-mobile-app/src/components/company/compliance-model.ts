@@ -64,8 +64,9 @@ export function normalizeStatus(value?: string | null): ComplianceStatusKey {
 
 /**
  * One row per Guard the backend returned a summary for, plus one Unknown row for every Guard that has an
- * ACTIVE/BLOCKED Company relationship but no summary (so a missing summary is visible, never silently Valid).
- * INACTIVE relationships are outside the backend compliance population and are not listed.
+ * ACTIVE Company relationship but no summary (so a missing summary is visible, never silently Valid).
+ * INACTIVE and BLOCKED relationships are outside the backend's live compliance population (SEC-001B 2A) and are not
+ * listed: a former Guard must not reappear here as Unknown.
  */
 export function buildComplianceRows(
   summaries: GuardComplianceSummary[],
@@ -81,7 +82,7 @@ export function buildComplianceRows(
   for (const link of companyGuards) {
     const relationship = String(link.status || '').toUpperCase();
     if (!link.guard || seen.has(link.guard.id)) continue;
-    if (relationship !== 'ACTIVE' && relationship !== 'BLOCKED') continue;
+    if (relationship !== 'ACTIVE') continue;
     seen.add(link.guard.id);
     rows.push({ guardId: link.guard.id, fullName: link.guard.fullName, status: 'unknown', summary: null });
   }

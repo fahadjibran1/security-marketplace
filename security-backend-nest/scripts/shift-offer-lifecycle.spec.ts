@@ -1,7 +1,7 @@
 /**
  * 2C1 PostgreSQL certification for Shift Offer lifecycle hardening.
  *
- * Requires: ROTA_SLOT_TEST_DB_URL (defaults to rehearsal DB at port 54322).
+ * Requires: ROTA_SLOT_TEST_DB_URL — a disposable local s4_ test database. There is no default (see test-database-guard.ts).
  *
  * Tests certified:
  *   ACCEPT            offered → ready; coverage updated
@@ -36,6 +36,8 @@
 
 import 'reflect-metadata';
 
+import { assertDisposableTestDatabase, requireDisposableTestDatabaseUrl } from './test-database-guard';
+
 import { ConflictException, BadRequestException, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { equal, ok, rejects, deepEqual } from 'node:assert/strict';
 import { DataSource, In, LessThan, MoreThan, Repository } from 'typeorm';
@@ -63,13 +65,8 @@ import { LogBookWindowService } from '../src/operations/log-book-window.service'
 import { OperationsProjectionService } from '../src/coverage/operations-projection.service';
 
 const TEST_PREFIX = 'SO-LIFECYCLE-TEST';
-const dbUrl =
-  process.env.ROTA_SLOT_TEST_DB_URL ||
-  'postgresql://postgres:postgres@127.0.0.1:54322/s4_migration_rehearsal';
-
-if (!process.env.ROTA_SLOT_TEST_DB_URL) {
-  console.warn('[shift-offers] ROTA_SLOT_TEST_DB_URL not set — using local rehearsal DB');
-}
+// Fails closed before any connection: no default database (SEC-001B 2A test-database guard).
+const dbUrl = requireDisposableTestDatabaseUrl('ROTA_SLOT_TEST_DB_URL');
 
 // ── Audit capture ─────────────────────────────────────────────────────────────
 
@@ -1447,6 +1444,8 @@ async function main() {
   const ds = new DataSource(buildTypeOrmOptions({
     DATABASE_URL: dbUrl, DATABASE_SSL: 'false', DATABASE_SYNCHRONIZE: 'false', NODE_ENV: 'test',
   }));
+
+  await assertDisposableTestDatabase(dbUrl);
 
   await ds.initialize();
   console.log('[shift-offers] Connected to PostgreSQL');

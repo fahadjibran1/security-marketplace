@@ -3,6 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
+import {
+  GuardRelationshipAccess,
+  findGuardRelationship,
+  relationshipStatusesFor,
+} from '../company-guard/relationship-access';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationType } from '../notification/entities/notification.entity';
@@ -146,8 +151,10 @@ export class GuardComplianceService {
   async listStatusesForCompanyUser(userId: number, userRole: UserRole, status?: GuardComplianceStatus) {
     const { company } = await this.membershipService.resolveCompanyContext(userId, userRole, CompanyPermission.COMPLIANCE_VIEW);
 
+    // A live status of the guard's current licence and right to work: ACTIVE relationships only (SEC-001B 2A).
+    // A BLOCKED or INACTIVE former employer keeps its own records, checks and document list, not this live view.
     const links = await this.companyGuardRepo.find({
-      where: { company: { id: company.id }, status: In([CompanyGuardStatus.ACTIVE, CompanyGuardStatus.BLOCKED]) },
+      where: { company: { id: company.id }, status: In([...relationshipStatusesFor(GuardRelationshipAccess.CURRENT)]) },
       order: { id: 'DESC' },
     });
 
@@ -363,17 +370,35 @@ export class GuardComplianceService {
   }
 
   /**
-   * A Company may write compliance data for a Guard only when that Guard is related to the Company: an
-   * existing CompanyGuard relationship, or an eligible pre-hire application (under_review, open job).
-   * The Company must come from resolveCompanyContext — never from the request body. An unrelated or
-   * non-existent Guard yields the same 403, so Guard ids cannot be enumerated.
+   * A Company may write compliance data for a Guard only while that Guard is related to the Company: an
+   * ACTIVE CompanyGuard relationship, or an eligible pre-hire application (under_review, open job).
+   * An INACTIVE or BLOCKED former employer may not (SEC-001B 2A); it keeps reading its own records.
+   * The Company must come from resolveCompanyContext — never from the request body. An unrelated,
+   * non-existent or former Guard yields the same 403, so Guard ids cannot be enumerated.
    */
   async authorizeGuardForCompanyMutation(companyId: number, guardId: number): Promise<number> {
-    const links = await this.companyGuardRepo.find({
-      where: { company: { id: companyId }, guard: { id: guardId } },
-    });
-    if (links.length) return guardId;
+    if (await findGuardRelationship(this.companyGuardRepo, companyId, guardId, GuardRelationshipAccess.WRITE)) return guardId;
     return (await this.preHireAuthorization.authorize(companyId, guardId)).guard.id;
+  }
+
+  /**
+   * Whether a Company may act on one of its existing documents for this Guard now — verify it, complete its upload or
+   * obtain its evidence file: an ACTIVE relationship or an eligible pre-hire application. A former employer keeps the
+   * document's metadata in its history (listDocumentsForCompanyUser), not the evidence or the right to change it.
+   * Refused exactly as a document of another company is (404), so nothing distinguishes the two.
+   */
+  private async assertCompanyMayActOnDocument(companyId: number, document: GuardDocument): Promise<void> {
+    const guardId = document.guard?.id;
+    if (guardId && await findGuardRelationship(this.companyGuardRepo, companyId, guardId, GuardRelationshipAccess.WRITE)) return;
+    try {
+      if (guardId) {
+        await this.preHireAuthorization.authorize(companyId, guardId);
+        return;
+      }
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+    }
+    throw new NotFoundException('Guard document not found');
   }
 
   async verifyDocumentForCompanyUser(userId: number, userRole: UserRole, documentId: number, verified: boolean) {
@@ -383,6 +408,7 @@ export class GuardComplianceService {
       where: { id: documentId, company: { id: company.id } },
     });
     if (!document) throw new NotFoundException('Guard document not found');
+    await this.assertCompanyMayActOnDocument(company.id, document);
     if (!document.uploadCompletedAt) throw new BadRequestException('Evidence upload is not complete');
 
     const beforeVerification = { verified: document.verified };
@@ -529,6 +555,8 @@ export class GuardComplianceService {
       // evidence file requires compliance.manage (see VIEWER_PERMISSIONS and p1i PERMISSION-12).
       const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.COMPLIANCE_MANAGE);
       document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
+      // Evidence files are released only while the relationship is ACTIVE (or pre-hire): SEC-001B 2A.
+      if (document) await this.assertCompanyMayActOnDocument(company.id, document);
     } else {
       throw new ForbiddenException('Compliance evidence access is not permitted');
     }
@@ -564,6 +592,7 @@ export class GuardComplianceService {
     } else if (isCompanyRole(user.role)) {
       const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.COMPLIANCE_MANAGE);
       document = await this.findDocumentForAccess({ id: documentId, company: { id: company.id } });
+      if (document) await this.assertCompanyMayActOnDocument(company.id, document);
     } else {
       throw new ForbiddenException('Compliance evidence access is not permitted');
     }
