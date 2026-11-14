@@ -19,7 +19,7 @@ export class LeaveController {
   @Get()
   @Roles(...COMPANY_VIEW_ROLES)
   listForCompany(@CurrentUser() user: JwtPayload) {
-    return this.leaveService.listForCompanyUser(user.sub);
+    return this.leaveService.listForCompanyUser(user.sub, user.role);
   }
 
   @Get('mine')
@@ -28,16 +28,23 @@ export class LeaveController {
     return this.leaveService.listForGuardUser(user.sub);
   }
 
+  /** The companies the guard can send a leave request to: their ACTIVE employers ({ companyId, name }). */
+  @Get('mine/companies')
+  @Roles(UserRole.GUARD)
+  listMyLeaveCompanies(@CurrentUser() user: JwtPayload) {
+    return this.leaveService.listLeaveCompaniesForGuardUser(user.sub);
+  }
+
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
   createForCompany(@CurrentUser() user: JwtPayload, @Body() dto: UpsertGuardLeaveDto) {
-    return this.leaveService.upsertForCompanyUser(user.sub, dto);
+    return this.leaveService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
   updateForCompany(@CurrentUser() user: JwtPayload, @Body() dto: UpsertGuardLeaveDto) {
-    return this.leaveService.upsertForCompanyUser(user.sub, dto);
+    return this.leaveService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
   @Post('mine')

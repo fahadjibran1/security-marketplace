@@ -13,6 +13,15 @@ export class UpsertGuardLeaveDto {
   @Min(1)
   guardId?: number;
 
+  /**
+   * Guard requests only: the ACTIVE employer the request is for. Required when the guard works for more than one
+   * company; optional (and checked) otherwise. Company requests always use the company's own context.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  companyId?: number;
+
   @IsEnum(GuardLeaveType)
   leaveType!: GuardLeaveType;
 

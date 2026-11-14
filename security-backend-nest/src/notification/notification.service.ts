@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { MoreThanOrEqual, Not, Repository } from 'typeorm';
 import {
   Notification,
   NotificationStatus,
   NotificationType,
 } from './entities/notification.entity';
 import { CompanyService } from '../company/company.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { UserRole } from '../user/entities/user.entity';
 
 type NotificationInput = {
   userId: number;
@@ -23,6 +25,7 @@ export class NotificationService {
     @InjectRepository(Notification)
     private readonly notificationRepo: Repository<Notification>,
     private readonly companyService: CompanyService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
   createForUser(input: NotificationInput): Promise<Notification> {
@@ -67,12 +70,18 @@ export class NotificationService {
     });
   }
 
-  async findForCompany(userId: number): Promise<Notification[]> {
-    const company = await this.companyService.findByUserId(userId);
-    if (!company) throw new NotFoundException('Company not found');
+  /**
+   * The company inbox (SEC-001B 2B): owner-only, as before membership resolution, and without notifications addressed
+   * to guards. A guard's notification may carry the company it concerns (an application outcome, a timesheet
+   * decision), but it belongs to the guard's own inbox (findMine), not the company's.
+   */
+  async findForCompany(userId: number, userRole: UserRole): Promise<Notification[]> {
+    const { company } = await this.membershipService.resolveOwnerCompanyContext(
+      userId, userRole, () => new NotFoundException('Company not found'),
+    );
 
     return this.notificationRepo.find({
-      where: { company: { id: company.id } },
+      where: { company: { id: company.id }, user: { role: Not(UserRole.GUARD) } },
       order: { createdAt: 'DESC' },
     });
   }

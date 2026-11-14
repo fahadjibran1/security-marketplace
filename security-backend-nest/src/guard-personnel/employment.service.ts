@@ -11,6 +11,7 @@ import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { GuardRelationshipAccess, requireGuardRelationship } from '../company-guard/relationship-access';
 import { User } from '../user/entities/user.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { EncryptionService } from './encryption.service';
 import {
   CompanyGuardEmployment,
@@ -37,6 +38,7 @@ export class EmploymentService {
     private readonly userRepo: Repository<User>,
     private readonly encryptionService: EncryptionService,
     private readonly auditLogService: AuditLogService,
+    private readonly membershipService: CompanyMembershipService,
   ) {}
 
   // ── Guard self-service (read-only list across all companies) ─────────────────
@@ -277,14 +279,14 @@ export class EmploymentService {
     return guard;
   }
 
+  // The company through membership resolution (SEC-001B 2B): owner-only, as when it was the owner's company profile,
+  // so no staff role gains access; a SUSPENDED or REVOKED membership is refused, owners included.
   private async requireCompanyIdForUser(userId: number): Promise<number> {
-    const user = await this.userRepo.findOne({
-      where: { id: userId },
-      relations: ['companyProfile'],
-    });
-    const companyId = user?.companyProfile?.id;
-    if (!companyId) throw new ForbiddenException('No company profile associated with this account');
-    return companyId;
+    const refusal = () => new ForbiddenException('No company profile associated with this account');
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw refusal();
+    const { company } = await this.membershipService.resolveOwnerCompanyContext(userId, user.role, refusal);
+    return company.id;
   }
 
   // Verifies tenant ownership (Company owns the CompanyGuard) without requiring ACTIVE status.

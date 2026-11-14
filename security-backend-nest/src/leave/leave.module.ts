@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { CompanyModule } from '../company/company.module';
+import { CompanyMembershipModule } from '../company-membership/company-membership.module';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
 import { GuardProfileModule } from '../guard-profile/guard-profile.module';
 import { GuardLeave } from './entities/guard-leave.entity';
@@ -15,6 +16,7 @@ import { LeaveService } from './leave.service';
     CompanyModule,
     GuardProfileModule,
     AuditLogModule,
+    CompanyMembershipModule,
   ],
   controllers: [LeaveController],
   providers: [LeaveService],

@@ -104,6 +104,29 @@ export class CompanyMembershipService {
   }
 
   /**
+   * Company context for routes that, before membership resolution, were reachable only by the company owner (they
+   * looked the company up by owner account). Resolution goes through `resolveCompanyContext`, so a SUSPENDED or
+   * REVOKED membership is refused — owners included — with its usual 403. Any other non-owner (staff of any role,
+   * or no company at all) gets `refusal()`, the route's existing response, so no staff role gains access and the
+   * refusal does not change shape (SEC-001B 2B).
+   */
+  async resolveOwnerCompanyContext(
+    userId: number,
+    userRole: UserRole,
+    refusal: () => Error,
+  ): Promise<CompanyContext> {
+    let context: CompanyContext;
+    try {
+      context = await this.resolveCompanyContext(userId, userRole);
+    } catch (error) {
+      if (error instanceof NotFoundException) throw refusal();
+      throw error;
+    }
+    if (context.membershipRole !== CompanyMembershipRole.OWNER) throw refusal();
+    return context;
+  }
+
+  /**
    * Pre-condition check for invitation acceptance (Phase 2 acceptance endpoint must call this).
    *
    * Policy (P1I v1):
