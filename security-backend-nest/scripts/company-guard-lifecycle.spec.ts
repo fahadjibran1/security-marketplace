@@ -1,7 +1,7 @@
 /**
  * 2D1 PostgreSQL certification for Company Guard relationship hardening.
  *
- * Requires: ROTA_SLOT_TEST_DB_URL (defaults to rehearsal DB at port 54322).
+ * Requires: ROTA_SLOT_TEST_DB_URL — a disposable local s4_ test database. There is no default (see test-database-guard.ts).
  *
  * Tests certified:
  *   LINK-REFUSED       Company GUARDS_MANAGE cannot link an unlinked guard by id → 403, no row created
@@ -28,6 +28,8 @@
  */
 
 import 'reflect-metadata';
+
+import { assertDisposableTestDatabase, requireDisposableTestDatabaseUrl } from './test-database-guard';
 
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { equal, ok, rejects, notEqual } from 'node:assert/strict';
@@ -71,13 +73,8 @@ import { LogBookWindowService } from '../src/operations/log-book-window.service'
 import { OperationsProjectionService } from '../src/coverage/operations-projection.service';
 
 const TEST_PREFIX = 'CG-LIFECYCLE-TEST';
-const dbUrl =
-  process.env.ROTA_SLOT_TEST_DB_URL ||
-  'postgresql://postgres:postgres@127.0.0.1:54322/s4_migration_rehearsal';
-
-if (!process.env.ROTA_SLOT_TEST_DB_URL) {
-  console.warn('[company-guards] ROTA_SLOT_TEST_DB_URL not set — using local rehearsal DB');
-}
+// Fails closed before any connection: no default database (SEC-001B 2A test-database guard).
+const dbUrl = requireDisposableTestDatabaseUrl('ROTA_SLOT_TEST_DB_URL');
 
 // ── Stubs ──────────────────────────────────────────────────────────────────────
 
@@ -858,6 +855,8 @@ async function run() {
     synchronize: false,
     logging: false,
   } as any);
+
+  await assertDisposableTestDatabase(dbUrl);
 
   await ds.initialize();
 

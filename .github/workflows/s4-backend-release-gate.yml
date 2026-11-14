@@ -130,6 +130,10 @@ jobs:
       S3_ACCEPTANCE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_s3_acceptance
       COMPANY_GUARD_LINK_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_guard_link
       COMPANY_PRIVACY_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_company_privacy
+      FORMER_EMPLOYER_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_former_employer
+      # app-boot (end of test:release) needs an explicit disposable database; it has no fallback. Boot is read-only:
+      # synchronize is off and migrations are not run, so the clean-database migration step below still starts clean.
+      APP_BOOT_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_release_gate
 
     steps:
       - name: Checkout repository
@@ -245,7 +249,7 @@ jobs:
       - name: Create compliance, alert security and database performance certification databases
         shell: bash
         run: |
-          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation s4_perf_p2 s4_perf_p3 s4_live_ops_correctness s4_shift_reconciliation s4_shift_edit_security s4_reacceptance s4_shift_amendment s4_m64_migration s4_m65_migration s4_welfare_push s4_m66_migration s4_guard_notifications s4_replace_guard s4_welfare_alert s4_welfare_monitoring s4_operations_export s4_early_book_off s4_m67_migration s4_manual_attendance s4_timesheet_review s4_m68_migration s4_patrol_foundation s4_m69_migration s4_patrol_schedule s4_m70_migration s4_patrol_evidence s4_m71_migration s4_patrol_reconciliation s4_m72_migration s4_m73_migration s4_patrol_recovery s4_patrol_dashboard s4_patrol_evidence_thumbnails s4_m74_migration s4_patrol_site_setup s4_patrol_evidence_b1 s4_patrol_monitor s4_m75_migration s4_patrol_assignment s4_patrol_alert_atomic s4_patrol_operations s4_s3_acceptance s4_company_guard_link s4_company_privacy; do
+          for db in s4_m62_migration s4_compliance_checks s4_book_on_compliance s4_m63_migration s4_compliance_lapse s4_alert_security s4_pool_diagnostics s4_perf_stabilisation s4_perf_p2 s4_perf_p3 s4_live_ops_correctness s4_shift_reconciliation s4_shift_edit_security s4_reacceptance s4_shift_amendment s4_m64_migration s4_m65_migration s4_welfare_push s4_m66_migration s4_guard_notifications s4_replace_guard s4_welfare_alert s4_welfare_monitoring s4_operations_export s4_early_book_off s4_m67_migration s4_manual_attendance s4_timesheet_review s4_m68_migration s4_patrol_foundation s4_m69_migration s4_patrol_schedule s4_m70_migration s4_patrol_evidence s4_m71_migration s4_patrol_reconciliation s4_m72_migration s4_m73_migration s4_patrol_recovery s4_patrol_dashboard s4_patrol_evidence_thumbnails s4_m74_migration s4_patrol_site_setup s4_patrol_evidence_b1 s4_patrol_monitor s4_m75_migration s4_patrol_assignment s4_patrol_alert_atomic s4_patrol_operations s4_s3_acceptance s4_company_guard_link s4_company_privacy s4_former_employer; do
             PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE $db;"
           done
 

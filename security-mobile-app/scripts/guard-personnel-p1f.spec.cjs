@@ -84,7 +84,8 @@ test('guard DTO includes companyGuardId companyId companyName guardId', () => {
 
 test('service requires active company-guard relationship for company access', () => {
   assert.match(service, /requireOwnedActiveRelationship/);
-  assert.match(service, /CompanyGuardStatus\.ACTIVE/);
+  // SEC-001B 2A: the ACTIVE requirement now comes from the shared relationship-access helper (WRITE = ACTIVE only).
+  assert.match(service, /CompanyGuardStatus\.ACTIVE|GuardRelationshipAccess\.WRITE/);
 });
 
 test('service maps each record to toGuardDto returning companyName from relation', () => {
@@ -803,17 +804,20 @@ test('service getEmploymentForCompany audit does not log note content or ciphert
   assert.doesNotMatch(auditBlock, /internalNoteEnc/);
 });
 
-test('service upsertEmploymentForCompany uses requireOwnedRelationship (not active-only)', () => {
+// SEC-001B 2A (owner-approved): a former employer (INACTIVE/BLOCKED) may no longer create OR edit the employment record.
+// Reads stay on requireOwnedRelationship (history); the write path is ACTIVE-only. Runtime proof:
+// security-backend-nest/scripts/former-employer-access.spec.ts (WRITES-DENIED, NO-CHANGE, HISTORY).
+test('service upsertEmploymentForCompany requires an ACTIVE relationship to create or edit (SEC-001B 2A)', () => {
   const upsertIdx = service.indexOf('upsertEmploymentForCompany(');
-  const fn = service.slice(upsertIdx, upsertIdx + 600);
-  assert.match(fn, /requireOwnedRelationship\(/);
-  assert.doesNotMatch(fn, /requireOwnedActiveRelationship/);
+  const fn = service.slice(upsertIdx, upsertIdx + 900);
+  assert.match(fn, /requireOwnedActiveRelationship\(/);
+  assert.doesNotMatch(fn, /requireOwnedRelationship\(/);
 });
 
-test('service upsert blocks first-create when relationship not ACTIVE', () => {
-  const upsertIdx = service.indexOf('upsertEmploymentForCompany(');
-  const fn = service.slice(upsertIdx, upsertIdx + 1800);
-  assert.match(fn, /isCreating.*CompanyGuardStatus\.ACTIVE|CompanyGuardStatus\.ACTIVE.*isCreating/s);
+test('service getEmploymentForCompany still reads history for any relationship status', () => {
+  const getIdx = service.indexOf('async getEmploymentForCompany(');
+  const fn = service.slice(getIdx, getIdx + 600);
+  assert.match(fn, /requireOwnedRelationship\(/);
 });
 
 test('service upsert does not modify CompanyGuard status (cross-domain isolation)', () => {
@@ -834,13 +838,13 @@ test('service getEmploymentForCompanyStaff requires ACTIVE relationship (INACTIV
   assert.match(fn, /requireOwnedActiveRelationship/);
 });
 
-test('service requireOwnedActiveRelationship retained for CompanyStaff use only', () => {
+test('service requireOwnedActiveRelationship enforces ACTIVE (company writes and CompanyStaff reads)', () => {
   assert.match(service, /requireOwnedActiveRelationship/);
-  // It is now a separate helper — verify it still enforces ACTIVE
+  // A separate helper — verify it still enforces ACTIVE (directly, or via the shared WRITE access = ACTIVE only)
   const defIdx = service.lastIndexOf('private async requireOwnedActiveRelationship');
   assert.ok(defIdx !== -1);
   const fn = service.slice(defIdx, defIdx + 600);
-  assert.match(fn, /CompanyGuardStatus\.ACTIVE/);
+  assert.match(fn, /CompanyGuardStatus\.ACTIVE|GuardRelationshipAccess\.WRITE/);
 });
 
 // ── SUMMARY ───────────────────────────────────────────────────────────────────

@@ -208,6 +208,24 @@ const ROWS = model.buildComplianceRows([summary(1, 'valid'), summary(2, 'expired
     assert.match(availability, /<WebSelect value=\{guardFilter\} onChange=\{setGuardFilter\}/);
   });
 
+  await test('AVAILABILITY-ACTIVE-ONLY (SEC-001B 2A): the selector offers ACTIVE Guards only; a former Guard target shows everyone', () => {
+    const links = [
+      { id: 1, status: 'ACTIVE', guard: { id: 1 } },
+      { id: 2, status: 'INACTIVE', guard: { id: 2 } },
+      { id: 3, status: 'BLOCKED', guard: { id: 3 } },
+      { id: 4, status: 'active', guard: { id: 4 } },
+      { id: 5, guard: { id: 5 } },
+    ];
+    assert.deepEqual(nav.activeAvailabilityGuards(links).map((link) => link.id), [1, 4], 'INACTIVE, BLOCKED and status-less links are dropped');
+    assert.deepEqual(nav.activeAvailabilityGuards([]), []);
+    const active = nav.activeAvailabilityGuards(links);
+    for (const former of [2, 3]) assert.deepEqual(nav.planAvailabilityTarget(active, former), { found: false, guardFilter: '' });
+    assert.deepEqual(nav.planAvailabilityTarget(active, 1), { found: true, guardFilter: '1' });
+    // Wiring: the one Guard list behind the selector, the leave form and the target planner is filtered once, on load.
+    assert.match(availability, /setGuards\(activeAvailabilityGuards\(nextGuards\)\)/);
+    assert.doesNotMatch(availability, /setGuards\(nextGuards\)/);
+  });
+
   await test('TARGET-AVAILABILITY-INVALID: an unavailable Guard shows everyone — never an unrelated Guard', () => {
     const list = [{ id: 1, guard: { id: 1 } }, { id: 2, guard: { id: 5 } }];
     for (const missing of [99, 0]) assert.deepEqual(nav.planAvailabilityTarget(list, missing), { found: false, guardFilter: '' });

@@ -8,6 +8,11 @@ import { UserRole } from '../user/entities/user.entity';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
+import {
+  GuardRelationshipAccess,
+  guardIdsWithAccess,
+  requireGuardRelationship,
+} from '../company-guard/relationship-access';
 import { ComplianceService } from '../compliance/compliance.service';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { LeaveService } from '../leave/leave.service';
@@ -19,6 +24,8 @@ import {
   GuardAvailabilityOverrideStatus,
 } from './entities/guard-availability-override.entity';
 import { GuardAvailabilityRule } from './entities/guard-availability-rule.entity';
+
+const GUARD_NOT_IN_COMPANY_MESSAGE = 'Guard does not belong to this company.';
 
 export type GuardEligibilityResult = {
   guardId: number;
@@ -49,38 +56,16 @@ export class AvailabilityService {
 
   async listRulesForCompanyUser(userId: number, userRole: UserRole, guardId?: number) {
     const company = await this.getCompany(userId, userRole, CompanyPermission.SHIFTS_VIEW);
-    const guardIds = await this.getCompanyGuardIds(company.id);
-    if (!guardIds.length) return [];
-    if (guardId && !guardIds.includes(guardId)) {
-      throw new ForbiddenException('Guard does not belong to this company.');
-    }
-
-    const targetGuardIds = guardId ? [guardId] : guardIds;
-    return this.ruleRepo.find({
-      where: [
-        ...targetGuardIds.map((id) => ({ company: { id: company.id }, guard: { id } })),
-        ...targetGuardIds.map((id) => ({ company: IsNull(), guard: { id } })),
-      ],
-      order: { weekday: 'ASC', startTime: 'ASC' },
-    });
+    const where = await this.companyAvailabilityScope(company.id, guardId);
+    if (!where.length) return [];
+    return this.ruleRepo.find({ where, order: { weekday: 'ASC', startTime: 'ASC' } });
   }
 
   async listOverridesForCompanyUser(userId: number, userRole: UserRole, guardId?: number) {
     const company = await this.getCompany(userId, userRole, CompanyPermission.SHIFTS_VIEW);
-    const guardIds = await this.getCompanyGuardIds(company.id);
-    if (!guardIds.length) return [];
-    if (guardId && !guardIds.includes(guardId)) {
-      throw new ForbiddenException('Guard does not belong to this company.');
-    }
-
-    const targetGuardIds = guardId ? [guardId] : guardIds;
-    return this.overrideRepo.find({
-      where: [
-        ...targetGuardIds.map((id) => ({ company: { id: company.id }, guard: { id } })),
-        ...targetGuardIds.map((id) => ({ company: IsNull(), guard: { id } })),
-      ],
-      order: { date: 'DESC', startTime: 'ASC' },
-    });
+    const where = await this.companyAvailabilityScope(company.id, guardId);
+    if (!where.length) return [];
+    return this.overrideRepo.find({ where, order: { date: 'DESC', startTime: 'ASC' } });
   }
 
   async listRulesForGuardUser(userId: number) {
@@ -416,17 +401,32 @@ export class AvailabilityService {
     return company;
   }
 
-  private async getCompanyGuardIds(companyId: number) {
-    const rows = await this.companyGuardRepo.find({ where: { company: { id: companyId } } });
-    return rows.map((row) => row.guard.id);
+  /**
+   * The availability rows a company may read (SEC-001B 2A). Its own rows (company = this company) for every guard it
+   * has or had a relationship with: that is its history. The guard's own rows (company IS NULL) are the guard's
+   * current personal data, so only for guards whose relationship is ACTIVE. A guardId with no relationship at all is
+   * refused; an empty result means there is nothing to read.
+   */
+  private async companyAvailabilityScope(companyId: number, guardId?: number) {
+    const historyIds = await guardIdsWithAccess(this.companyGuardRepo, companyId, GuardRelationshipAccess.HISTORY);
+    if (guardId && !historyIds.includes(guardId)) {
+      throw new ForbiddenException(GUARD_NOT_IN_COMPANY_MESSAGE);
+    }
+    const targets = guardId ? [guardId] : historyIds;
+    if (!targets.length) return [];
+    const currentIds = new Set(await guardIdsWithAccess(this.companyGuardRepo, companyId, GuardRelationshipAccess.CURRENT));
+    return [
+      ...targets.map((id) => ({ company: { id: companyId }, guard: { id } })),
+      ...targets.filter((id) => currentIds.has(id)).map((id) => ({ company: IsNull(), guard: { id } })),
+    ];
   }
 
+  /** Writing a guard's availability needs an ACTIVE relationship; any other case gets the same refusal. */
   private async ensureCompanyGuard(companyId: number, guardId: number) {
-    const relation = await this.companyGuardRepo.findOne({
-      where: { company: { id: companyId }, guard: { id: guardId } },
-    });
-    if (!relation) throw new ForbiddenException('Guard does not belong to this company.');
-    return relation;
+    return requireGuardRelationship(
+      this.companyGuardRepo, companyId, guardId, GuardRelationshipAccess.WRITE,
+      () => new ForbiddenException(GUARD_NOT_IN_COMPANY_MESSAGE),
+    );
   }
 
   private dateKey(value: Date) {

@@ -7,7 +7,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
-import { CompanyGuard, CompanyGuardStatus } from '../company-guard/entities/company-guard.entity';
+import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
+import { GuardRelationshipAccess, requireGuardRelationship } from '../company-guard/relationship-access';
 import { User } from '../user/entities/user.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EncryptionService } from './encryption.service';
@@ -81,15 +82,12 @@ export class EmploymentService {
     dto: UpdateCompanyGuardEmploymentDto,
     meta: RequestMeta,
   ): Promise<EmploymentCompanyResponseDto> {
-    const { companyId, companyGuard } = await this.requireOwnedRelationship(companyUserId, guardId);
+    // Creating OR changing the employment record needs an ACTIVE relationship (SEC-001B 2A). A former employer keeps
+    // reading the record (getEmploymentForCompany) but can no longer edit it, including its dates and internal note.
+    // Unrelated and former guards get the same refusal.
+    const { companyId, companyGuard } = await this.requireOwnedActiveRelationship(companyUserId, guardId);
     const existing = await this.findWithSensitive(companyGuard.id);
     const isCreating = !existing;
-
-    if (isCreating && companyGuard.status !== CompanyGuardStatus.ACTIVE) {
-      throw new ForbiddenException(
-        'Employment records can only be created while the guard relationship is active',
-      );
-    }
 
     if (isCreating) {
       const missing: string[] = [];
@@ -309,22 +307,16 @@ export class EmploymentService {
     return { companyId, companyGuard };
   }
 
-  // Verifies ACTIVE status — used for CompanyStaff access where historical records are denied.
+  // Verifies ACTIVE status — used for every company write, and for CompanyStaff reads where historical records are denied.
   private async requireOwnedActiveRelationship(
     companyUserId: number,
     guardId: number,
   ): Promise<{ companyId: number; companyGuard: CompanyGuard }> {
     const companyId = await this.requireCompanyIdForUser(companyUserId);
-    const companyGuard = await this.companyGuardRepo.findOne({
-      where: {
-        company: { id: companyId },
-        guard: { id: guardId },
-        status: CompanyGuardStatus.ACTIVE,
-      },
-    });
-    if (!companyGuard) {
-      throw new ForbiddenException('No active relationship between this company and guard');
-    }
+    const companyGuard = await requireGuardRelationship(
+      this.companyGuardRepo, companyId, guardId, GuardRelationshipAccess.WRITE,
+      () => new ForbiddenException('No active relationship between this company and guard'),
+    );
     return { companyId, companyGuard };
   }
 

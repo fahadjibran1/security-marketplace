@@ -5,6 +5,7 @@ import { LessThan, MoreThan, Repository } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CompanyService } from '../company/company.service';
 import { CompanyGuard } from '../company-guard/entities/company-guard.entity';
+import { GuardRelationshipAccess, requireGuardRelationship } from '../company-guard/relationship-access';
 import { GuardProfileService } from '../guard-profile/guard-profile.service';
 import { UpsertGuardLeaveDto } from './dto/upsert-guard-leave.dto';
 import { GuardLeave, GuardLeaveStatus } from './entities/guard-leave.entity';
@@ -36,12 +37,12 @@ export class LeaveService {
     if (!company) throw new NotFoundException('Company not found');
     if (!dto.guardId) throw new BadRequestException('Guard is required for company leave records.');
 
-    const relation = await this.companyGuardRepo.findOne({
-      where: { company: { id: company.id }, guard: { id: dto.guardId } },
-    });
-    if (!relation) {
-      throw new ForbiddenException('Guard does not belong to the current company.');
-    }
+    // Creating or changing leave is a write: ACTIVE relationship only (SEC-001B 2A). A former employer keeps reading
+    // the leave it recorded (listForCompanyUser) but cannot add or edit it; every refusal looks the same.
+    await requireGuardRelationship(
+      this.companyGuardRepo, company.id, dto.guardId, GuardRelationshipAccess.WRITE,
+      () => new ForbiddenException('Guard does not belong to the current company.'),
+    );
 
     return this.upsert({
       companyId: company.id,

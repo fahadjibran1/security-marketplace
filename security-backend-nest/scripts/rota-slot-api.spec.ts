@@ -1,7 +1,7 @@
 /**
  * R4B3 PostgreSQL certification for RotaSlot API + Week aggregation.
  *
- * Requires: ROTA_SLOT_TEST_DB_URL (defaults to rehearsal DB at port 54322).
+ * Requires: ROTA_SLOT_TEST_DB_URL — a disposable local s4_ test database. There is no default (see test-database-guard.ts).
  *
  * Tests certified:
  *   CREATE-15     POST a 15-guard slot → 15 child positions
@@ -18,6 +18,8 @@
  */
 
 import 'reflect-metadata';
+
+import { assertDisposableTestDatabase, requireDisposableTestDatabaseUrl } from './test-database-guard';
 
 import { deepEqual, equal, ok, rejects } from 'node:assert/strict';
 import { DataSource, In } from 'typeorm';
@@ -36,13 +38,8 @@ import { CompanyGuard, CompanyGuardStatus } from '../src/company-guard/entities/
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 const TEST_PREFIX = 'ROTA-API-TEST';
-const dbUrl =
-  process.env.ROTA_SLOT_TEST_DB_URL ||
-  'postgresql://postgres:postgres@127.0.0.1:54322/s4_migration_rehearsal';
-
-if (!process.env.ROTA_SLOT_TEST_DB_URL) {
-  console.warn('[rota-api] ROTA_SLOT_TEST_DB_URL not set — using local rehearsal DB');
-}
+// Fails closed before any connection: no default database (SEC-001B 2A test-database guard).
+const dbUrl = requireDisposableTestDatabaseUrl('ROTA_SLOT_TEST_DB_URL');
 
 // ── Stubs ─────────────────────────────────────────────────────────────────────
 
@@ -615,6 +612,7 @@ async function main() {
   const ds = new DataSource(buildTypeOrmOptions({
     DATABASE_URL: dbUrl, DATABASE_SSL: 'false', DATABASE_SYNCHRONIZE: 'false', NODE_ENV: 'test',
   }));
+  await assertDisposableTestDatabase(dbUrl);
   await ds.initialize();
 
   try {

@@ -17,6 +17,8 @@
  */
 import 'reflect-metadata';
 
+import { assertDisposableTestDatabase, requireDisposableTestDatabaseUrl } from './test-database-guard';
+
 import { ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import { equal, ok } from 'node:assert/strict';
 import { DataSource } from 'typeorm';
@@ -47,13 +49,8 @@ import { Timesheet } from '../src/timesheet/entities/timesheet.entity';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
 const TEST_PREFIX = 'RAC-TEST';
-const dbUrl =
-  process.env.ROTA_SLOT_TEST_DB_URL ||
-  'postgresql://postgres:postgres@127.0.0.1:54322/s4_migration_rehearsal';
-
-if (!process.env.ROTA_SLOT_TEST_DB_URL) {
-  console.warn('[rota-assignment-concurrency] ROTA_SLOT_TEST_DB_URL not set — using local rehearsal DB');
-}
+// Fails closed before any connection: no default database (SEC-001B 2A test-database guard).
+const dbUrl = requireDisposableTestDatabaseUrl('ROTA_SLOT_TEST_DB_URL');
 
 const CHECK_HOLD_MS = 150;
 const COMMITTED = ['scheduled', 'offered', 'ready', 'in_progress'];
@@ -422,6 +419,7 @@ async function main() {
   const ds = new DataSource(buildTypeOrmOptions({
     DATABASE_URL: dbUrl, DATABASE_SSL: 'false', DATABASE_SYNCHRONIZE: 'false', NODE_ENV: 'test',
   }));
+  await assertDisposableTestDatabase(dbUrl);
   await ds.initialize();
   try {
     await cleanup(ds);
