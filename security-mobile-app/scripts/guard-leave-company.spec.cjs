@@ -43,8 +43,13 @@ test('list → state: 0 none, 1 single, 2+ multiple; malformed and duplicate ent
   assert.equal(L.leaveCompanyStateFromList([{ companyId: 5, name: ' ' }]).company.name, 'Company 5');
 });
 
-test('request failure → state: 404 is a backend without the endpoint (legacy); anything else is a load error', () => {
-  assert.deepEqual(L.leaveCompanyStateFromError(404), { kind: 'legacy' });
+test('request failure → state: only the route-not-found 404 is an older backend; anything else is a load error', () => {
+  const routeMissing = { statusCode: 404, message: 'Cannot GET /leave/mine/companies', error: 'Not Found' };
+  assert.deepEqual(L.leaveCompanyStateFromError(404, routeMissing), { kind: 'legacy' });
+  assert.deepEqual(L.leaveCompanyStateFromError(404, 'Cannot GET /leave/mine/companies'), { kind: 'legacy' });
+  assert.deepEqual(L.leaveCompanyStateFromError(404, { statusCode: 404, message: 'Guard profile not found' }), { kind: 'error' });
+  assert.deepEqual(L.leaveCompanyStateFromError(404), { kind: 'error' });
+  assert.deepEqual(L.leaveCompanyStateFromError(404, { message: 'Cannot GET /something/else' }), { kind: 'error' });
   assert.deepEqual(L.leaveCompanyStateFromError(500), { kind: 'error' });
   assert.deepEqual(L.leaveCompanyStateFromError(401), { kind: 'error' });
   assert.deepEqual(L.leaveCompanyStateFromError(undefined), { kind: 'error' });
@@ -84,15 +89,16 @@ test('no ACTIVE employer: no submission, a clear explanation', () => {
   assert.match(built.message, /do not currently have an active company relationship/);
 });
 
-test('loading blocks submission; legacy and load-error send the pre-2B payload and leave routing to the backend', () => {
+test('loading and load-error block submission (clear Retry state); an older backend gets the pre-2B payload', () => {
   assert.equal(L.canSubmitLeave({ kind: 'loading' }, null), false);
   assert.equal(L.buildNewLeavePayload(form, { kind: 'loading' }, null).ok, false);
-  for (const state of [{ kind: 'legacy' }, { kind: 'error' }]) {
-    assert.equal(L.showsCompanySelector(state), false);
-    const built = L.buildNewLeavePayload(form, state, 22);
-    assert.equal(built.ok, true);
-    assert.equal('companyId' in built.payload, false);
-  }
+  assert.equal(L.canSubmitLeave({ kind: 'error' }, null), false);
+  assert.deepEqual(L.buildNewLeavePayload(form, { kind: 'error' }, 22), { ok: false, message: L.LEAVE_COPY.loadError });
+  assert.equal(L.showsCompanySelector({ kind: 'error' }), false);
+  const legacy = L.buildNewLeavePayload(form, { kind: 'legacy' }, 22);
+  assert.equal(legacy.ok, true);
+  assert.equal(L.showsCompanySelector({ kind: 'legacy' }), false);
+  assert.equal('companyId' in legacy.payload, false, 'companyId never reaches an older backend (it rejects unknown fields)');
 });
 
 test('routing refusal codes are recognised and trigger a company reload', () => {
@@ -238,8 +244,8 @@ test('SCREEN no ACTIVE employer: explanation shown, no form and no submit button
   r.unmount();
 });
 
-test('SCREEN backend without the endpoint (404): behaves exactly as before 2B', async () => {
-  const { api, calls } = stubApi([new FakeApiError(404, { message: 'Cannot GET /leave/mine/companies' })]);
+test('SCREEN backend without the endpoint (route-not-found 404): behaves exactly as before 2B', async () => {
+  const { api, calls } = stubApi([new FakeApiError(404, { statusCode: 404, message: 'Cannot GET /leave/mine/companies', error: 'Not Found' })]);
   const r = await mount(api);
   assert.equal(radios(r.root).length, 0);
   assert.ok(!texts(r.root).some((t) => t.includes('could not be loaded')), 'no error shown for an older backend');
@@ -250,10 +256,31 @@ test('SCREEN backend without the endpoint (404): behaves exactly as before 2B', 
   r.unmount();
 });
 
-test('SCREEN load error: retry offered; retry loads the selector', async () => {
-  const { api, calls } = stubApi([new FakeApiError(503, { message: 'down' }), [A, B]]);
+for (const [label, failure] of [
+  ['server error', new FakeApiError(503, { message: 'down' })],
+  ['other 404 (endpoint exists)', new FakeApiError(404, { statusCode: 404, message: 'Guard profile not found' })],
+  ['network failure', new Error('Network request failed')],
+]) test(`SCREEN load error (${label}): clear Retry state, nothing submitted, typed form kept`, async () => {
+  const { api, calls } = stubApi([failure, [A]]);
   const r = await mount(api);
   assert.ok(texts(r.root).some((t) => t.includes('could not be loaded')));
+  assert.equal(radios(r.root).length, 0);
+  const submit = button(r.root, 'Request leave');
+  assert.equal(submit.props.disabled, true, 'submission disabled until the list loads');
+  await fillLeave(r.root);
+  await press(button(r.root, 'Retry loading your companies'));
+  assert.equal(calls.companies, 2);
+  assert.ok(!texts(r.root).some((t) => t.includes('could not be loaded')), 'error cleared after a successful retry');
+  assert.equal(button(r.root, 'Request leave').props.disabled, false);
+  await press(button(r.root, 'Request leave'));
+  assert.equal(calls.saved.length, 1, 'only one submission, after the retry');
+  assert.equal(calls.saved[0].startAt, '2031-08-04T09:00:00Z', 'what the guard typed before the retry was kept');
+  r.unmount();
+});
+
+test('SCREEN load error then retry to several employers: selector appears', async () => {
+  const { api, calls } = stubApi([new FakeApiError(503, { message: 'down' }), [A, B]]);
+  const r = await mount(api);
   const retry = button(r.root, 'Retry loading your companies');
   assert.ok(retry, 'retry button');
   await press(retry);

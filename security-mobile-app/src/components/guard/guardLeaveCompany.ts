@@ -6,9 +6,11 @@
  *   single    one ACTIVE employer: no selector, no companyId; the backend selects that employer (unchanged behaviour)
  *   multiple  several ACTIVE employers: a selector; the guard must choose; companyId is sent
  *   none      no ACTIVE employer: explain, and do not submit
- *   legacy    the backend predates GET /leave/mine/companies (404): behave exactly as before, no companyId
- *   error     the list could not be loaded: offer a retry; a submission sends no companyId, so the backend still
- *             selects a sole employer and refuses (LEAVE_COMPANY_REQUIRED) rather than guessing between several
+ *   legacy    the backend predates GET /leave/mine/companies (Nest's route-not-found 404, "Cannot GET ..."):
+ *             behave exactly as before, no companyId. The backend rejects unknown fields, so companyId must never
+ *             reach an older backend.
+ *   error     the endpoint exists but the list could not be loaded (any other failure, including other 404s):
+ *             a clear Retry state; nothing is submitted until the list loads
  *
  * The list from GET /leave/mine/companies holds ACTIVE employers only; INACTIVE and BLOCKED companies never appear,
  * and a company id that is not in the current list is never sent.
@@ -37,7 +39,7 @@ export const LEAVE_COPY = {
   chooseCompany: 'Choose the company this leave request is for.',
   noActiveEmployer:
     'Leave cannot be requested because you do not currently have an active company relationship.',
-  loadError: 'Your companies could not be loaded.',
+  loadError: 'Your companies could not be loaded. Retry before requesting leave.',
   retry: 'Retry',
   loading: 'Loading your companies',
 } as const;
@@ -58,9 +60,17 @@ export function leaveCompanyStateFromList(list: unknown): LeaveCompanyState {
   return { kind: 'multiple', companies };
 }
 
-/** The form state when the request failed: a 404 means a backend without the endpoint. */
-export function leaveCompanyStateFromError(status: number | undefined): LeaveCompanyState {
-  return status === 404 ? { kind: 'legacy' } : { kind: 'error' };
+/**
+ * The form state when the request failed. Only Nest's route-not-found response ("Cannot GET /leave/mine/companies")
+ * means an older backend; any other 404 (e.g. "Guard profile not found") or failure is a load error.
+ */
+export function leaveCompanyStateFromError(status: number | undefined, body?: unknown): LeaveCompanyState {
+  return status === 404 && isRouteNotFound(body) ? { kind: 'legacy' } : { kind: 'error' };
+}
+
+function isRouteNotFound(body: unknown): boolean {
+  const message = typeof body === 'string' ? body : body && typeof body === 'object' ? (body as { message?: unknown }).message : undefined;
+  return typeof message === 'string' && message.startsWith('Cannot GET /leave/mine/companies');
 }
 
 /** A selection that is still valid for this state, or null (a stale or foreign id is never kept). */
@@ -79,7 +89,6 @@ export function canSubmitLeave(state: LeaveCompanyState, selectedCompanyId: numb
   switch (state.kind) {
     case 'single':
     case 'legacy':
-    case 'error':
       return true;
     case 'multiple':
       return validSelection(state, selectedCompanyId) !== null;
@@ -108,8 +117,9 @@ export function buildNewLeavePayload(
   switch (state.kind) {
     case 'single':
     case 'legacy':
-    case 'error':
       return { ok: true, payload: base };
+    case 'error':
+      return { ok: false, message: LEAVE_COPY.loadError };
     case 'multiple': {
       const companyId = validSelection(state, selectedCompanyId);
       if (companyId === null) return { ok: false, message: LEAVE_COPY.chooseCompany };
