@@ -134,13 +134,31 @@ import {
   type GuardActionApi,
   type GuardActionOutcome,
 } from '../components/guard/guardActionDispatch';
-import { colors } from '../theme';
+import { brand, colors } from '../theme';
+import { guardColors, guardFontFamily, guardShape, guardType } from '../theme/guard';
 import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
+import { GuardHeader } from '../components/guard/home/GuardHeader';
+import {
+  PROFILE_UNAVAILABLE_MESSAGE,
+  guardProfileFieldsFrom,
+  planGuardProfileSave,
+  type GuardProfileFields,
+} from '../components/guard/profile/guardProfileSave';
+import { GuardOnDutyBar } from '../components/guard/home/GuardOnDutyBar';
+import { guardHomeMode, showOnDutyBar, upcomingShifts } from '../components/guard/home/guardHomeModel';
+import { guardEmergencyPresentation } from '../components/guard/home/guardEmergencyPresentation';
+import { GuardBookOff, GuardRecentActivity, GuardShiftRecords, GuardShiftSummary, GuardWelfareSummary } from '../components/guard/home/GuardOnDutyHome';
+import { GuardNoShift, GuardShiftCard, GuardUpcomingShifts, UPCOMING_SHIFTS_LIMIT } from '../components/guard/home/GuardOffDutyHome';
+import { useGuardHomeLayout } from '../components/guard/home/useGuardHomeLayout';
 
 interface GuardDashboardScreenProps {
   user: AuthUser;
   onLogout: () => void;
+  /** App's resolved product label ("S4", or "S4 UAT · STAGING" in the UAT app), shown in the Guard header. */
+  productLabel?: string;
+  /** True only in the staging-only UAT app; the label is then highlighted. */
+  productIsUat?: boolean;
   /** Called after the server deletes the account; signs out locally. */
   onAccountDeleted?: (message: string) => void | Promise<void>;
 }
@@ -477,9 +495,51 @@ function getPrimaryActionGuidance(phase: GuardShiftPhase): string | null {
   }
 }
 
+/**
+ * S4-UX Stage 4A — the unread (header) and pending-offers (bottom navigation) badges follow the system text scale.
+ *
+ * The badge used to be a fixed 18dp box, so at 2.0x its scaled number was clipped. Its minimum size now grows with the
+ * text (18dp at 1.0x, 23dp at 1.3x, 32dp at 2.0x) and it may grow further: a single digit stays a circle, "12" and
+ * "99+" widen into a pill. The text itself is never capped or excluded from scaling.
+ *
+ * Neither badge takes part in its control's layout any more (both are absolutely positioned), so a count arriving or
+ * clearing never changes the width of the Notifications control, never moves Log out, and never squeezes the Offers
+ * label: the header and the navigation look the same with and without a badge.
+ */
+export function guardBadgeSize(fontScale: number): number {
+  const scale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  // The badge text's scaled 14dp line plus 2dp above and below.
+  return Math.ceil(14 * scale + 4);
+}
 
-export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: GuardDashboardScreenProps) {
+/** Minimum box for a badge of this size: a circle for one digit, a pill as the count widens. */
+export function guardBadgeBox(size: number) {
+  return { minWidth: size, minHeight: size, borderRadius: size / 2 };
+}
+
+/**
+ * The Notifications badge sits on the control's upper-right corner. It overhangs the right edge by 4dp (the actions
+ * keep a 12dp gap, so Log out stays 8dp clear) and rises above the top edge as it grows, so its lower edge stays above
+ * the label's last letters (measured on Android 16 at 1.0x, 1.3x and 2.0x) instead of covering them. At 1.0x it rises
+ * 8dp: exactly the header's top padding when the actions share the title's row, so it never leaves the header.
+ */
+export function guardHeaderBadgeOffset(size: number) {
+  return { top: -Math.round(8 + (size - 18) * 0.65), right: -4 };
+}
+
+/**
+ * The Offers badge sits just above the end of its label (its lower edge on the label's top edge) instead of beside
+ * it, so the label keeps the tab's full width and is never shortened by the count, and the navigation's height does
+ * not change. At large text it may rise above the bar's top border, over the content, which is never clipped.
+ */
+export function guardOffersBadgeOffset(size: number) {
+  return { bottom: '100%' as const, right: -Math.round(size / 4) };
+}
+
+export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, productLabel = brand.appName, productIsUat = false }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
+  const homeLayout = useGuardHomeLayout();
+  const badgeSize = guardBadgeSize(homeLayout.fontScale);
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
   const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
   const [myCompaniesLoading, setMyCompaniesLoading] = useState(false);
@@ -504,6 +564,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
   const [phone, setPhone] = useState('');
   const [siaLicence, setSiaLicence] = useState('');
   const [locationSharing, setLocationSharing] = useState(false);
+  // Profile save safety: the last record loaded from the server (null until one has loaded), whether the Guard has
+  // unsaved edits (a background refresh never overwrites them), and the form's own message.
+  const [loadedProfile, setLoadedProfile] = useState<GuardProfileFields | null>(null);
+  const profileEditedRef = useRef(false);
+  const [profileFormMessage, setProfileFormMessage] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [attendance, setAttendance] = useState<AttendanceEvent[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -1254,10 +1319,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       loadBankDetails();
       loadPayrollAdmin();
 
-      setFullName(myGuard.fullName || '');
-      setPhone(myGuard.phone || '');
+      const profileFields = guardProfileFieldsFrom(myGuard);
+      setLoadedProfile(profileFields);
+      if (!profileEditedRef.current) {
+        setFullName(profileFields.fullName);
+        setPhone(profileFields.phone);
+        setLocationSharing(profileFields.locationSharing);
+      }
       setSiaLicence(myGuard.siaLicenseNumber || myGuard.siaLicenceNumber || '');
-      setLocationSharing(myGuard.locationSharingEnabled ?? false);
       setShifts(shiftRows.map((shift) => ({ ...shift, status: normalizeShiftLifecycleStatus(shift.status) })));
       setAttendance(attendanceRows);
       setIncidents(incidentRows);
@@ -1410,14 +1479,33 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
     await loadData(true);
   }
 
+  function editProfileField(apply: () => void) {
+    profileEditedRef.current = true;
+    setProfileFormMessage(null);
+    apply();
+  }
+
   async function handleSaveProfile() {
+    const plan = planGuardProfileSave(loadedProfile, { fullName, phone, locationSharing });
+    if (plan.kind !== 'save') {
+      setProfileFormMessage({ tone: plan.kind === 'unchanged' ? 'info' : 'error', text: plan.message });
+      return;
+    }
     try {
       setSavingProfile(true);
-      await updateMyGuard({
-        fullName,
-        phone,
-        locationSharingEnabled: locationSharing,
-      });
+      setProfileFormMessage(null);
+      await updateMyGuard(plan.payload);
+      // The server kept every field that was not sent, so the saved record is the loaded one plus this change.
+      const saved: GuardProfileFields = {
+        fullName: plan.payload.fullName ?? loadedProfile!.fullName,
+        phone: plan.payload.phone ?? loadedProfile!.phone,
+        locationSharing: plan.payload.locationSharingEnabled ?? loadedProfile!.locationSharing,
+      };
+      setLoadedProfile(saved);
+      setFullName(saved.fullName);
+      setPhone(saved.phone);
+      setLocationSharing(saved.locationSharing);
+      profileEditedRef.current = false;
       pushFeedback('success', 'Profile updated', 'Your profile changes have been saved.');
       showAlert('Profile updated', 'Your guard profile has been saved successfully.');
     } catch (error) {
@@ -1863,13 +1951,37 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
     normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress';
   const welfareCard = homeShiftLive ? guardWelfareCard(currentHomeShift?.operations) : null;
   const logBookCard = homeShiftLive ? guardLogBookCard(currentHomeShift?.operations) : null;
+  // S4-UX-01.3b: the Log Book's status line, shown in the records card beside the Log Book tile.
+  const logBookLine = logBookCard ? `Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}` : null;
+  // S4-UX-01.3: the compact On Duty Home is used for the four on-duty phases of a live shift; every other phase keeps
+  // the Current Shift card exactly as before.
+  const homeOnDuty = homeShiftLive && guardHomeMode(guardShiftPhase) === 'on_duty';
+  // S4-UX-01.4 Off Duty Home: what the shift card calls the shift the screen already chose, and the accepted shifts
+  // after it (guardHomeModel.upcomingShifts: accepted and not yet ended, soonest first), never repeating it.
+  const offDutyCardKind: 'next' | 'offer' | 'last' = guardShiftPhase === 'offer_pending'
+    ? 'offer'
+    : guardShiftPhase === 'timesheet_pending' || guardShiftPhase === 'shift_ended' ? 'last' : 'next';
+  // UAT-ATT-01: being before the scheduled start is NOT a reason to disable Book On.
+  // Only an in-flight attendance request disables the shift card's action.
+  const primaryDisabled = currentHomeShift ? attendanceBusyShiftId === currentHomeShift.id : false;
+  const offDutyUpcoming = homeOnDuty
+    ? []
+    : upcomingShifts(sortedShifts, liveNow, normalizeShiftLifecycleStatus, UPCOMING_SHIFTS_LIMIT + 1)
+      .filter((shift) => shift.id !== currentHomeShift?.id)
+      .slice(0, UPCOMING_SHIFTS_LIMIT);
+  // Emergency: one handler, whichever launcher shows it (Variant A, the on-duty bar — the default — or Variant B, the
+  // header SOS control, development bundles only; see guardEmergencyPresentation.ts).
+  const emergencyPresentation = guardEmergencyPresentation();
+  const emergencyEligible = showOnDutyBar(currentShiftActionTarget);
+  const openEmergency = () => setQuickActionModal('emergency');
 
   /**
-   * The canonical live-shift actions, and the only launchers for them.
+   * The canonical routine live-shift actions, and the only launchers for them.
    *
-   * Emergency is separated and destructive-styled rather than sitting last in a uniform grid. Book Off
-   * is NOT here at all — it is the shift card's own primary control, which is what keeps an accidental
-   * end-of-shift away from routine reporting.
+   * Emergency is NOT here (S4-UX-01.2): its one launcher is the persistent on-duty bar, rendered outside
+   * the scrolling content on every tab, so it is reachable without scrolling Home. Book Off is NOT here
+   * either — it is the shift card's own primary control, which is what keeps an accidental end-of-shift
+   * away from routine reporting.
    *
    * Welfare Check is here ONLY when the Welfare Check block above is not showing it, so that each
    * action has exactly one launcher. Its natural home is beside its own status and next-due time.
@@ -1882,40 +1994,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
     const routine: GuardActionKey[] = welfareCard
       ? ['logBook', 'siteRequest', 'incident']
       : ['welfareCheck', 'logBook', 'siteRequest', 'incident'];
-    const emergency = guardActionForm('emergency');
 
-    return (
-      <FeatureCard
-        title="Shift Records"
-        subtitle="Recorded against this shift."
-        style={[styles.quickActionCard, styles.guardLiveActionsCard]}
-      >
-        <View style={styles.quickActionGrid}>
-          {routine.map((key) => {
-            const form = guardActionForm(key);
-            return (
-              <Pressable
-                key={key}
-                accessibilityRole="button"
-                accessibilityLabel={form.launchAccessibilityLabel}
-                style={styles.quickActionButton}
-                onPress={() => setQuickActionModal(key)}
-              >
-                <Text style={styles.quickActionText}>{form.title}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={emergency.launchAccessibilityLabel}
-          style={[styles.quickActionButton, styles.quickActionDanger, styles.emergencyButton]}
-          onPress={() => setQuickActionModal('emergency')}
-        >
-          <Text style={styles.quickActionDangerText}>{emergency.title}</Text>
-        </Pressable>
-      </FeatureCard>
-    );
+    // S4-UX-01.3: the same launchers, as compact 48pt tiles that wrap by their label's size (GuardShiftRecords).
+    const items = routine.map((key) => {
+      const form = guardActionForm(key);
+      return { key, title: form.title, accessibilityLabel: form.launchAccessibilityLabel };
+    });
+    return <GuardShiftRecords items={items} note={logBookLine} fontScale={homeLayout.fontScale} onOpen={(key) => setQuickActionModal(key)} />;
   }
 
   function handlePrimaryHomeAction() {
@@ -1979,9 +2064,16 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          {activeTab === 'home'
+      {/* S4-UX-01.6: for a Guard this is the only top bar — App no longer draws its own above it. */}
+      <GuardHeader
+        productLabel={productLabel}
+        productIsUat={productIsUat}
+        onLogout={onLogout}
+        sos={emergencyEligible && emergencyPresentation === 'header'
+          ? { accessibilityLabel: guardActionForm('emergency').launchAccessibilityLabel, onPress: openEmergency }
+          : null}
+        title={
+          activeTab === 'home'
             ? 'Current Shift'
             : activeTab === 'offers'
               ? 'Shift Offers'
@@ -1995,9 +2087,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                       ? 'My Companies'
                       : activeTab === 'inbox'
                         ? 'Notifications'
-                        : 'Profile'}
-        </Text>
-        {(() => {
+                        : 'Profile'
+        }
+        notifications={(() => {
           // The inbox entry point. On a server without notifications the badge is hidden; the button still opens a
           // calm explanation rather than disappearing.
           const badge = inboxAvailability === 'unavailable' ? null : unreadBadge(unreadCount(inbox.items));
@@ -2012,14 +2104,28 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
             >
               <Text style={[styles.inboxButtonText, open && styles.inboxButtonTextActive]}>{open ? 'Close' : 'Notifications'}</Text>
               {badge && !open ? (
-                <View style={styles.navBadge}>
+                <View style={[styles.navBadge, guardBadgeBox(badgeSize), styles.navBadgeOnHeader, guardHeaderBadgeOffset(badgeSize)]} testID="guard-header-unread-badge">
                   <Text style={styles.navBadgeText}>{badge}</Text>
                 </View>
               ) : null}
             </Pressable>
           );
         })()}
-      </View>
+      />
+
+      {/* S4-UX-01.2: Emergency, outside every scrolling area and on every tab, whenever an Emergency can be raised
+          (the same action target the form submits against). Its one launcher; the form and its SOS confirmation
+          are the existing ones below. S4-UX-01.3: Variant A (this bar) unless a development bundle previews
+          Variant B, the header SOS control above — never both. */}
+      {emergencyEligible && emergencyPresentation === 'bar' ? (
+        <GuardOnDutyBar
+          siteName={currentHomeShift?.siteName ?? null}
+          emergencyLabel={guardActionForm('emergency').title}
+          emergencyAccessibilityLabel={guardActionForm('emergency').launchAccessibilityLabel}
+          layout={homeLayout}
+          onEmergency={openEmergency}
+        />
+      ) : null}
 
       <View style={styles.mainArea}>
 
@@ -2087,304 +2193,137 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                 />
               ));
             })()}
-            <FeatureCard
-              title="Current Shift"
-              subtitle={
-                guardShiftPhase === 'no_shift'
-                  ? 'Between shifts — your Home hub for the next booking or paperwork.'
-                  : guardShiftPhase === 'offer_pending'
-                    ? 'A company has offered you work — your next step is to decide.'
-                    : guardShiftPhase === 'before_shift'
-                      ? 'Upcoming shift — get on site, then Book On.'
-                      : guardShiftPhase === 'timesheet_pending'
-                        ? 'Last completed shift still needs a timesheet step from you.'
-                        : guardShiftPhase === 'shift_ended'
-                          ? 'Most recent finished shift — recap or follow-up only.'
-                          : 'The single most important shift on your device right now.'
-              }
-              style={styles.guardCurrentShiftCard}
-            >
-              {guardShiftPhase === 'no_shift' ? (
-                <>
-                  <View style={styles.guardSection}>
-                    <Text style={styles.guardSectionLabel}>What to do now</Text>
-                    <Text style={[styles.helperText, styles.guardSectionBody]}>
-                      You are not on a live shift. Use Offers when work is proposed to you, History for finished shifts
-                      and timesheets, and Jobs if you are looking for extra cover — same tabs as before.
-                    </Text>
-                  </View>
-                  <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                    <Text style={styles.guardSectionLabel}>Quick links</Text>
-                    <View style={styles.guardLinkStack}>
-                      <Pressable
-                        style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                        onPress={() => setActiveTab('offers')}
-                      >
-                        <Text style={styles.secondarySummaryButtonText}>Review shift offers</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                        onPress={() => setActiveTab('history')}
-                      >
-                        <Text style={styles.secondarySummaryButtonText}>Past shifts & timesheets</Text>
-                      </Pressable>
-                      <Pressable
-                        style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                        onPress={() => setActiveTab('jobs')}
-                      >
-                        <Text style={styles.secondarySummaryButtonText}>Browse jobs</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                </>
-              ) : currentHomeShift ? (
-                (() => {
-                  const statusNorm = normalizeShiftLifecycleStatus(currentHomeShift.status);
-                  const primaryLabel = getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift);
-                  // UAT-ATT-01: being before the scheduled start is NOT a reason to disable Book On.
-                  // Only an in-flight attendance request disables the button.
-                  const primaryDisabled = attendanceBusyShiftId === currentHomeShift.id;
-                  const attendanceBusy = attendanceBusyShiftId === currentHomeShift.id;
-
-                  const primaryGuidance = getPrimaryActionGuidance(guardShiftPhase);
-
-                  return (
-                    <>
-                      <View style={styles.guardSection}>
-                        <Text style={styles.guardSectionLabel}>Shift details</Text>
-                        <View style={styles.cardTopRow}>
-                          <View style={styles.flexGrow}>
-                            <Text style={[styles.siteName, styles.guardSiteTitle]}>{currentHomeShift.siteName}</Text>
-                            <View style={styles.guardTimeStack}>
-                              <Text style={styles.shiftDate}>{formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}</Text>
-                              <Text style={styles.shiftTime}>
-                                {formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – {formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}
-                              </Text>
-                            </View>
-                            {statusNorm === 'in_progress' ? (
-                              <View style={styles.liveBanner}>
-                                <View style={styles.liveDot} />
-                                <Text style={styles.liveBannerText}>LIVE</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                          <StatusBadge label={normalizeShiftLifecycleStatus(currentHomeShift.status)} tone={shiftStatusTone(currentHomeShift.status)} />
-                        </View>
-                      </View>
-
-                      <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                        <Text style={styles.guardSectionLabel}>Status</Text>
-                        <Text
-                          style={[
-                            styles.helperLine,
-                            styles.guardStatusText,
-                            guardShiftPhase === 'welfare_overdue' ? styles.helperLineUrgent : null,
-                            guardShiftPhase === 'welfare_due' ||
-                            guardShiftPhase === 'shift_ending_soon' ||
-                            guardShiftPhase === 'offer_pending' ||
-                            guardShiftPhase === 'timesheet_pending'
-                              ? styles.helperLineWarning
-                              : null,
-                          ]}
-                        >
-                          {getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)}
-                        </Text>
-                      </View>
-
-                      {normalizeShiftLifecycleStatus(currentHomeShift.status) === 'in_progress' ? (
-                        <View style={[styles.guardSection, styles.guardSectionLive]}>
-                          <Text style={styles.guardSectionLabel}>Live clock</Text>
-                          <View style={[styles.liveStatusBlock, styles.guardLiveStatusFlush]}>
-                            <View style={styles.liveStatusItem}>
-                              <Text style={styles.liveStatusLabel}>Booked On</Text>
-                              <Text style={styles.liveStatusValue}>
-                                {currentHomeShiftAttendance?.checkInAt
-                                  ? formatTimeLabel(currentHomeShiftAttendance.checkInAt, currentHomeShift.site?.timezone)
-                                  : 'Pending'}
-                              </Text>
-                            </View>
-                            <View style={styles.liveStatusItem}>
-                              <Text style={styles.liveStatusLabel}>Duration</Text>
-                              <Text style={styles.liveStatusValue}>
-                                {formatDurationLabel(
-                                  currentHomeShiftAttendance?.checkInAt || currentHomeShift.start,
-                                  currentHomeShiftAttendance?.checkOutAt,
-                                  liveNow,
-                                )}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-                      ) : null}
-
-                      {/* ── Welfare Check ────────────────────────────────────────────────
-                          Every value below is the backend's, via the operations projection on this
-                          shift. The Guard and the control room read the same status, the same next
-                          due time and the same counts, because nothing here recomputes them. */}
-                      {welfareCard ? (
-                        <View
-                          style={[
-                            styles.guardSection,
-                            welfareCard.tone === 'danger' ? styles.guardSectionUrgent : null,
-                          ]}
-                        >
-                          <Text style={styles.guardSectionLabel}>Welfare Check</Text>
-                          <View style={styles.welfareStatusRow}>
-                            <Text
-                              style={[
-                                styles.welfareStatusLabel,
-                                welfareCard.tone === 'danger' ? styles.welfareStatusDanger : null,
-                                welfareCard.tone === 'warning' ? styles.welfareStatusWarning : null,
-                                welfareCard.tone === 'good' ? styles.welfareStatusGood : null,
-                              ]}
-                            >
-                              {welfareCard.label}
-                            </Text>
-                            {welfareCard.nextDue ? (
-                              <Text style={styles.welfareNextDue}>Next due {welfareCard.nextDue}</Text>
-                            ) : null}
-                          </View>
-                          {welfareCard.detail ? (
-                            <Text style={styles.welfareDetail}>{welfareCard.detail}</Text>
-                          ) : null}
-                          {welfareCard.missedSummary ? (
-                            <Text style={styles.welfareMissed}>{welfareCard.missedSummary}</Text>
-                          ) : null}
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Record Welfare Check"
-                            style={[
-                              styles.welfareActionButton,
-                              welfareCard.actionUrgent ? styles.welfareActionUrgent : null,
-                            ]}
-                            onPress={() => setQuickActionModal('welfareCheck')}
-                          >
-                            <Text style={styles.welfareActionText}>Record Welfare Check</Text>
-                          </Pressable>
-                          {logBookCard ? (
-                            <Text style={styles.welfareLogBookLine}>
-                              {`Log Book · ${logBookCard.label}${logBookCard.detail ? ` · ${logBookCard.detail}` : ''}`}
-                            </Text>
-                          ) : null}
-                        </View>
-                      ) : null}
-
-                      {primaryLabel ? (
-                        <View style={[styles.guardSection, styles.guardSectionMainAction]}>
-                          <Text style={styles.guardSectionLabel}>Main action</Text>
-                          {primaryGuidance ? (
-                            <Text style={[styles.helperText, styles.guardSectionBody]}>{primaryGuidance}</Text>
-                          ) : null}
-                          <Pressable
-                            style={[
-                              styles.primaryActionButton,
-                              styles.guardHomeCta,
-                              primaryDisabled && styles.buttonDisabled,
-                            ]}
-                            onPress={handleCurrentShiftPrimaryPress}
-                            disabled={primaryDisabled}
-                          >
-                            <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
-                              {attendanceBusy
-                                ? statusNorm === 'ready'
-                                  ? 'Starting...'
-                                  : 'Ending...'
-                                : primaryLabel}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      ) : null}
-
-                      {guardShiftPhase === 'timesheet_pending' ? (
-                        <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                          <Text style={styles.guardSectionLabel}>Timesheet follow-up</Text>
-                          <Text style={[styles.helperText, styles.guardSectionBody]}>
-                            Payroll still needs this timesheet completed or updated. Open History to the timesheets
-                            list — same place you have always used — then submit or fix what your company asked for.
-                          </Text>
-                          <Pressable
-                            style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                            onPress={() => setActiveTab('history')}
-                          >
-                            <Text style={styles.secondarySummaryButtonText}>Open History & timesheets</Text>
-                          </Pressable>
-                        </View>
-                      ) : null}
-
-                      {guardShiftPhase === 'shift_ended' && statusNorm === 'completed' ? (
-                        <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                          <Text style={styles.guardSectionLabel}>Paperwork & history</Text>
-                          <Text style={[styles.helperText, styles.guardSectionBody]}>
-                            History still holds payslips, older shifts, and company notes even when nothing is flagged
-                            here.
-                          </Text>
-                          <Pressable
-                            style={[styles.secondarySummaryButton, styles.guardOutlineLink]}
-                            onPress={() => setActiveTab('history')}
-                          >
-                            <Text style={styles.secondarySummaryButtonText}>Open History</Text>
-                          </Pressable>
-                        </View>
-                      ) : guardShiftPhase === 'shift_ended' ? (
-                        <View style={[styles.guardSection, styles.guardSectionMuted]}>
-                          <Text style={[styles.helperText, styles.guardSectionBody]}>
-                            If this outcome looks wrong, use History for related records and contact your supervisor
-                            outside the app.
-                          </Text>
-                        </View>
-                      ) : null}
-
-                    </>
-                  );
-                })()
-              ) : (
-                <Text style={styles.helperText}>No active shift requiring action.</Text>
-              )}
-              {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the
-                  Welfare Check block. Rendered on every Home state, so patrol items still waiting to send
-                  (or refused) stay visible after Book Off. */}
-              <GuardPatrolPanel
-                userId={user.id}
-                shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
+            {homeOnDuty && currentHomeShift ? (
+              // S4-UX-01.3 On Duty Home: one compact summary instead of the Current Shift card's Shift details,
+              // Status, Live clock and Main action sections. The header already says "Current Shift"; the site is
+              // named here only when the on-duty bar is not already naming it.
+              <GuardShiftSummary
+                siteName={emergencyEligible && emergencyPresentation === 'bar' ? null : currentHomeShift.siteName}
+                dateLabel={formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}
+                timeRange={`${formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – ${formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}`}
+                bookedOnLabel={currentHomeShiftAttendance?.checkInAt
+                  ? formatTimeLabel(currentHomeShiftAttendance.checkInAt, currentHomeShift.site?.timezone)
+                  : 'Pending'}
+                durationLabel={formatDurationLabel(
+                  currentHomeShiftAttendance?.checkInAt || currentHomeShift.start,
+                  currentHomeShiftAttendance?.checkOutAt,
+                  liveNow,
+                )}
+                // The phase line is shown only when it adds something: "You are on shift" repeats the on-duty bar,
+                // and the Welfare lines repeat the Welfare block below whenever that block is showing.
+                statusLine={guardShiftPhase === 'shift_ending_soon' || (!welfareCard && (guardShiftPhase === 'welfare_due' || guardShiftPhase === 'welfare_overdue'))
+                  ? getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)
+                  : null}
+                statusTone={guardShiftPhase === 'welfare_overdue' ? 'danger' : guardShiftPhase === 'on_shift' ? null : 'warning'}
               />
-            </FeatureCard>
-
-            {normalizeShiftLifecycleStatus(currentHomeShift?.status) === 'in_progress'
-              ? renderHomeQuickActions()
-              : null}
-          </View>
-        ) : null}
-
-        {activeTab === 'home' &&
-        currentHomeShift &&
-        [
-          'on_shift',
-          'welfare_due',
-          'welfare_overdue',
-          'shift_ending_soon',
-          'shift_ended',
-          'timesheet_pending',
-        ].includes(guardShiftPhase) ? (
-          <FeatureCard
-            title="Recent Activity"
-            subtitle="Background log only — use Current Shift actions above first when something needs doing."
-            style={styles.guardRecentActivityCard}
-          >
-            {currentHomeShiftTimeline.length === 0 ? (
-              <Text style={styles.helperText}>No activity recorded yet.</Text>
+            ) : currentHomeShift ? (
+              // S4-UX-01.4 Off Duty Home: one compact card for the shift the screen already chose (currentHomeShift —
+              // the next accepted shift, else an offer, else the last finished one), with its existing action and
+              // handler. Book On still goes through handleCurrentShiftPrimaryPress → handlePrimaryHomeAction, so the
+              // early Book On confirmation is unchanged.
+              <GuardShiftCard
+                kind={offDutyCardKind}
+                siteName={currentHomeShift.siteName}
+                dateLabel={formatDateLabel(currentHomeShift.start, currentHomeShift.site?.timezone)}
+                timeRange={`${formatTimeLabel(currentHomeShift.start, currentHomeShift.site?.timezone)} – ${formatTimeLabel(currentHomeShift.end, currentHomeShift.site?.timezone)}`}
+                // The phase line only where it adds something: before the shift it would repeat the date and time,
+                // and an offer's line pointed at a section that no longer exists.
+                statusLine={guardShiftPhase === 'shift_window_check_in' || guardShiftPhase === 'timesheet_pending' || guardShiftPhase === 'shift_ended'
+                  ? getGuardPhaseStatusLine(guardShiftPhase, currentHomeShift, liveNow)
+                  : null}
+                statusTone={guardShiftPhase === 'timesheet_pending' ? 'warning' : null}
+                action={getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift)
+                  ? {
+                      label: getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) as string,
+                      busy: primaryDisabled,
+                      busyLabel: 'Starting...',
+                      disabled: primaryDisabled,
+                      emphasis: offDutyCardKind === 'last' ? 'secondary' : 'primary',
+                      onPress: handleCurrentShiftPrimaryPress,
+                    }
+                  : null}
+                note={guardShiftPhase === 'before_shift' ? getPrimaryActionGuidance(guardShiftPhase) : null}
+                instructions={currentHomeShift.instructions}
+              />
             ) : (
-              currentHomeShiftTimeline.map((entry) => (
-                <View key={entry.id} style={styles.activityRow}>
-                  <View style={styles.activityBullet} />
-                  <View style={styles.flexGrow}>
-                    <Text style={styles.activityTitle}>{entry.title}</Text>
-                    <Text style={styles.metaText}>{entry.message}</Text>
-                  </View>
-                  <Text style={styles.activityTime}>{formatTimeLabel(entry.occurredAt)}</Text>
-                </View>
-              ))
+              <GuardNoShift onOffers={() => setActiveTab('offers')} onHistory={() => setActiveTab('history')} onJobs={() => setActiveTab('jobs')} />
             )}
-          </FeatureCard>
+
+            {/* ── SHIFT OPERATIONS (S4-UX-04B-S3) ── one presentational group: Welfare, the Patrol slot, the shift
+                records and, last and set apart, Book Off. The group is mounted in EVERY Home state (On Duty, Off Duty,
+                No Shift) at one fixed position, and every child inside it keeps a fixed position too (each is either
+                always rendered or a closed conditional), so the Patrol panel keeps its component identity through Book
+                On, phase changes and Book Off, and unsent patrol evidence stays reachable afterwards. Off duty only the
+                Patrol slot can show. S4-UX-04B-S3B: no heading of its own — the cards name themselves, and the native
+                review measured the heading as the remaining extra height. Emergency stays outside the scroll area. */}
+            <View style={styles.homeOperations} testID="guard-shift-operations">
+              {/* ── Welfare Check ── every value is the backend's, via the operations projection on this shift
+                  (guardWelfareCard). The Guard and the control room read the same status, next due time and counts,
+                  because nothing here recomputes them. Presented directly above Patrol, so both stay in view. */}
+              {welfareCard ? (
+                <GuardWelfareSummary
+                  card={welfareCard}
+                  onRecord={() => setQuickActionModal('welfareCheck')}
+                />
+              ) : null}
+
+              {/* ── Patrols (P1-E) ── its own component, outbox and timers; it shares nothing with the Welfare Check
+                  block. ONE stable slot for every Home state (S4-UX-01.3): its position in this list never changes
+                  with the shift phase, so Book On, phase changes and Book Off never remount it, and patrol items still
+                  waiting to send (or refused) stay visible after Book Off. */}
+              <View style={styles.homePatrolSlot}>
+                <View style={styles.homePatrolInner}>
+                  <GuardPatrolPanel
+                    userId={user.id}
+                    shift={currentHomeShift ? { id: currentHomeShift.id, status: normalizeShiftLifecycleStatus(currentHomeShift.status), companyId: currentHomeShift.companyId ?? null, siteName: currentHomeShift.siteName } : null}
+                  />
+                </View>
+                <View style={styles.homePatrolFrame} pointerEvents="none" />
+              </View>
+
+              {homeShiftLive ? renderHomeQuickActions() : null}
+
+              {homeOnDuty && currentHomeShift && getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) ? (
+                // The same Book Off as the Current Shift card's Main action: the same label, the same handler, and so
+                // the same confirmation (handlePrimaryHomeAction → setPendingBookOff). Below the routine records, so it
+                // is never the easiest thing to tap by accident.
+                <>
+                  <View style={styles.homeOperationsSeparator} importantForAccessibility="no" accessibilityElementsHidden testID="guard-shift-operations-separator" />
+                  <GuardBookOff
+                    label={getGuardPhasePrimaryLabel(guardShiftPhase, currentHomeShift) as string}
+                    busy={attendanceBusyShiftId === currentHomeShift.id}
+                    disabled={attendanceBusyShiftId === currentHomeShift.id}
+                    onPress={handleCurrentShiftPrimaryPress}
+                  />
+                </>
+              ) : null}
+            </View>
+
+            {/* S4-UX-01.4: accepted shifts after the one in the shift card, never that one again (Off Duty only). */}
+            {!homeOnDuty ? (
+              <GuardUpcomingShifts
+                shifts={offDutyUpcoming.map((shift) => ({
+                  id: shift.id,
+                  siteName: shift.siteName,
+                  dateLabel: formatDateLabel(shift.start, shift.site?.timezone),
+                  timeRange: `${formatTimeLabel(shift.start, shift.site?.timezone)} – ${formatTimeLabel(shift.end, shift.site?.timezone)}`,
+                }))}
+              />
+            ) : null}
+
+            {/* Recent activity: the On Duty Home's, and the last finished shift's recap (the only Off Duty states that
+                had one before). Same compact list either way. */}
+            {homeOnDuty || (currentHomeShift && (guardShiftPhase === 'shift_ended' || guardShiftPhase === 'timesheet_pending')) ? (
+              <GuardRecentActivity
+                entries={currentHomeShiftTimeline.map((entry) => ({
+                  id: entry.id,
+                  title: entry.title,
+                  message: entry.message,
+                  time: formatTimeLabel(entry.occurredAt),
+                }))}
+              />
+            ) : null}
+          </View>
         ) : null}
 
         {activeTab === 'home' && shiftOffers.length > 0 ? (
@@ -2396,6 +2335,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
             </Text>
             <Pressable
               style={styles.homeOffersStripBtn}
+              hitSlop={HOME_OFFERS_BUTTON_HIT_SLOP}
               onPress={() => setActiveTab('offers')}
               accessibilityRole="button"
               accessibilityLabel="Review shift offers"
@@ -2512,6 +2452,27 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
               style={styles.guardProfileCard}
             >
               <View style={styles.guardProfileBody}>
+                {!loadedProfile ? (
+                  // Nothing can be edited or saved until the Guard's own record has loaded: an empty form must never
+                  // reach the server as "".
+                  <View style={styles.guardProfileUnavailable} testID="guard-profile-unavailable">
+                    {loading ? (
+                      <Text style={styles.helperText}>Loading your profile…</Text>
+                    ) : (
+                      <>
+                        <Text style={styles.guardProfileUnavailableText} accessibilityRole="alert">{PROFILE_UNAVAILABLE_MESSAGE}</Text>
+                        <Pressable
+                          style={styles.guardProfileRetryBtn}
+                          onPress={() => loadData()}
+                          accessibilityRole="button"
+                          accessibilityLabel="Try loading your profile again"
+                        >
+                          <Text style={styles.guardProfileRetryText}>Try again</Text>
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                ) : null}
                 <View style={styles.guardProfileSection}>
                   <Text style={styles.guardSectionLabel}>Contact & identity</Text>
                   <View style={styles.guardProfileFields}>
@@ -2521,7 +2482,10 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                         style={[styles.input, styles.guardProfileInput]}
                         placeholder="Your full legal name"
                         value={fullName}
-                        onChangeText={setFullName}
+                        onChangeText={(value: string) => editProfileField(() => setFullName(value))}
+                        editable={Boolean(loadedProfile) && !savingProfile}
+                        accessibilityLabel="Full name"
+                        testID="guard-profile-full-name"
                       />
                     </View>
                     <View style={styles.profileField}>
@@ -2532,7 +2496,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                         editable={false}
                         selectTextOnFocus={false}
                       />
-                      <Text style={styles.profileFieldHint}>To update your SIA details, go to the Compliance tab.</Text>
+                      <Text style={styles.profileFieldHint}>
+                        To update your SIA licence, scroll down to Compliance summary and tap Manage compliance.
+                      </Text>
                     </View>
                     <View style={styles.profileField}>
                       <Text style={styles.profileFieldLabel}>Phone number</Text>
@@ -2540,8 +2506,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                         style={[styles.input, styles.guardProfileInput]}
                         placeholder="Your contact number"
                         value={phone}
-                        onChangeText={setPhone}
+                        onChangeText={(value: string) => editProfileField(() => setPhone(value))}
                         keyboardType="phone-pad"
+                        editable={Boolean(loadedProfile) && !savingProfile}
+                        accessibilityLabel="Phone number"
+                        testID="guard-profile-phone"
                       />
                     </View>
                   </View>
@@ -2553,19 +2522,37 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                       <Text style={styles.guardProfileSwitchTitle}>Live location sharing</Text>
                       <Text style={styles.guardProfileSwitchHint}>Keep on while you are deployed.</Text>
                     </View>
-                    <Switch value={locationSharing} onValueChange={setLocationSharing} />
+                    <Switch
+                      value={locationSharing}
+                      onValueChange={(value: boolean) => editProfileField(() => setLocationSharing(value))}
+                      disabled={!loadedProfile || savingProfile}
+                      accessibilityLabel="Live location sharing"
+                    />
                   </View>
                 </View>
+                {profileFormMessage ? (
+                  <Text
+                    style={profileFormMessage.tone === 'error' ? styles.guardProfileFormError : styles.helperText}
+                    accessibilityRole={profileFormMessage.tone === 'error' ? 'alert' : 'text'}
+                    testID="guard-profile-form-message"
+                  >
+                    {profileFormMessage.text}
+                  </Text>
+                ) : null}
                 <View style={styles.guardProfileActions}>
                   <Pressable
                     style={[
                       styles.primaryActionButton,
                       styles.guardHomeCta,
                       styles.guardProfileSaveCta,
-                      savingProfile && styles.buttonDisabled,
+                      (savingProfile || !loadedProfile) && styles.buttonDisabled,
                     ]}
                     onPress={handleSaveProfile}
-                    disabled={savingProfile}
+                    disabled={savingProfile || !loadedProfile}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save profile"
+                    accessibilityState={{ disabled: savingProfile || !loadedProfile, busy: savingProfile }}
+                    testID="guard-profile-save"
                   >
                     <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
                       {savingProfile ? 'Saving...' : 'Save profile'}
@@ -2761,21 +2748,23 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                   {/* Licence status */}
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Driving Licence Status</Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {(['NONE', 'PROVISIONAL', 'FULL', 'OTHER_OR_FOREIGN'] as DrivingLicenceStatus[]).map((s) => (
                         <Pressable
                           key={s}
                           style={[
-                            styles.guardSecondaryBtn,
-                            driving?.licenceStatus === s && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            driving?.licenceStatus === s && styles.guardChoiceChipSelected,
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
                           onPress={() => handleLicenceStatusSelect(s)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: driving?.licenceStatus === s, disabled: drivingSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            driving?.licenceStatus === s && { color: colors.textOnBrand },
+                            driving?.licenceStatus === s && styles.guardChoiceChipTextSelected,
                           ]}>
                             {s === 'OTHER_OR_FOREIGN' ? 'Other/Foreign' : s.charAt(0) + s.slice(1).toLowerCase()}
                           </Text>
@@ -2861,21 +2850,23 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                   {/* Primary travel method */}
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Primary way to get to work</Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {(['CAR', 'MOTORCYCLE', 'PUBLIC_TRANSPORT', 'BICYCLE', 'WALK', 'OTHER'] as PrimaryTravelMethod[]).map((m) => (
                         <Pressable
                           key={m}
                           style={[
-                            styles.guardSecondaryBtn,
-                            driving?.primaryTravelMethod === m && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            driving?.primaryTravelMethod === m && styles.guardChoiceChipSelected,
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
                           onPress={() => handleUpdateDrivingField({ primaryTravelMethod: m })}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: driving?.primaryTravelMethod === m, disabled: drivingSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            driving?.primaryTravelMethod === m && { color: colors.textOnBrand },
+                            driving?.primaryTravelMethod === m && styles.guardChoiceChipTextSelected,
                           ]}>
                             {m === 'PUBLIC_TRANSPORT' ? 'Public transport' : m.charAt(0) + m.slice(1).toLowerCase()}
                           </Text>
@@ -2890,21 +2881,24 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                     <Text style={[styles.profileFieldHint, { fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
                       {driving?.maxTravelDistanceMiles != null ? `${driving.maxTravelDistanceMiles} miles` : 'Not set'}
                     </Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {[10, 20, 30, 50, 75, 100].map((d) => (
                         <Pressable
                           key={d}
                           style={[
-                            styles.guardSecondaryBtn,
-                            driving?.maxTravelDistanceMiles === d && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipSelected,
                             drivingSaving && styles.buttonDisabled,
                           ]}
                           disabled={drivingSaving}
                           onPress={() => handleUpdateDrivingField({ maxTravelDistanceMiles: d })}
+                          accessibilityRole="radio"
+                          accessibilityLabel={`${d} miles`}
+                          accessibilityState={{ checked: driving?.maxTravelDistanceMiles === d, disabled: drivingSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            driving?.maxTravelDistanceMiles === d && { color: colors.textOnBrand },
+                            driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipTextSelected,
                           ]}>
                             {d}mi
                           </Text>
@@ -2976,21 +2970,23 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
 
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Relationship</Text>
-                    <View style={styles.guardSecondaryRow}>
+                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                       {(['SPOUSE_PARTNER', 'PARENT', 'SIBLING', 'CHILD', 'RELATIVE', 'FRIEND', 'OTHER'] as EmergencyContactRelationship[]).map((r) => (
                         <Pressable
                           key={r}
                           style={[
-                            styles.guardSecondaryBtn,
-                            ecRelationshipInput === r && { backgroundColor: colors.accentTeal },
+                            styles.guardChoiceChip,
+                            ecRelationshipInput === r && styles.guardChoiceChipSelected,
                             emergencyContactSaving && styles.buttonDisabled,
                           ]}
                           disabled={emergencyContactSaving}
                           onPress={() => setEcRelationshipInput(r)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: ecRelationshipInput === r, disabled: emergencyContactSaving }}
                         >
                           <Text style={[
                             styles.guardSecondaryBtnText,
-                            ecRelationshipInput === r && { color: colors.textOnBrand },
+                            ecRelationshipInput === r && styles.guardChoiceChipTextSelected,
                           ]}>
                             {r === 'SPOUSE_PARTNER' ? 'Spouse/Partner' : r.charAt(0) + r.slice(1).toLowerCase()}
                           </Text>
@@ -3051,11 +3047,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                       <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                     </Pressable>
                     <Pressable
-                      style={[styles.guardSecondaryBtn, { backgroundColor: colors.accentTeal }, emergencyContactSaving && styles.buttonDisabled]}
+                      style={[styles.guardSecondaryBtn, styles.guardProfilePrimarySave, emergencyContactSaving && styles.buttonDisabled]}
                       onPress={handleSaveEmergencyContact}
                       disabled={emergencyContactSaving}
                     >
-                      <Text style={[styles.guardSecondaryBtnText, { color: colors.textOnBrand }]}>
+                      <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>
                         {emergencyContactSaving ? 'Saving…' : 'Save'}
                       </Text>
                     </Pressable>
@@ -3230,11 +3226,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                           <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                         </Pressable>
                         <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1, backgroundColor: colors.accentTeal }, bankSaving && styles.buttonDisabled]}
+                          style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
                           onPress={handleSaveBankDetails}
                           disabled={bankSaving}
                         >
-                          <Text style={styles.guardSecondaryBtnText}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                          <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -3323,11 +3319,11 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
                           <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                         </Pressable>
                         <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1, backgroundColor: colors.accentTeal }, bankSaving && styles.buttonDisabled]}
+                          style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
                           onPress={handleSaveBankDetails}
                           disabled={bankSaving}
                         >
-                          <Text style={styles.guardSecondaryBtnText}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                          <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -3424,7 +3420,10 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
       </ScrollView>
       </View>
 
-      <View style={[styles.bottomNav, { paddingBottom: Math.max(18, insets.bottom + 8) }]}>
+      {/* S4-UX-01.2a: this bar owns the bottom safe area. App no longer insets the Guard screen at the bottom, so
+          the bar's background runs under the gesture indicator while its labels stay above it (insets.bottom + 8).
+          With large text the side padding tightens, and each label stays on one line (see bottomNavLabel). */}
+      <View style={[styles.bottomNav, homeLayout.compact && styles.bottomNavCompact, { paddingBottom: Math.max(18, insets.bottom + 8) }]}>
         {([
           ['home', 'Home'],
           ['offers', 'Offers'],
@@ -3442,9 +3441,18 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted }: Guard
           >
             <View style={[styles.bottomNavIndicator, navActiveTab === tab && styles.bottomNavIndicatorActive]} />
             <View style={styles.bottomNavLabelRow}>
-              <Text style={[styles.bottomNavLabel, navActiveTab === tab && styles.bottomNavLabelActive]}>{label}</Text>
+              {/* One line, never broken mid-word: when large text makes a label wider than its tab, it shrinks to fit
+                  (no further than 60% of the scaled size) instead of wrapping, and the tab keeps its accessibilityLabel. */}
+              <Text
+                style={[styles.bottomNavLabel, navActiveTab === tab && styles.bottomNavLabelActive]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+              >
+                {label}
+              </Text>
               {tab === 'offers' && shiftOffers.length > 0 ? (
-                <View style={styles.navBadge}>
+                <View style={[styles.navBadge, guardBadgeBox(badgeSize), styles.navBadgeOnNav, guardOffersBadgeOffset(badgeSize)]} testID="guard-offers-badge">
                   <Text style={styles.navBadgeText}>{shiftOffers.length}</Text>
                 </View>
               ) : null}
@@ -3674,6 +3682,13 @@ function GuardCompaniesEntry({ count, onOpen }: { count: number; onOpen: () => v
   );
 }
 
+/**
+ * S4-UX-04B-A11Y: Review Offers keeps its 36dp button but answers touches 4dp above and below it, a 44dp hit area. The
+ * offers strip pads the button by 12dp vertically, so the extra area stays inside the strip, clear of any other
+ * control (the message beside it is plain text), and adds no height. A button that grows with large text keeps it.
+ */
+export const HOME_OFFERS_BUTTON_HIT_SLOP = { top: 4, bottom: 4, left: 0, right: 0 } as const;
+
 const styles = StyleSheet.create({
   companiesView: { gap: 16, paddingBottom: 24 },
   companiesBack: { paddingVertical: 8 },
@@ -3693,24 +3708,24 @@ const styles = StyleSheet.create({
   companiesEntryTitle: { fontSize: 16, fontWeight: '700', color: '#1B2A38' },
   companiesEntrySubtitle: { fontSize: 13, color: '#748392' },
   companiesEntryChevron: { fontSize: 22, color: '#748392' },
-  container: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  container: { flex: 1, backgroundColor: guardColors.canvas },
+  // The Notifications control sits in the navy Guard header (S4-UX-01.6). Stage 1: rectangular like Log out, filled
+  // in secondary navy, with the same 3:1 outline.
   inboxButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     minHeight: 44,
     paddingHorizontal: 12,
-    borderRadius: 999,
+    borderRadius: guardShape.controlRadius,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: guardColors.headerControlBorder,
+    backgroundColor: guardColors.navySecondary,
   },
-  inboxButtonActive: { borderColor: colors.primaryNavy },
-  inboxButtonText: { color: colors.primaryNavy, fontWeight: '700', fontSize: 14 },
-  inboxButtonTextActive: { fontWeight: '800' },
-  headerTitle: { fontSize: 24, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.3 },
-  mainArea: { flex: 1 },
+  inboxButtonActive: { borderColor: guardColors.teal },
+  inboxButtonText: { color: colors.textOnBrand, ...guardType.headerButton },
+  inboxButtonTextActive: { fontFamily: guardFontFamily.bold },
+  mainArea: { flex: 1, paddingTop: 12 },
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },
   content: { paddingHorizontal: 16, paddingBottom: 28, flexGrow: 1 },
@@ -3722,45 +3737,29 @@ const styles = StyleSheet.create({
   feedbackMessage: { color: colors.textSecondary, lineHeight: 20 },
   guardHomeRoot: {
     width: '100%',
-    gap: 14,
+    gap: 12,
     paddingBottom: 4,
   },
-  guardCurrentShiftCard: {
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.06,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  guardSection: {
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  guardSectionMuted: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-  },
-  guardSectionMainAction: {
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-  },
-  guardSectionLive: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accentTeal,
-    paddingLeft: 13,
+  // S4-UX-04B-S3 — the Shift Operations group: no frame and no padding of its own (its cards keep theirs), and a 1dp
+  // rule above Book Off. S4-UX-04B-S3A: 8dp inside the group (12dp between Home's groups): the cards' own borders
+  // already separate them. S4-UX-04B-S3B: no heading (removed with its gap).
+  homeOperations: { width: '100%', gap: 8 },
+  homeOperationsSeparator: { borderTopWidth: guardShape.cardBorderWidth, borderTopColor: guardColors.cardBorder },
+  // S4-UX-01.3 — the Patrol panel's stable slot. A card when the panel shows; nothing at all (no border, no
+  // padding) when it renders null. The inner -1 hides the panel's own top divider against the card edge.
+  homePatrolSlot: { backgroundColor: guardColors.surface, borderRadius: guardShape.cardRadius, paddingHorizontal: 16, overflow: 'hidden' },
+  homePatrolInner: { marginTop: -1 },
+  // Stage 1: the cards' 1dp border, drawn over the slot rather than on it. It takes no space, and when the panel
+  // renders nothing the slot is 0 high and clips it away, so an empty slot never leaves a hairline.
+  homePatrolFrame: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: guardShape.cardRadius,
+    borderWidth: guardShape.cardBorderWidth,
+    borderColor: guardColors.cardBorder,
   },
   guardSectionLabel: {
     fontSize: 11,
@@ -3768,26 +3767,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     color: colors.textSecondary,
     textTransform: 'uppercase',
-  },
-  guardSectionBody: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: colors.textSecondary,
-  },
-  guardSiteTitle: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    letterSpacing: -0.3,
-  },
-  guardTimeStack: {
-    gap: 4,
-    marginTop: 4,
-  },
-  guardStatusText: {
-    fontSize: 15,
-    lineHeight: 23,
   },
   guardHomeCta: {
     marginTop: 4,
@@ -3825,194 +3804,61 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
-  guardLinkStack: {
-    gap: 10,
-  },
-  guardOutlineLink: {
+  // S4 Profile release patch — choice chips (licence status, travel method, distance, relationship). Each chip is as
+  // wide as its label and the row wraps, so at 360dp and large text a label moves to the next line instead of breaking
+  // mid-word; never narrower or shorter than 44dp. Selected: Guard teal with white text (4.7:1, was 3.0:1 on #16A6A1).
+  guardChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  guardChoiceChip: {
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    maxWidth: '100%',
+    minWidth: 44,
+    minHeight: 44,
+    borderRadius: 14,
     backgroundColor: colors.card,
-    borderColor: colors.border,
-  },
-  guardLiveStatusFlush: {
-    marginTop: 2,
-  },
-  guardRecentActivityCard: {
-    borderRadius: 22,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 16,
-    backgroundColor: colors.card,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  guardLiveActionsCard: {
-    borderRadius: 22,
-    marginTop: 2,
-    overflow: 'hidden',
-  },
-  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
-  flexGrow: { flex: 1 },
-  siteName: { fontSize: 26, lineHeight: 30, fontWeight: '800', color: colors.textPrimary },
-  shiftDate: { color: colors.textSecondary, fontWeight: '600' },
-  shiftTime: { color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  helperLine: { color: colors.textSecondary, lineHeight: 20 },
-  helperLineWarning: { color: colors.warning, fontWeight: '700' },
-  helperLineUrgent: { color: colors.danger, fontWeight: '800' },
-  helperText: { color: colors.textSecondary, lineHeight: 20 },
-  liveBanner: {
-    marginTop: 10,
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.successSurface,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: colors.success,
+  guardChoiceChipSelected: { backgroundColor: guardColors.teal, borderColor: guardColors.teal },
+  guardChoiceChipTextSelected: { color: colors.textOnBrand },
+  // Profile Save buttons (emergency contact, bank details): Guard teal with white text (the bank Save was grey on
+  // #16A6A1, about 1.8:1).
+  guardProfilePrimarySave: { backgroundColor: guardColors.teal, borderColor: guardColors.teal },
+  guardProfilePrimarySaveText: { color: colors.textOnBrand },
+  // Profile save safety: shown instead of a usable form until the Guard's record has loaded.
+  guardProfileUnavailable: {
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerSurface,
   },
-  liveBannerText: {
-    color: colors.success,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.6,
+  guardProfileUnavailableText: { color: colors.danger, fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  guardProfileRetryBtn: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  guardProfileRetryText: { color: colors.danger, fontSize: 14, fontWeight: '700' },
+  guardProfileFormError: { color: colors.danger, fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  flexGrow: { flex: 1 },
+  helperText: { color: colors.textSecondary, lineHeight: 20 },
   primaryActionButton: { backgroundColor: colors.primaryNavy, borderRadius: 18, minHeight: 56, paddingHorizontal: 16, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
   primaryActionText: { color: colors.textOnBrand, fontSize: 16, fontWeight: '800' },
-  liveStatusBlock: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
-  },
-  liveStatusItem: {
-    flex: 1,
-    backgroundColor: colors.card,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 4,
-  },
-  liveStatusLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  liveStatusValue: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  secondarySummaryButton: {
-    alignSelf: 'stretch',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondarySummaryButtonText: { color: colors.textPrimary, fontWeight: '700', fontSize: 15 },
-  quickActionCard: {
-    borderRadius: 20,
-    backgroundColor: colors.primaryNavy,
-    borderWidth: 1,
-    borderColor: colors.primaryNavy,
-    padding: 16,
-    gap: 10,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
-  },
-  quickActionTitle: { fontSize: 16, fontWeight: '800', color: colors.textOnBrand },
-  quickActionSubtitle: { color: colors.border, lineHeight: 18 },
-  quickActionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  quickActionButton: {
-    width: '48%',
-    minHeight: 94,
-    borderRadius: 18,
-    backgroundColor: colors.primaryNavy,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: colors.primaryNavySoft,
-  },
-  quickActionDanger: { backgroundColor: colors.danger, borderColor: colors.danger },
-  quickActionText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   // ── Welfare Check block (Phase 3D) ───────────────────────────────────────
-  guardSectionUrgent: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.danger,
-  },
-  welfareStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  welfareStatusLabel: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    color: colors.textPrimary,
-  },
-  welfareStatusGood: { color: colors.success },
-  welfareStatusWarning: { color: colors.warning },
-  welfareStatusDanger: { color: colors.danger },
-  welfareNextDue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  welfareDetail: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  welfareMissed: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.danger,
-    marginTop: 4,
-  },
-  welfareActionButton: {
-    marginTop: 10,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    backgroundColor: colors.accentTeal,
-  },
-  welfareActionUrgent: { backgroundColor: colors.danger },
-  welfareActionText: {
-    color: colors.textOnBrand,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  welfareLogBookLine: {
-    marginTop: 8,
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  // Emergency is deliberately not a fifth tile in a uniform grid: full width, on its own row, so it
-  // cannot be hit while reaching for Log Book.
-  emergencyButton: {
-    width: '100%',
-    marginTop: 10,
-  },
-  quickActionDangerText: { color: colors.textOnBrand, fontWeight: '800', fontSize: 15 },
   guardOffersRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   offersListSection: { gap: 0, paddingTop: 2 },
   offersWorkflowFooter: {
@@ -4104,25 +3950,6 @@ const styles = StyleSheet.create({
   },
   secondaryActionButtonText: { color: colors.textPrimary, fontWeight: '700' },
   cardTitle: { color: colors.textPrimary, fontWeight: '700', fontSize: 16 },
-  metaText: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
-  activityRow: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: 12,
-    paddingBottom: 4,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  activityBullet: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: colors.success,
-    marginTop: 5,
-  },
-  activityTitle: { color: colors.textPrimary, fontWeight: '700' },
-  activityTime: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
   guardHistoryRoot: { width: '100%', gap: 12, paddingBottom: 8 },
   historyFilterRow: {
     flexDirection: 'row',
@@ -4272,32 +4099,30 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   logoutButton: { borderRadius: 16, borderWidth: 1, borderColor: colors.border, minHeight: 52, alignItems: 'center', justifyContent: 'center' },
   logoutButtonText: { color: colors.textPrimary, fontWeight: '700' },
+  // Stage 1: separated from the content by its 1dp top border alone — no shadow.
   bottomNav: {
     flexDirection: 'row',
-    backgroundColor: colors.card,
+    backgroundColor: guardColors.surface,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: guardColors.cardBorder,
     paddingTop: 8,
     paddingHorizontal: 8,
-    shadowColor: colors.primaryNavy,
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 6,
   },
-  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6 },
-  bottomNavItemActive: { opacity: 1 },
+  bottomNavCompact: { paddingHorizontal: 2 },
+  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56, gap: 6, paddingHorizontal: 2, minWidth: 0 },
+  // Stage 1: the selected tab sits on a subtle teal tint, above its teal indicator.
+  bottomNavItemActive: { opacity: 1, backgroundColor: guardColors.navActiveTint, borderRadius: guardShape.controlRadius },
   bottomNavIndicator: {
-    width: 32,
-    height: 3,
-    borderRadius: 999,
+    width: 40,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: 'transparent',
   },
   bottomNavIndicatorActive: {
-    backgroundColor: colors.accentTeal,
+    backgroundColor: guardColors.teal,
   },
-  bottomNavLabel: { color: colors.textSecondary, fontWeight: '700', fontSize: 13 },
-  bottomNavLabelActive: { color: colors.primaryNavy, fontWeight: '800' },
+  bottomNavLabel: { color: colors.textSecondary, ...guardType.nav, flexShrink: 1 },
+  bottomNavLabelActive: { color: guardColors.navy, ...guardType.navActive },
   modalInput: { minHeight: 120, textAlignVertical: 'top' },
   // Inline action feedback. Inside the form, so the keyboard and the modal cannot hide it.
   actionInlineError: {
@@ -4340,7 +4165,10 @@ const styles = StyleSheet.create({
 
   // Home offers indicator strip
   homeOffersStrip: {
+    // S4-UX-01.4: the same 12pt gap as the Home cards above it.
+    marginTop: 12,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
@@ -4371,15 +4199,25 @@ const styles = StyleSheet.create({
   homeOffersStripBtnText: { color: colors.warning, fontWeight: '700', fontSize: 13 },
 
   // Bottom nav badge
-  bottomNavLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  bottomNavLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' },
+  // Stage 4A: no fixed height. guardBadgeBox(guardBadgeSize(fontScale)) sets the scaled minimum size (18dp at 1.0x);
+  // the badge can always grow to fit its scaled number.
   navBadge: {
     minWidth: 18,
-    height: 18,
-    borderRadius: 999,
-    backgroundColor: colors.accentTeal,
+    minHeight: 18,
+    borderRadius: 9,
+    // White on the Guard teal is 4.75:1 (the shared accentTeal gave 3.0:1).
+    backgroundColor: guardColors.teal,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
-  navBadgeText: { color: colors.textOnBrand, fontSize: 10, fontWeight: '800', lineHeight: 14 },
+  // Stage 1B: on the Notifications control's secondary-navy fill the teal badge alone is 2.12:1, below the 3:1
+  // non-text minimum. A 1dp white outline (10.08:1 against #28445F) defines it there.
+  // Stage 4A: on the control's upper-right corner (guardHeaderBadgeOffset), outside the control's layout.
+  navBadgeOnHeader: { position: 'absolute', borderWidth: 1, borderColor: '#FFFFFF' },
+  // Stage 4A: above the end of the Offers label (guardOffersBadgeOffset), outside the label row's layout. The white
+  // outline separates it from the selected tab's teal indicator, which it may overlap.
+  navBadgeOnNav: { position: 'absolute', borderWidth: 1, borderColor: '#FFFFFF' },
+  navBadgeText: { color: colors.textOnBrand, fontFamily: guardFontFamily.bold, fontSize: 10, lineHeight: 14, textAlign: 'center' },
 });

@@ -32,51 +32,21 @@
     "keySizeNote": "Corrected 2026-10-20 from 2048: keytool on the keystore and jarsigner on the 1.1.0 (15) AAB both report a 4096-bit RSA key. The certificate SHA-256 (which covers the public key) was always correct; only the size field was mis-recorded."
   },
   "expectedRelease": {
-    "versionName": "1.2.1",
-    "versionCode": 24,
+    "versionName": "1.2.2",
+    "versionCode": 25,
     "minSdkVersion": 24
   },
   "preparedArtefact": {
-    "versionName": "1.2.1",
-    "versionCode": 24,
-    "status": "built-not-uploaded",
-    "easBuildId": "85a98a03-f279-45f4-8e38-2dc730c95b3e",
-    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/85a98a03-f279-45f4-8e38-2dc730c95b3e",
+    "versionName": "1.2.2",
+    "versionCode": 25,
+    "status": "prepared-not-built",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
-    "sourceFixCommit": "63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0",
-    "gitCommit": "5d749fa1bd5797ff69fa16c4432ee13a2437b602",
-    "aabFilename": "s4-1.2.1-vc24-85a98a03.aab",
-    "aabSha256": "8a948d6b9b370bdded279454e0b16d085a9e9ca7cc9b62d6112e2f961d855a6a",
-    "aabSizeBytes": 64057635,
+    "sourceBranch": "feature/s4-ux-01-guard-home",
+    "sourceFixCommit": "395c3ec050a7b81b5da7f327da9d80a92e9dc7f8",
+    "sourceBase": "1251a8e (release/s4-pilot-rc1: production 2c72b01 plus the iPhone Photo Patrol fix c82c442 and the build 22 records)",
     "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-    "certifiedOn": "2026-11-01",
-    "verified": {
-      "package": "com.sfour.s4",
-      "versionCode": 24,
-      "versionName": "1.2.1",
-      "minSdkVersion": 24,
-      "targetSdkVersion": 36,
-      "abis": [
-        "arm64-v8a",
-        "armeabi-v7a",
-        "x86",
-        "x86_64"
-      ],
-      "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
-      "signerCheck": "keytool -printcert -jarfile on the downloaded AAB (2026-11-01): upload certificate SHA-256 0D:58:94:49:...:EC:76:31:1B, the permanent S4 key, the same as vc17 to vc23",
-      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
-      "productionApiUrls": 1,
-      "stagingApiUrls": 0,
-      "bundleCheck": "base/assets/index.android.bundle: the production API URL present once, no staging URL, the patrol outbox code present",
-      "patrolOutboxInBundle": "yes: the patrol outbox code is in the JS bundle",
-      "cameraFeatures": "android.hardware.camera and android.hardware.camera.autofocus declared android:required=\"false\"",
-      "permissions": "identical to 1.2.0 (23)",
-      "servicesAndBackup": "services and backup identical to 1.2.0 (23): backup rules s4_backup_rules / s4_data_extraction_rules, excluding SecureStore"
-    },
-    "note": "S4 1.2.1 (24): 1.2.0 (23) plus Package A (patrol correctness and Guard app visibility): the Guard app refreshes the patrol plan while the shift is in progress (every 5 minutes in the foreground, on returning to the app, after Book On and on Refresh) and keeps the last good plan when offline, an active patrol keeps its own route, photos are required yes / no and a missing photo needs a reason, photo-only sites patrol without QR, a QR site without a route is shown as a configuration problem, and the dashboard can acknowledge and resolve patrol exceptions. Same package com.sfour.s4, same upload key as vc17 to vc23 (the permanent S4 certificate above), same plugins (withOptionalCameraHardware, withPatrolBackupExclusion) and permissions, same Firebase setup, production API. The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (85a98a03, production profile, STORE) from 5d749fa and verified from the downloaded AAB (coordinator, 1 Nov 2026): manifest com.sfour.s4 / 24 / 1.2.1, minSdk 24 / targetSdk 36, ABIs arm64-v8a, armeabi-v7a, x86 and x86_64, both camera features required=\"false\", permissions, services and backup rules (s4_backup_rules / s4_data_extraction_rules excluding SecureStore) identical to 1.2.0 (23), the JS bundle on the production API with no staging API and with the patrol outbox, and the upload certificate (keytool -printcert -jarfile) equal to the permanent S4 key.sfour.s4 / 24 / 1.2.1, both camera features required=\"false\", permissions identical to 1.2.0 (23), upload certificate equal to the permanent S4 key. Not uploaded to Google Play: the owner will upload it manually to Internal Testing; until then 1.2.0 (23) is the active Internal Testing release. The AAB is kept outside Git."
+    "note": "S4 1.2.2 (25): release/s4-pilot-rc1 1251a8e (production 2c72b01 plus the iPhone Photo Patrol fix c82c442, the camera opening from inside the patrol modal) plus the Guard Home UX-01 work (adaptive On Duty / Off Duty Home, Guard-only header, persistent on-duty Emergency bar, compact shift, welfare and record presentation, Inter typography bundled as font assets, touch-target and contrast fixes) and the Guard Profile release patch (save safety, contrast, wrapping choice chips, SIA guidance), sourceFixCommit 395c3ec. Patrol, camera, QR, offline evidence, Welfare, Book Off and the backend are unchanged from 1251a8e; no dependency is added. Prepared, not built: no EAS build, file, hash, upload or store fact yet. Not uploaded to Google Play. Same package com.sfour.s4, the same permanent upload key as vc17 to vc24 (credentialsSource local), the same plugins (withOptionalCameraHardware, withPatrolBackupExclusion), the same Expo project and the production API. It supersedes the distributed 1.2.0 (23) once published; the built, never uploaded 1.2.1 (24) is retired below it."
   },
   "approvedArtefact": {
     "versionName": "1.2.0",
@@ -428,6 +398,50 @@
       },
       "retiredOn": "2026-10-31",
       "retiredReason": "Superseded by versionCode 23 (1.2.0), the same content as 22 under the next free versionCode, on the same identity and upload key. Play reports versionCode 22 as used but unavailable in the App bundle library, so it is consumed there and must never be reused; its build, hash and signer are kept exactly. 1.1.2 (20) stays the distributed build."
+    },
+    {
+      "versionName": "1.2.1",
+      "versionCode": 24,
+      "status": "built-not-uploaded-superseded",
+      "easBuildId": "85a98a03-f279-45f4-8e38-2dc730c95b3e",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/85a98a03-f279-45f4-8e38-2dc730c95b3e",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "sourceBranch": "feature/s4-1.2.1-patrol-correctness",
+      "sourceFixCommit": "63b706a1ed5ba9af5bf1526243ae0ce71ce3dcb0",
+      "gitCommit": "5d749fa1bd5797ff69fa16c4432ee13a2437b602",
+      "aabFilename": "s4-1.2.1-vc24-85a98a03.aab",
+      "aabSha256": "8a948d6b9b370bdded279454e0b16d085a9e9ca7cc9b62d6112e2f961d855a6a",
+      "aabSizeBytes": 64057635,
+      "requiredUploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "uploadCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+      "certifiedOn": "2026-11-01",
+      "verified": {
+        "package": "com.sfour.s4",
+        "versionCode": 24,
+        "versionName": "1.2.1",
+        "minSdkVersion": 24,
+        "targetSdkVersion": 36,
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "signerCertificateSha256": "0d589449335f9154e04a6b973eb186e88fd617581a9843fb62acc2e8ec76311b",
+        "signerCheck": "keytool -printcert -jarfile on the downloaded AAB (2026-11-01): upload certificate SHA-256 0D:58:94:49:...:EC:76:31:1B, the permanent S4 key, the same as vc17 to vc23",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "productionApiUrls": 1,
+        "stagingApiUrls": 0,
+        "bundleCheck": "base/assets/index.android.bundle: the production API URL present once, no staging URL, the patrol outbox code present",
+        "patrolOutboxInBundle": "yes: the patrol outbox code is in the JS bundle",
+        "cameraFeatures": "android.hardware.camera and android.hardware.camera.autofocus declared android:required=\"false\"",
+        "permissions": "identical to 1.2.0 (23)",
+        "servicesAndBackup": "services and backup identical to 1.2.0 (23): backup rules s4_backup_rules / s4_data_extraction_rules, excluding SecureStore"
+      },
+      "note": "S4 1.2.1 (24): 1.2.0 (23) plus Package A (patrol correctness and Guard app visibility): the Guard app refreshes the patrol plan while the shift is in progress (every 5 minutes in the foreground, on returning to the app, after Book On and on Refresh) and keeps the last good plan when offline, an active patrol keeps its own route, photos are required yes / no and a missing photo needs a reason, photo-only sites patrol without QR, a QR site without a route is shown as a configuration problem, and the dashboard can acknowledge and resolve patrol exceptions. Same package com.sfour.s4, same upload key as vc17 to vc23 (the permanent S4 certificate above), same plugins (withOptionalCameraHardware, withPatrolBackupExclusion) and permissions, same Firebase setup, production API. The 1.2.1 backend includes Migration 73 (1720900000020-AddPatrolScheduleSuccessors: durable schedule successor links, additive; after Migration 72, 1720900000018). Built by EAS (85a98a03, production profile, STORE) from 5d749fa and verified from the downloaded AAB (coordinator, 1 Nov 2026): manifest com.sfour.s4 / 24 / 1.2.1, minSdk 24 / targetSdk 36, ABIs arm64-v8a, armeabi-v7a, x86 and x86_64, both camera features required=\"false\", permissions, services and backup rules (s4_backup_rules / s4_data_extraction_rules excluding SecureStore) identical to 1.2.0 (23), the JS bundle on the production API with no staging API and with the patrol outbox, and the upload certificate (keytool -printcert -jarfile) equal to the permanent S4 key.sfour.s4 / 24 / 1.2.1, both camera features required=\"false\", permissions identical to 1.2.0 (23), upload certificate equal to the permanent S4 key. Not uploaded to Google Play: the owner will upload it manually to Internal Testing; until then 1.2.0 (23) is the active Internal Testing release. The AAB is kept outside Git.",
+      "retiredOn": "2026-11-10",
+      "retiredReason": "Superseded by versionCode 25 (1.2.2), which carries the iPhone Photo Patrol fix (c82c442) and the Guard Home and Guard Profile work on top of it, on the same identity and upload key. 1.2.1 (24) was built (EAS 85a98a03 from 5d749fa) and never uploaded to Google Play, so it reached no tester; its number is not consumed in Play but is never rebuilt with other content, and its exact build, hash and signer are kept."
     }
   ],
   "playAppSigning": {
