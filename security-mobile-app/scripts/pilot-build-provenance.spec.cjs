@@ -883,6 +883,13 @@ test('BUILD-01J-S4-1-2-2-IOS-24-AND-ANDROID-26-ADD-THE-GUARD-LEAVE-COMPANY-SELEC
   assert.equal(vc25.versionCode + 1, pa.versionCode);
   assert.match(pi.storeNumberCheck, /^Owner-verified from App Store Connect on 15 Nov 2026 \(screenshots\): the highest S4 1\.2\.2 build was 23/);
   assert.match(pa.storeNumberCheck, /^Owner-verified from Play Console on 15 Nov 2026 \(screenshots\): the highest S4 versionCode was 25/);
+  // The owner-approved EAS Submit of iOS 24 (15 Nov 2026) was refused by Apple before upload (a required agreement is
+  // missing or has expired): App Store Connect did not receive the build, so it stays built-not-submitted.
+  assert.deepEqual(pi.submissionAttempts.map((entry) => [entry.easSubmissionId, entry.status, entry.errorCode, entry.uploadedToAppStoreConnect]), [
+    ['c876948f-b9cf-4f4f-a5bc-7554f017ef39', 'ERRORED', 'EAS_ASC_REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED', false],
+  ]);
+  assert.equal(pi.submissionAttempts[0].ascAppId, '6820632995');
+  assert.doesNotMatch(pi.note, /no submission and no tester/, 'the note reflects the failed attempt');
   // The exact builds.
   assert.deepEqual([pi.easBuildId, pa.easBuildId], ['d7433bed-16c7-4d13-8a4e-ad99b84e92ca', 'ea0118ad-2d7d-4228-b132-df0f52534905']);
   for (const p of [pi, pa]) {
@@ -923,7 +930,7 @@ test('BUILD-01J-S4-1-2-2-IOS-24-AND-ANDROID-26-ADD-THE-GUARD-LEAVE-COMPANY-SELEC
     assert.ok(!(key in pi), `the built iOS 24 records no ${key}`);
   }
   assert.deepEqual(Object.keys(pa).filter((key) => /^play|internalTesting|uploaded/i.test(key)), [], 'the built Android 26 records no Play fact');
-  assert.match(pi.note, /Built, not submitted: not uploaded to App Store Connect or TestFlight/);
+  assert.match(pi.note, /Built, not submitted: .*App Store Connect did not receive build 24, so it is not in TestFlight/);
   assert.match(pa.note, /Not uploaded to Google Play\./);
   // The same identity, Expo project, signing and API as 23 and 25.
   assert.deepEqual([appJson.expo.ios.bundleIdentifier, appJson.expo.android.package, ios.bundleIdentifier, android.package], ['com.sfour.s4', 'com.sfour.s4', 'com.sfour.s4', 'com.sfour.s4']);
