@@ -62,12 +62,13 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   // S4 1.2.2 (10 Nov 2026): Android 25 and iOS 23 on the same store identity: the iOS 22 Photo Patrol fix plus the Guard
   // Home and Guard Profile work. Both were built on 11 Nov 2026 (iOS 23 uploaded to App Store Connect); Android 24 was
   // built and never uploaded. Neither is rebuilt.
-  // S4 1.2.2 (15 Nov 2026, prepared, not built): Android 26 and iOS 24 add SEC-001B Stage 2B (Guard Leave company
-  // selection) on the same store identity.
+  // S4 1.2.2 (15 Nov 2026): Android 26 and iOS 24 add SEC-001B Stage 2B (Guard Leave company selection) on the same
+  // store identity; built the same day from 6216b84, not sent to a store. Owner-verified: Android 25 uploaded and
+  // available to internal testers, iOS 23 Testing in TestFlight.
   assert.equal(expo.version, '1.2.2');
   assert.equal(expo.android.versionCode, 26);
   assert.equal(expo.ios.buildNumber, '24');
-  assert.ok(expo.android.versionCode > 25, 'above the built Android 25 (Play upload not confirmed)');
+  assert.ok(expo.android.versionCode > 25, 'above Android 25, uploaded to Play Internal Testing (owner-verified 15 Nov 2026)');
   assert.ok(Number(expo.ios.buildNumber) > 23, 'above iOS 23, uploaded to App Store Connect');
   assert.ok(expo.android.versionCode > 24, 'above the built, never uploaded Android 24');
   assert.ok(Number(expo.ios.buildNumber) > 22, 'above iOS 22, in TestFlight testing');

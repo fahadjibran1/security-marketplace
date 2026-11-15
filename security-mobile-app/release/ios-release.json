@@ -30,14 +30,24 @@
     "ascApiKey": "At the 1.1.0 (14) build (2026-10-20) Apple rejected the key for build-time profile validation (401). On 2026-10-24 the same key, 468TT6N8RB, uploaded 1.1.0 (16) through EAS Submit, so it is valid for submissions; not replaced."
   },
   "preparedArtefact": {
-    "status": "prepared-not-built",
+    "status": "built-not-submitted",
     "marketingVersion": "1.2.2",
     "buildNumber": "24",
+    "easBuildId": "d7433bed-16c7-4d13-8a4e-ad99b84e92ca",
+    "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/d7433bed-16c7-4d13-8a4e-ad99b84e92ca",
     "easBuildProfile": "production",
     "distribution": "STORE",
     "sourceBranch": "release-candidate/s4-1.2.2-sec001b-2b",
     "sourceFixCommit": "4bf731ef7c65fcdf470773cde322022204b675d9",
     "sourceBase": "b384c56 (merge of production release/s4-pilot-rc1 4bf731e, SEC-001B Stage 2B, and PR #116 6fbd885, the Guard Home UX-01 work and the Guard Profile release patch)",
+    "gitCommit": "6216b8415eb2a18686b6da7ee207eb32c1ea4f3a",
+    "releaseBranch": "release/s4-pilot-rc1 (6216b84 since PR #122 was merged on 15 Nov 2026)",
+    "sourceGate": "S4 Mobile Release Gate runs 43718282605 (PR #122) and 43722028989 (push to release/s4-pilot-rc1), both passed on this exact commit",
+    "completedAt": "2026-11-15T15:55:52.626Z",
+    "ipaFilename": "s4-1.2.2-ios24-d7433bed.ipa",
+    "ipaSha256": "de6cfd93bfe481a94ec523846dd3336eef50f05abfbdc6e45d83e63ca8a51477",
+    "ipaSizeBytes": 13782235,
+    "certifiedOn": "2026-11-15",
     "requiredSigning": {
       "credentials": "EAS-managed (remote), unchanged",
       "teamId": "SXH4TLU2B5",
@@ -46,7 +56,28 @@
       "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17 to 23",
       "apsEnvironment": "production"
     },
-    "note": "S4 1.2.2 (24): the content of the uploaded 1.2.2 (23) (Guard Home UX-01 and the Guard Profile release patch, PR #116 6fbd885) plus SEC-001B Stage 2B, the Guard Leave company selector for guards with several ACTIVE employers (4bf731e, live in production). Prepared, not built: no EAS build, file, hash, upload or store fact yet. Build number 24 is one above the highest iOS build in the EAS build list (23, uploaded 11 Nov 2026); App Store Connect itself was not readable from the build machine on 15 Nov 2026. Same bundle identifier com.sfour.s4, Expo project, EAS-managed signing and production API as 23."
+    "verified": {
+      "bundleIdentifier": "com.sfour.s4",
+      "marketingVersion": "1.2.2",
+      "buildNumber": "24",
+      "displayName": "S4",
+      "usesNonExemptEncryption": false,
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z",
+      "provisioningProfileUuid": "1f19cdf5-67cd-4e7b-af8b-131c87c13964",
+      "teamId": "SXH4TLU2B5",
+      "applicationIdentifier": "SXH4TLU2B5.com.sfour.s4",
+      "profileCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+      "apsEnvironment": "production",
+      "signedEntitlementsApsEnvironment": "production",
+      "getTaskAllow": false,
+      "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+      "stagingApiUrls": 0,
+      "featuresInBundle": "yes: the Guard Leave company selector (leave/mine/companies, \"Choose the company this leave request is for.\"), the Guard Home on-duty Emergency bar (UX-01) and the Guard Profile save safety (\"Enter your full name before saving.\", \"There are no changes to save.\") are in main.jsbundle",
+      "sessionStorageKey": "security-app-session (unchanged)",
+      "source": "the downloaded IPA (15 Nov 2026): Info.plist, embedded.mobileprovision (its developer certificate hashed in full), the entitlements signed into the S4 binary and main.jsbundle"
+    },
+    "storeNumberCheck": "Owner-verified from App Store Connect on 15 Nov 2026 (screenshots): the highest S4 1.2.2 build was 23 (Testing in TestFlight) and no build 24 or higher existed before this build.",
+    "note": "S4 1.2.2 (24): the content of the uploaded 1.2.2 (23) (Guard Home UX-01 and the Guard Profile release patch, PR #116 6fbd885) plus SEC-001B Stage 2B, the Guard Leave company selector for guards with several ACTIVE employers (4bf731e, live in production). Built by EAS (d7433bed, production profile, STORE) from 6216b84, owner-approved on 15 Nov 2026 after the owner verified the store numbers, with the existing EAS-managed credentials (nothing generated or replaced). Verified from the downloaded IPA on 15 Nov 2026: com.sfour.s4, 1.2.2 (24), the same team, distribution certificate (full SHA-256), provisioning profile and production push environment as 23, get-task-allow false, the production API only, and the Guard Leave company selector (leave/mine/companies, \"Choose the company this leave request is for.\"), the Guard Home on-duty Emergency bar (UX-01) and the Guard Profile save safety (\"Enter your full name before saving.\", \"There are no changes to save.\"). Built, not submitted: not uploaded to App Store Connect or TestFlight, so there is no submission and no tester has it. The IPA is kept outside Git."
   },
   "submittedArtefact": {
     "status": "uploaded-to-testflight",
@@ -229,7 +260,9 @@
         "betaAppReview": "submitted 2026-11-11 (owner-approved); Waiting for Review when last observed. The outcome is not recorded.",
         "whatToTest": "Guard Home layout including the on-shift Emergency bar, Guard Profile editing and saving, Welfare Checks and Book On / Off, Patrol QR scanning and photos, offline patrol evidence synchronisation",
         "status": "Testing for Team (Expo); S4 pilot guards Waiting for Review",
-        "observedOn": "2026-11-11"
+        "observedOn": "2026-11-11",
+        "ownerConfirmed": "Testing in TestFlight; the highest S4 1.2.2 build in App Store Connect (owner-verified from screenshots, 15 Nov 2026)",
+        "ownerConfirmedOn": "2026-11-15"
       },
       "note": "S4 1.2.2 (23) as prepared in 6fbd885 (PR #116): release/s4-pilot-rc1 1251a8e plus the Guard Home UX-01 work and the Guard Profile release patch. Built by EAS and verified from the downloaded IPA on 11 Nov 2026 (bundle com.sfour.s4, 1.2.2 (23), the same profile, team and production push environment as 22, production API only), then uploaded by EAS Submit and assigned to both TestFlight groups. It does not contain SEC-001B Stage 2B (the Guard Leave company selector).",
       "supersededBy": "24",
@@ -537,7 +570,7 @@
       "supersededBy": "1.1.0 (14) 7333ba4d"
     }
   ],
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25). 1.1.1 (18) uploaded to App Store Connect 2026-10-26 (EAS Submit 5118fcda); TestFlight group assignment not confirmed. 1.1.2 (19) uploaded to App Store Connect 2026-10-28 (EAS Submit a3234a35) and assigned to the groups \"Team (Expo)\" (internal) and \"S4 pilot guards\" (external); the external group is Waiting for Review (Apple Beta App Review), not available to external testers (owner-confirmed 2026-10-28). 1.2.1 (21) uploaded to App Store Connect 2026-11-01 (EAS Submit fa9fafd1); Apple processing not yet confirmed; no TestFlight group assigned by S4. 1.2.0 (20) was never submitted. 1.2.1 (22) (EAS build 36fa32ee, from 9b92601) uploaded to App Store Connect 2026-11-05 by EAS Submit; Apple processing complete; in Testing for \"Team (Expo)\" (internal) and, after Beta App Review (submitted and approved 2026-11-05), for \"S4 pilot guards\" (external), available to the external testers. Observed the same day: 1.2.1 (21) in Testing for both groups. 1.2.2 (23) (EAS build 980a9312, from 6fbd885) uploaded to App Store Connect 2026-11-11 by EAS Submit 8034fcaf; Apple processing complete; Testing for \"Team (Expo)\"; submitted for Beta App Review for \"S4 pilot guards\" (Waiting for Review when last observed, 2026-11-11).",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25). 1.1.1 (18) uploaded to App Store Connect 2026-10-26 (EAS Submit 5118fcda); TestFlight group assignment not confirmed. 1.1.2 (19) uploaded to App Store Connect 2026-10-28 (EAS Submit a3234a35) and assigned to the groups \"Team (Expo)\" (internal) and \"S4 pilot guards\" (external); the external group is Waiting for Review (Apple Beta App Review), not available to external testers (owner-confirmed 2026-10-28). 1.2.1 (21) uploaded to App Store Connect 2026-11-01 (EAS Submit fa9fafd1); Apple processing not yet confirmed; no TestFlight group assigned by S4. 1.2.0 (20) was never submitted. 1.2.1 (22) (EAS build 36fa32ee, from 9b92601) uploaded to App Store Connect 2026-11-05 by EAS Submit; Apple processing complete; in Testing for \"Team (Expo)\" (internal) and, after Beta App Review (submitted and approved 2026-11-05), for \"S4 pilot guards\" (external), available to the external testers. Observed the same day: 1.2.1 (21) in Testing for both groups. 1.2.2 (23) (EAS build 980a9312, from 6fbd885) uploaded to App Store Connect 2026-11-11 by EAS Submit 8034fcaf; Apple processing complete; Testing for \"Team (Expo)\"; submitted for Beta App Review for \"S4 pilot guards\" (Waiting for Review when last observed, 2026-11-11). Owner-verified 2026-11-15 (App Store Connect screenshots): 1.2.2 (23) is Testing in TestFlight and is the highest 1.2.2 build; no 24 or higher. 1.2.2 (24) (EAS build d7433bed, from 6216b84) built 2026-11-15, not submitted.",
   "appStore": "NOT SUBMITTED",
   "push": {
     "apnsKeyId": "CXFMNB4HHN",
