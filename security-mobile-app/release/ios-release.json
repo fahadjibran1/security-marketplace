@@ -10,7 +10,7 @@
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
   "marketingVersion": "1.2.2",
-  "buildNumber": "23",
+  "buildNumber": "24",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
   "privacyManifest": "app-level, generated from app.json ios.privacyManifests: tracking false; required-reason APIs UserDefaults, FileTimestamp, DiskSpace, SystemBootTime with the reasons their bundled dependencies declare",
@@ -32,21 +32,21 @@
   "preparedArtefact": {
     "status": "prepared-not-built",
     "marketingVersion": "1.2.2",
-    "buildNumber": "23",
+    "buildNumber": "24",
     "easBuildProfile": "production",
     "distribution": "STORE",
-    "sourceBranch": "feature/s4-ux-01-guard-home",
-    "sourceFixCommit": "395c3ec050a7b81b5da7f327da9d80a92e9dc7f8",
-    "sourceBase": "1251a8e (release/s4-pilot-rc1: production 2c72b01 plus the iPhone Photo Patrol fix c82c442 and the build 22 records)",
+    "sourceBranch": "release-candidate/s4-1.2.2-sec001b-2b",
+    "sourceFixCommit": "4bf731ef7c65fcdf470773cde322022204b675d9",
+    "sourceBase": "b384c56 (merge of production release/s4-pilot-rc1 4bf731e, SEC-001B Stage 2B, and PR #116 6fbd885, the Guard Home UX-01 work and the Guard Profile release patch)",
     "requiredSigning": {
       "credentials": "EAS-managed (remote), unchanged",
       "teamId": "SXH4TLU2B5",
       "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
       "distributionCertificateSerial": "3933E4689FD03762FE3029E42A6BC3B5",
-      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17 to 22",
+      "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17 to 23",
       "apsEnvironment": "production"
     },
-    "note": "S4 1.2.2 (23): release/s4-pilot-rc1 1251a8e (production 2c72b01 plus the iPhone Photo Patrol fix c82c442, device-confirmed by the owner on build 22) plus the Guard Home UX-01 work and the Guard Profile release patch, sourceFixCommit 395c3ec. Patrol, camera, QR, offline evidence, Welfare, Book Off and the backend are unchanged from 1251a8e; no dependency is added. Prepared, not built: no EAS build, file, hash, upload or store fact yet. Same bundle identifier com.sfour.s4, Expo project, EAS-managed signing and production API as 22. 1.2.1 (22) is superseded by 23 and kept as recorded; 1.1.0 (17) stays the record's distributed iOS artefact. Android 1.2.2 (25) is prepared from the same commit."
+    "note": "S4 1.2.2 (24): the content of the uploaded 1.2.2 (23) (Guard Home UX-01 and the Guard Profile release patch, PR #116 6fbd885) plus SEC-001B Stage 2B, the Guard Leave company selector for guards with several ACTIVE employers (4bf731e, live in production). Prepared, not built: no EAS build, file, hash, upload or store fact yet. Build number 24 is one above the highest iOS build in the EAS build list (23, uploaded 11 Nov 2026); App Store Connect itself was not readable from the build machine on 15 Nov 2026. Same bundle identifier com.sfour.s4, Expo project, EAS-managed signing and production API as 23."
   },
   "submittedArtefact": {
     "status": "uploaded-to-testflight",
@@ -173,6 +173,68 @@
     }
   },
   "supersededArtefacts": [
+    {
+      "status": "uploaded-to-testflight",
+      "marketingVersion": "1.2.2",
+      "buildNumber": "23",
+      "easBuildId": "980a9312-0fd9-4057-8fe5-28ca41bf5016",
+      "easBuildUrl": "https://expo.dev/accounts/fahadjibran/projects/security-marketplace/builds/980a9312-0fd9-4057-8fe5-28ca41bf5016",
+      "easBuildProfile": "production",
+      "distribution": "STORE",
+      "sourceBranch": "feature/s4-ux-01-guard-home",
+      "sourceFixCommit": "395c3ec050a7b81b5da7f327da9d80a92e9dc7f8",
+      "sourceBase": "1251a8e (release/s4-pilot-rc1: production 2c72b01 plus the iPhone Photo Patrol fix c82c442 and the build 22 records)",
+      "gitCommit": "6fbd885b6f5a79e0ceca3b533cecf4e7ad4dbaa3",
+      "sourceGate": "S4 Mobile Release Gate run 42814344270 (PR #116), passed on this exact commit",
+      "completedAt": "2026-11-11T02:15:05.661Z",
+      "ipaFilename": "s4-1.2.2-ios23-980a9312.ipa",
+      "ipaSha256": "40b1c11444845f1a89e649f938c715f77a44e9c2bb20390ff16e6c125791f911",
+      "ipaSizeBytes": 13777507,
+      "certifiedOn": "2026-11-11",
+      "requiredSigning": {
+        "credentials": "EAS-managed (remote), unchanged",
+        "teamId": "SXH4TLU2B5",
+        "distributionCertificateSha256": "c1f9c5b6c04f4f37939ade278960a16870c88afd2efca94a75b570aab5830196",
+        "distributionCertificateSerial": "3933E4689FD03762FE3029E42A6BC3B5",
+        "provisioningProfile": "*[expo] com.sfour.s4 AppStore 2026-10-23T23:54:04.112Z (B7539588YY, UUID 1f19cdf5-67cd-4e7b-af8b-131c87c13964), as recorded for builds 17 to 22",
+        "apsEnvironment": "production"
+      },
+      "verified": {
+        "bundleIdentifier": "com.sfour.s4",
+        "marketingVersion": "1.2.2",
+        "buildNumber": "23",
+        "provisioningProfileUuid": "1f19cdf5-67cd-4e7b-af8b-131c87c13964",
+        "teamId": "SXH4TLU2B5",
+        "apsEnvironment": "production",
+        "apiBaseUrl": "https://security-marketplace-api.onrender.com",
+        "stagingApiUrls": 0,
+        "source": "embedded.mobileprovision and main.jsbundle read from the downloaded IPA (11 Nov 2026); version and build number from EAS and App Store Connect. The distribution certificate was recorded only by its prefix c1f9c5b6 and suffix 30196, both matching requiredSigning."
+      },
+      "testFlightUpload": {
+        "easSubmissionId": "8034fcaf-1876-47de-a9af-e6c5ccbf477a",
+        "ascAppId": "6820632995",
+        "ascApiKeyId": "468TT6N8RB",
+        "uploadedOn": "2026-11-11",
+        "appleProcessing": "complete",
+        "note": "EAS Submit uploaded 1.2.2 (23) from EAS build 980a9312 (not rebuilt) to the existing S4 App Store Connect app. Apple processed it (Ready to Submit, expires in 90 days)."
+      },
+      "testFlightDistribution": {
+        "groups": [
+          "Team (Expo)",
+          "S4 pilot guards"
+        ],
+        "internalGroup": "Team (Expo)",
+        "externalGroup": "S4 pilot guards",
+        "externalTesters": 5,
+        "betaAppReview": "submitted 2026-11-11 (owner-approved); Waiting for Review when last observed. The outcome is not recorded.",
+        "whatToTest": "Guard Home layout including the on-shift Emergency bar, Guard Profile editing and saving, Welfare Checks and Book On / Off, Patrol QR scanning and photos, offline patrol evidence synchronisation",
+        "status": "Testing for Team (Expo); S4 pilot guards Waiting for Review",
+        "observedOn": "2026-11-11"
+      },
+      "note": "S4 1.2.2 (23) as prepared in 6fbd885 (PR #116): release/s4-pilot-rc1 1251a8e plus the Guard Home UX-01 work and the Guard Profile release patch. Built by EAS and verified from the downloaded IPA on 11 Nov 2026 (bundle com.sfour.s4, 1.2.2 (23), the same profile, team and production push environment as 22, production API only), then uploaded by EAS Submit and assigned to both TestFlight groups. It does not contain SEC-001B Stage 2B (the Guard Leave company selector).",
+      "supersededBy": "24",
+      "supersededReason": "Superseded on 2026-11-15 by the prepared 1.2.2 (24), which adds SEC-001B Stage 2B (Guard Leave company selection, live in production at 4bf731e) to the same Guard Home and Guard Profile work. Build 23 is not rebuilt; its number is consumed in App Store Connect."
+    },
     {
       "status": "testflight-external-testing",
       "marketingVersion": "1.2.1",
@@ -475,7 +537,7 @@
       "supersededBy": "1.1.0 (14) 7333ba4d"
     }
   ],
-  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25). 1.1.1 (18) uploaded to App Store Connect 2026-10-26 (EAS Submit 5118fcda); TestFlight group assignment not confirmed. 1.1.2 (19) uploaded to App Store Connect 2026-10-28 (EAS Submit a3234a35) and assigned to the groups \"Team (Expo)\" (internal) and \"S4 pilot guards\" (external); the external group is Waiting for Review (Apple Beta App Review), not available to external testers (owner-confirmed 2026-10-28). 1.2.1 (21) uploaded to App Store Connect 2026-11-01 (EAS Submit fa9fafd1); Apple processing not yet confirmed; no TestFlight group assigned by S4. 1.2.0 (20) was never submitted. 1.2.1 (22) (EAS build 36fa32ee, from 9b92601) uploaded to App Store Connect 2026-11-05 by EAS Submit; Apple processing complete; in Testing for \"Team (Expo)\" (internal) and, after Beta App Review (submitted and approved 2026-11-05), for \"S4 pilot guards\" (external), available to the external testers. Observed the same day: 1.2.1 (21) in Testing for both groups.",
+  "testFlight": "1.1.0 (13) uploaded 2026-10-08 (EAS Submit 90bd22f5); 1.1.0 (16) uploaded 2026-10-24 (EAS Submit a5b9ce7d) and distributed to the group \"S4 pilot guards\" (owner-confirmed 2026-10-24). Owner-confirmed 2026-10-20: one external TestFlight group of five testers. 1.1.0 (17) uploaded 2026-10-25 (EAS Submit bde388d9) and in Testing for the groups \"Team (Expo)\" and \"S4 pilot guards\" (owner-confirmed 2026-10-25). 1.1.1 (18) uploaded to App Store Connect 2026-10-26 (EAS Submit 5118fcda); TestFlight group assignment not confirmed. 1.1.2 (19) uploaded to App Store Connect 2026-10-28 (EAS Submit a3234a35) and assigned to the groups \"Team (Expo)\" (internal) and \"S4 pilot guards\" (external); the external group is Waiting for Review (Apple Beta App Review), not available to external testers (owner-confirmed 2026-10-28). 1.2.1 (21) uploaded to App Store Connect 2026-11-01 (EAS Submit fa9fafd1); Apple processing not yet confirmed; no TestFlight group assigned by S4. 1.2.0 (20) was never submitted. 1.2.1 (22) (EAS build 36fa32ee, from 9b92601) uploaded to App Store Connect 2026-11-05 by EAS Submit; Apple processing complete; in Testing for \"Team (Expo)\" (internal) and, after Beta App Review (submitted and approved 2026-11-05), for \"S4 pilot guards\" (external), available to the external testers. Observed the same day: 1.2.1 (21) in Testing for both groups. 1.2.2 (23) (EAS build 980a9312, from 6fbd885) uploaded to App Store Connect 2026-11-11 by EAS Submit 8034fcaf; Apple processing complete; Testing for \"Team (Expo)\"; submitted for Beta App Review for \"S4 pilot guards\" (Waiting for Review when last observed, 2026-11-11).",
   "appStore": "NOT SUBMITTED",
   "push": {
     "apnsKeyId": "CXFMNB4HHN",
