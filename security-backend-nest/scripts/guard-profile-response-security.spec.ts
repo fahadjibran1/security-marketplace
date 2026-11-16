@@ -515,10 +515,15 @@ test('Mobile handleSaveProfile does not send siaLicenseNumber in payload', () =>
 
 test('Mobile SIA licence field is read-only in Profile UI (no onChangeText)', () => {
   const source = mobile('screens/GuardDashboardScreen.tsx');
-  // onChangeText={setSiaLicence} must be absent: the field is now editable={false}
+  // onChangeText={setSiaLicence} must be absent: the Guard cannot type a SIA number into the Profile.
   assert(!source.includes('onChangeText={setSiaLicence}'), 'SIA field is still editable — onChangeText={setSiaLicence} must be removed');
-  // editable={false} must be present on the SIA TextInput
-  assert(source.includes('editable={false}'), 'SIA TextInput is missing editable={false} — field is not locked');
+  // Since the Guard Profile redesign the SIA number is shown as text, not as a locked TextInput, so instead of
+  // looking for editable={false} anywhere in the file this checks the field directly: no input is bound to it,
+  // and its only source is the Guard's own server record.
+  assert(!/value=\{siaLicence\}/.test(source), 'an input is bound to the SIA licence number');
+  const siaSets = source.match(/setSiaLicence\(/g) ?? [];
+  assert(siaSets.length === 1, `setSiaLicence must only be called once, from the loaded record (found ${siaSets.length})`);
+  assert(/setSiaLicence\(myGuard\.siaLicenseNumber \|\| myGuard\.siaLicenceNumber \|\| ''\)/.test(source), 'the SIA licence number is only ever set from the server record');
 });
 
 async function main() {
