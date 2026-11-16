@@ -668,9 +668,9 @@ test('loadEmployments is called inside loadData', () => {
   assert.match(loadDataFn, /loadEmployments/);
 });
 
-test('dashboard renders Employment FeatureCard', () => {
-  // FeatureCard wraps the title prop — search for the opening tag before the title
-  assert.match(dashboard, /FeatureCard[\s\S]{0,200}Employment/);
+test('dashboard renders Employment ProfileCard', () => {
+  // Profile Phase 2D: the shared ProfileCard wraps the title prop — search for the opening tag before the title
+  assert.match(dashboard, /<ProfileCard[\s\S]{0,200}title="Employment"/);
   assert.match(dashboard, /title="Employment"/);
 });
 

@@ -32,6 +32,7 @@ import {
 } from "../../services/api";
 import { GuardProfile, GuardScreening, ScreeningStatus } from "../../types/models";
 import { colors, radii, spacing } from "../../theme";
+import { guardColors, guardType } from "../../theme/guard";
 import { formatScreeningDate, normalizeScreeningPostcode, screeningDateToIso } from "./screening-format";
 
 type Step =
@@ -415,8 +416,15 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
   if (!data?.id)
     return (
       <View style={s.journey}>
-        <Pressable onPress={onBack}>
-          <Text style={s.back}>‹ Back to Profile</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back to Profile"
+          onPress={onBack}
+          style={s.backButton}
+          testID="guard-screening-journey-back"
+        >
+          {/* Phase 2D: the same Back control as the Profile sections (44dp, teal, short label). */}
+          <Text style={s.back}>‹ Back</Text>
         </Pressable>
         <View style={s.hero}>
           <Text style={s.eyebrow}>{SCREENING_COPY.eyebrow}</Text>
@@ -434,8 +442,15 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
     );
   return (
     <View style={s.journey}>
-      <Pressable accessibilityRole="button" onPress={onBack}>
-        <Text style={s.back}>‹ Back to Profile</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Back to Profile"
+        onPress={onBack}
+        style={s.backButton}
+        testID="guard-screening-journey-back"
+      >
+        {/* Phase 2D: the same Back control as the Profile sections (44dp, teal, short label). */}
+        <Text style={s.back}>‹ Back</Text>
       </Pressable>
       <View style={s.hero}>
         <Text style={s.eyebrow}>{SCREENING_COPY.eyebrow}</Text>
@@ -1901,7 +1916,8 @@ const s = StyleSheet.create({
   },
   buttonText: { color: colors.textOnBrand, fontWeight: "800" },
   disabled: { opacity: 0.45 },
-  back: { color: colors.primaryNavy, fontWeight: "800", paddingVertical: 4 },
+  backButton: { minHeight: 44, alignSelf: "flex-start", justifyContent: "center", paddingRight: 16 },
+  back: { ...guardType.button, color: guardColors.teal },
   stepNav: { gap: 8, paddingBottom: 2 },
   step: {
     width: 150,

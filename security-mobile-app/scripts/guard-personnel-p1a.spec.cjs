@@ -170,8 +170,9 @@ test('dashboard renders Tax identifiers FeatureCard', () => {
   assert.match(dashboard, /Tax identifiers/);
 });
 
-test('dashboard renders National Insurance Number label', () => {
-  assert.match(dashboard, /National Insurance Number/);
+// Profile Phase 2D: field captions in sentence case.
+test('dashboard renders National Insurance number label', () => {
+  assert.match(dashboard, />National Insurance number</);
 });
 
 test('dashboard renders Unique Taxpayer Reference label', () => {

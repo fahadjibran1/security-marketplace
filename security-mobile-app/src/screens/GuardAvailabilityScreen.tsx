@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { FeatureCard } from '../components/FeatureCard';
+// Phase 2D: the shared flat Profile card, as in every other Profile section.
+import { ProfileCard } from '../components/guard/profile/ProfileCard';
 import { StatePanel } from '../components/StatePanel';
 import { ApiError, formatApiErrorMessage, listMyAvailabilityOverrides, listMyAvailabilityRules, listMyGuardLeave, listMyLeaveCompanies, saveAvailabilityOverride, saveAvailabilityRule, saveMyGuardLeave } from '../services/api';
 import { buildNewLeavePayload, canSubmitLeave, LEAVE_COPY, LeaveCompanyState, leaveCompanyStateFromError, leaveCompanyStateFromList, leaveErrorCode, refusalNeedsCompanyReload, showsCompanySelector, validSelection } from '../components/guard/guardLeaveCompany';
@@ -32,23 +33,23 @@ export function GuardAvailabilityScreen() {
 
   return <View style={styles.root}>
     {feedback ? <View style={[styles.feedback, feedback.tone === 'error' ? styles.feedbackError : styles.feedbackSuccess]}><Text style={styles.feedbackText}>{feedback.message}</Text></View> : null}
-    <FeatureCard title="Weekly availability" subtitle="Set your normal working pattern. You can override individual dates below.">
+    <ProfileCard title="Weekly availability" subtitle="Set your normal working pattern. You can override individual dates below.">
       <View style={styles.dayRow}>{WEEKDAYS.map((day, i) => <Pressable key={day} onPress={() => setRuleForm(p => ({...p, weekday:String(i)}))} style={[styles.dayChip, ruleForm.weekday === String(i) && styles.dayChipActive]}><Text style={[styles.dayChipText, ruleForm.weekday === String(i) && styles.dayChipTextActive]}>{day}</Text></Pressable>)}</View>
       <View style={styles.grid}><Field label="Start time" value={ruleForm.startTime} placeholder="09:00" onChangeText={(startTime:string)=>setRuleForm(p=>({...p,startTime}))}/><Field label="End time" value={ruleForm.endTime} placeholder="17:00" onChangeText={(endTime:string)=>setRuleForm(p=>({...p,endTime}))}/></View>
       <View style={styles.choiceRow}><Pressable onPress={()=>setRuleForm(p=>({...p,isAvailable:'true'}))} style={[styles.choice,ruleForm.isAvailable==='true'&&styles.choiceActive]}><Text style={[styles.choiceText,ruleForm.isAvailable==='true'&&styles.choiceTextActive]}>Available</Text></Pressable><Pressable onPress={()=>setRuleForm(p=>({...p,isAvailable:'false'}))} style={[styles.choice,ruleForm.isAvailable==='false'&&styles.choiceActive]}><Text style={[styles.choiceText,ruleForm.isAvailable==='false'&&styles.choiceTextActive]}>Unavailable</Text></Pressable></View>
       <PrimaryButton label="Save weekly availability" onPress={handleSaveRule}/>
       <View style={styles.list}>{loading?<StatePanel title="Loading availability" loading tone="info"/>:rules.length===0?<StatePanel title="No weekly availability saved" message="Set your normal working pattern above and save."/>:rules.map(rule=><View key={rule.id} style={styles.row}><View><Text style={styles.rowTitle}>{WEEKDAYS[rule.weekday]||`Day ${rule.weekday}`}</Text><Text style={styles.meta}>{rule.startTime}–{rule.endTime}</Text></View><Status value={rule.isAvailable?'Available':'Unavailable'}/></View>)}</View>
-    </FeatureCard>
+    </ProfileCard>
 
-    <FeatureCard title="One-off change" subtitle="Change your availability for a particular date without altering your normal week.">
+    <ProfileCard title="One-off change" subtitle="Change your availability for a particular date without altering your normal week.">
       <View style={styles.grid}><Field label="Date" value={overrideForm.date} placeholder="YYYY-MM-DD" onChangeText={(date:string)=>setOverrideForm(p=>({...p,date}))}/><Field label="Start (optional)" value={overrideForm.startTime} placeholder="HH:mm" onChangeText={(startTime:string)=>setOverrideForm(p=>({...p,startTime}))}/><Field label="End (optional)" value={overrideForm.endTime} placeholder="HH:mm" onChangeText={(endTime:string)=>setOverrideForm(p=>({...p,endTime}))}/></View>
       <View style={styles.choiceRow}>{['available','unavailable'].map(status=><Pressable key={status} onPress={()=>setOverrideForm(p=>({...p,status}))} style={[styles.choice,overrideForm.status===status&&styles.choiceActive]}><Text style={[styles.choiceText,overrideForm.status===status&&styles.choiceTextActive]}>{status==='available'?'Available':'Unavailable'}</Text></Pressable>)}</View>
       <Field label="Note (optional)" value={overrideForm.note} placeholder="Add context for your company" onChangeText={(note:string)=>setOverrideForm(p=>({...p,note}))}/>
       <SecondaryButton label="Save one-off change" onPress={handleSaveOverride}/>
       <View style={styles.list}>{overrides.length===0&&!loading?<StatePanel title="No one-off changes saved" message="Use the form above to add availability changes for specific dates."/>:overrides.slice(0,5).map(o=><View key={o.id} style={styles.row}><View><Text style={styles.rowTitle}>{formatDate(o.date)}</Text><Text style={styles.meta}>{o.startTime||'All day'}–{o.endTime||'All day'}</Text></View><Status value={o.status}/></View>)}</View>
-    </FeatureCard>
+    </ProfileCard>
 
-    <FeatureCard title="Leave" subtitle="Request time away from work. Your company will review the request.">
+    <ProfileCard title="Leave" subtitle="Request time away from work. Your company will review the request.">
       {leaveCompanies.kind === 'none' ? <StatePanel title="No active company" message={LEAVE_COPY.noActiveEmployer}/> : <>
       {leaveCompanies.kind === 'loading' ? <Text style={styles.meta}>{LEAVE_COPY.loading}…</Text> : null}
       {leaveCompanies.kind === 'error' ? <View style={styles.inlineNotice}><Text style={[styles.meta, styles.flex]}>{LEAVE_COPY.loadError}</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry loading your companies" onPress={loadLeaveCompanies} style={({pressed}:any)=>[styles.retry,pressed&&styles.pressed]}><Text style={styles.secondaryText}>{LEAVE_COPY.retry}</Text></Pressable></View> : null}
@@ -58,7 +59,7 @@ export function GuardAvailabilityScreen() {
       <SecondaryButton label="Request leave" onPress={handleSaveLeave} disabled={!canSubmitLeave(leaveCompanies, leaveCompanyId)}/>
       </>}
       <View style={styles.list}>{leaveRows.length===0&&!loading?<StatePanel title="No leave requests yet" message="Submit a request above and your company will review it."/>:leaveRows.slice(0,5).map(l=><View key={l.id} style={styles.row}><View style={styles.flex}><Text style={styles.rowTitle}>{String(l.leaveType).replace(/_/g,' ')}</Text><Text style={styles.meta}>{formatDate(l.startAt)} to {formatDate(l.endAt)}</Text></View><Status value={l.status}/></View>)}</View>
-    </FeatureCard>
+    </ProfileCard>
   </View>;
 }
 

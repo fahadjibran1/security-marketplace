@@ -94,15 +94,20 @@ export function complianceChecksDisplayLabel(label: string): string {
 
 export type ProfileRequirement = 'required' | 'company' | 'optional' | 'setByCompany' | 'invitation';
 
-export const REQUIREMENT_LABELS: Record<ProfileRequirement, { label: string; description: string }> = {
-  required: { label: 'Required', description: 'Needed for your S4 account.' },
+/**
+ * label: the full wording (section headings and screen readers). short: the overview row's tag (Phase 2D), short
+ * enough to sit beside the section title on a standard phone so every row has the same shape.
+ */
+export const REQUIREMENT_LABELS: Record<ProfileRequirement, { label: string; short: string; description: string }> = {
+  required: { label: 'Required', short: 'Required', description: 'Needed for your S4 account.' },
   company: {
     label: 'May be requested by company',
+    short: 'Company may ask',
     description: 'A company you work for may ask you for this, for example for payroll or deployment checks.',
   },
-  optional: { label: 'Optional', description: 'Add it only if you want to.' },
-  setByCompany: { label: 'Set by company', description: 'Your company keeps this up to date. Contact them if it is wrong.' },
-  invitation: { label: 'By invitation', description: 'A company adds you by sending an invitation. You choose whether to accept it.' },
+  optional: { label: 'Optional', short: 'Optional', description: 'Add it only if you want to.' },
+  setByCompany: { label: 'Set by company', short: 'Set by company', description: 'Your company keeps this up to date. Contact them if it is wrong.' },
+  invitation: { label: 'By invitation', short: 'By invitation', description: 'A company adds you by sending an invitation. You choose whether to accept it.' },
 };
 
 // ─────────────────────────────── Who can see what ───────────────────────────────

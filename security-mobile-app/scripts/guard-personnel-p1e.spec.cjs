@@ -215,7 +215,7 @@ test('dashboard has openEmergencyContactEditor function', () => {
 // ── 6. DASHBOARD UI CARD ──────────────────────────────────────────────────────
 
 test('dashboard renders Emergency contact FeatureCard', () => {
-  assert.match(dashboard, /title="Emergency contact"/);
+  assert.match(dashboard, /<ProfileCard\s+title="Emergency contact"/);
 });
 
 test('emergency contact card shows emergencyContactLoading state', () => {

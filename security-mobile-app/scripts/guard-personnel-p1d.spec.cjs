@@ -242,7 +242,7 @@ test('cleanup useEffect also clears licenceRevealTimerRef', () => {
 // ── DASHBOARD UI CARD ─────────────────────────────────────────────────────────
 
 test('dashboard renders Driving & transport FeatureCard', () => {
-  assert.match(dashboard, /Driving & transport/);
+  assert.match(dashboard, /<ProfileCard\s+title="Driving & transport"/);
 });
 
 test('driving card shows drivingLoading state', () => {

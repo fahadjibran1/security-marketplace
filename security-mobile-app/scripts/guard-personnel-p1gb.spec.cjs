@@ -597,9 +597,9 @@ test('[STATIC ANALYSIS] guard dashboard calls loadPayrollAdmin in loadData', () 
   assert.match(guardDash, /loadPayrollAdmin/);
 });
 
-test('[STATIC ANALYSIS] guard dashboard has Pay Administration feature card', () => {
-  assert.match(guardDash, /Pay Administration/);
-  assert.match(guardDash, /FeatureCard/);
+// Profile Phase 2D: the shared Profile card, title in sentence case.
+test('[STATIC ANALYSIS] guard dashboard has Pay administration Profile card', () => {
+  assert.match(guardDash, /<ProfileCard\s+title="Pay administration"/);
 });
 
 test('[STATIC ANALYSIS] guard dashboard payroll card shows payFrequency and payrollStatus', () => {
@@ -609,7 +609,8 @@ test('[STATIC ANALYSIS] guard dashboard payroll card shows payFrequency and payr
 
 test('[STATIC ANALYSIS] guard dashboard payroll card is read-only (no edit inputs or save buttons)', () => {
   // The guard payroll card must not contain a save/edit function for payroll — guard is read-only
-  const payrollCardBlock = guardDash.match(/Pay Administration[\s\S]{0,1500}/)?.[0] ?? '';
+  const payrollCardBlock = guardDash.match(/title="Pay administration"[\s\S]{0,1500}/)?.[0] ?? '';
+  assert.ok(payrollCardBlock, 'the payroll card is found');
   assert.doesNotMatch(payrollCardBlock, /handleSavePayrollAdmin|setSavingPayrollAdmin/);
 });
 

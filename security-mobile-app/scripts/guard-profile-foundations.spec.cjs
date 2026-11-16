@@ -116,8 +116,9 @@ test('SCREENING-03 the screening panel and journey render the optional copy and 
 test('SCREENING-04 the Compliance panel keeps the real backend deployment status and no longer calls company checks "Vetting"', () => {
   const panel = stripComments(read(COMPLIANCE_PANEL));
   assert.match(panel, /const eligibility = getGuardWorkEligibilityLabel\(summary\);/, 'eligibility still from the backend summary');
-  assert.match(panel, /<Summary label="Work eligibility" value=\{eligibility\} \/>/);
-  assert.match(panel, /<Summary label=\{COMPLIANCE_COPY\.checksLabel\} value=\{complianceChecks\} \/>/);
+  // Phase 2D: each row also takes the compact-layout flag; the values are unchanged.
+  assert.match(panel, /<Summary label="Work eligibility" value=\{eligibility\} stacked=\{stacked\} \/>/);
+  assert.match(panel, /<Summary label=\{COMPLIANCE_COPY\.checksLabel\} value=\{complianceChecks\} stacked=\{stacked\} \/>/);
   assert.doesNotMatch(panel, /label="Vetting"/);
   assert.match(panel, /COMPLIANCE_COPY\.deploymentNote/);
   // getGuardWorkEligibilityLabel is unchanged: assignable and only assignable.
@@ -471,13 +472,14 @@ test('OVERVIEW-01 seven sections, in order, each with a title, requirement label
 test('OVERVIEW-02 header: name, initials, SIA status by date, deployment from `assignable` only', () => {
   let o = overview.buildProfileOverview(baseInput());
   assert.deepEqual([o.header.name, o.header.initials, o.header.phone], ['Dana Q Guard', 'DG', '07000 000001']);
-  assert.deepEqual(o.header.sia, { label: 'SIA valid to 30/06/2032', tone: 'success' });
-  assert.deepEqual(o.header.deployment, { label: 'Eligible for deployment', tone: 'success' });
+  // Phase 2D: each fact also has the short value its header cell shows (detail / short) under a fixed caption.
+  assert.deepEqual(o.header.sia, { label: 'SIA valid to 30/06/2032', detail: 'Valid to 30/06/2032', tone: 'success' });
+  assert.deepEqual(o.header.deployment, { label: 'Eligible for deployment', short: 'Eligible', tone: 'success' });
   o = overview.buildProfileOverview(baseInput({ compliance: ready({ assignable: false, blockingReasons: ['a', 'b'], siaExpiryDate: '2031-03-20' }) }));
-  assert.deepEqual(o.header.sia, { label: 'SIA expires 20/03/2031', tone: 'warning' });
-  assert.deepEqual(o.header.deployment, { label: 'Not eligible for deployment', tone: 'warning' });
+  assert.deepEqual(o.header.sia, { label: 'SIA expires 20/03/2031', detail: 'Expires 20/03/2031', tone: 'warning' });
+  assert.deepEqual(o.header.deployment, { label: 'Not eligible for deployment', short: 'Not eligible', tone: 'warning' });
   o = overview.buildProfileOverview(baseInput({ compliance: ready({ assignable: true, blockingReasons: [], siaExpiryDate: '2031-02-28' }) }));
-  assert.deepEqual(o.header.sia, { label: 'SIA expired 28/02/2031', tone: 'danger' });
+  assert.deepEqual(o.header.sia, { label: 'SIA expired 28/02/2031', detail: 'Expired 28/02/2031', tone: 'danger' });
   o = overview.buildProfileOverview(baseInput({ guard: ready({ fullName: 'Dana', phone: '' }), compliance: ready({ assignable: false, blockingReasons: [] }) }));
   assert.deepEqual([o.header.initials, o.header.phone, o.header.sia.label], ['D', null, 'SIA licence not added']);
   // Screening never changes deployment: a VETTED file with assignable=false is still not eligible, and the reverse.
@@ -485,7 +487,10 @@ test('OVERVIEW-02 header: name, initials, SIA status by date, deployment from `a
     for (const assignable of [true, false]) {
       const x = overview.buildProfileOverview(baseInput({ screening: ready({ status, progress: 100 }), compliance: ready({ assignable, blockingReasons: [] }) }));
       assert.equal(x.header.deployment.label, assignable ? 'Eligible for deployment' : 'Not eligible for deployment', `${status} / ${assignable}`);
-      assert.match(x.sections.find((s) => s.key === 'screening').summary, /^Optional · /, `${status}: always optional`);
+      // Phase 2D: "Optional" is said once, by the row's tag, not repeated at the start of its summary.
+      const row = x.sections.find((s) => s.key === 'screening');
+      assert.deepEqual([row.requirement, row.requirementLabel], ['optional', 'Optional'], `${status}: always optional`);
+      assert.doesNotMatch(row.summary, /Optional/, `${status}: not repeated in the summary`);
     }
   }
 });
@@ -625,9 +630,10 @@ test('NAV-01 the Profile is an overview and seven sections inside the Profile ta
   assert.equal(where('<GuardAvailabilityScreen />'), 'availability');
   assert.equal(where('title="Driving & transport"'), 'availability');
   assert.equal(where('title="Tax identifiers"'), 'employmentPay');
-  assert.equal(where('title="Bank Details"'), 'employmentPay');
+  // Phase 2D: card titles in sentence case.
+  assert.equal(where('title="Bank details"'), 'employmentPay');
   assert.equal(where('title="Employment"'), 'employmentPay');
-  assert.equal(where('title="Pay Administration"'), 'employmentPay');
+  assert.equal(where('title="Pay administration"'), 'employmentPay');
   assert.equal(where("<GuardScreeningPanel onContinue={() => openScreeningJourney('screening')} />"), 'screening');
   assert.equal(where('<AccountSettingsPanel'), 'privacyAccount');
   assert.equal(where('accessibilityLabel="Log out"'), 'privacyAccount');
@@ -721,12 +727,97 @@ test('AVATAR-01 the avatar is initials only: no camera, picker or upload (approv
   const avatar = stripComments(read('src/components/guard/profile/ProfileAvatar.tsx')); // code only: the doc comment says upload is NOT built
   assert.doesNotMatch(avatar, /expo-image-picker|expo-camera|ImagePicker|launchCamera|upload/i);
   const overviewSrc = stripComments(read('src/components/guard/profile/GuardProfileOverview.tsx'));
-  assert.match(overviewSrc, /<ProfileAvatar initials=\{header\.initials\} size=\{layout\.compact \? 48 : 56\} \/>/, 'no image is passed');
+  // Phase 2D: one 48dp avatar on every phone (the compact header keeps it beside the name).
+  assert.match(overviewSrc, /<ProfileAvatar initials=\{header\.initials\} size=\{48\} \/>/, 'no image is passed');
   assert.doesNotMatch(overviewSrc, /%`|percent|completion/i, 'no completion percentage (approved decision 7)');
   assert.equal(overview.initialsOf('Dana Q Guard'), 'DG');
 });
 
 // ═══════════════════ RUN ═══════════════════
+
+// ═══════════════════ Phase 2D ═══════════════════
+
+test('SIA-01 one reading of the SIA licence for the overview and the SIA & compliance section', () => {
+  const today = '2026-11-16';
+  // Number from the Guard's record first, then the compliance status; expiry from the compliance status first.
+  let s = overview.siaLicenceStatus({ guard: { siaLicenseNumber: 'G-1', siaExpiryDate: '2030-01-01' }, compliance: { siaLicenceNumber: 'C-1', siaExpiryDate: '2028-06-30' } }, today);
+  assert.deepEqual([s.number, s.expiry, s.label, s.detail, s.tone], ['G-1', '2028-06-30', 'SIA valid to 30/06/2028', 'Valid to 30/06/2028', 'success']);
+  s = overview.siaLicenceStatus({ guard: { siaLicenceNumber: null, siaExpiryDate: '2026-12-01' }, compliance: { siaLicenceNumber: 'C-1' } }, today);
+  assert.deepEqual([s.number, s.label, s.detail, s.tone], ['C-1', 'SIA expires 01/12/2026', 'Expires 01/12/2026', 'warning']);
+  s = overview.siaLicenceStatus({ guard: { siaLicenseNumber: 'G-1' }, compliance: { siaExpiryDate: '2026-11-15' } }, today);
+  assert.deepEqual([s.label, s.detail, s.tone], ['SIA expired 15/11/2026', 'Expired 15/11/2026', 'danger']);
+  s = overview.siaLicenceStatus({ guard: { siaLicenseNumber: 'G-1' }, compliance: null }, today);
+  assert.deepEqual([s.label, s.detail, s.tone], ['SIA licence added', 'Expiry date not recorded', 'neutral']);
+  s = overview.siaLicenceStatus({ guard: null, compliance: null }, today);
+  assert.deepEqual([s.number, s.label, s.detail, s.tone], [null, 'SIA licence not added', 'Not added', 'warning']);
+  // The overview header IS this reading (label and detail), so the two screens cannot disagree.
+  for (const compliance of [{ siaExpiryDate: '2028-06-30' }, { siaExpiryDate: '2026-12-01' }, { siaExpiryDate: '2020-01-01' }, {}]) {
+    const o = overview.buildProfileOverview(baseInput({ today, compliance: ready({ assignable: true, blockingReasons: [], ...compliance }) }));
+    const direct = overview.siaLicenceStatus({ guard: { siaLicenseNumber: 'SIA-FICTIONAL', siaExpiryDate: '2032-06-30' }, compliance }, today);
+    assert.deepEqual([o.header.sia.label, o.header.sia.detail, o.header.sia.tone], [direct.label, direct.detail, direct.tone]);
+  }
+  // And the Compliance panel reads the same helper with the same two records, not its own date formatting.
+  const panel = stripComments(read(COMPLIANCE_PANEL));
+  assert.match(panel, /const sia = siaLicenceStatus\(\{ guard, compliance: summary \}, localToday\(\)\);/);
+  assert.match(panel, /<Summary label="SIA licence" value=\{sia\.number \|\| 'Not added'\} detail=\{sia\.number \? sia\.detail : undefined\}/);
+  assert.doesNotMatch(panel, /toLocaleDateString|function formatDate/, 'no second date format');
+});
+
+test('UNSAVED-01 only a typed, unsaved masked value asks before leaving', () => {
+  const unsaved = loadTs('src/components/guard/profile/profileUnsaved.ts');
+  const idle = { editing: false, inputs: [''] };
+  const none = { nino: idle, utr: idle, drivingLicence: idle, bank: { editing: false, inputs: ['', '', ''] } };
+  assert.equal(unsaved.hasUnsavedSensitiveEdit(none), false);
+  assert.equal(unsaved.hasUnsavedSensitiveEdit({ ...none, nino: { editing: true, inputs: [''] } }), false, 'an open, empty editor leaves silently');
+  assert.equal(unsaved.hasUnsavedSensitiveEdit({ ...none, nino: { editing: true, inputs: ['   '] } }), false, 'spaces are not a value');
+  assert.equal(unsaved.hasUnsavedSensitiveEdit({ ...none, nino: { editing: false, inputs: ['QQ'] } }), false, 'a closed editor holds nothing');
+  for (const key of ['nino', 'utr', 'drivingLicence']) {
+    assert.equal(unsaved.hasUnsavedSensitiveEdit({ ...none, [key]: { editing: true, inputs: ['1'] } }), true, key);
+  }
+  for (const i of [0, 1, 2]) {
+    const inputs = ['', '', '']; inputs[i] = '1';
+    assert.equal(unsaved.hasUnsavedSensitiveEdit({ ...none, bank: { editing: true, inputs } }), true, `bank input ${i}`);
+  }
+  assert.deepEqual(unsaved.UNSAVED_EDIT_COPY, { title: 'Discard unsaved changes?', message: 'What you have typed has not been saved. If you leave now, it will be discarded.', keep: 'Keep editing', discard: 'Discard' });
+  // Wired into the three Profile moves only; the Emergency control opens its own form and never passes through it.
+  const src = stripComments(read(DASHBOARD));
+  for (const move of ['selectTab(tab)', 'openProfileSection(section)', 'openScreeningJourney(from)']) {
+    assert.ok(src.includes(`if (holdForUnsavedEdits(() => ${move})) return;`), move);
+  }
+  assert.equal(src.split('const holdForUnsavedEdits = useCallback').length - 1, 1, 'defined once');
+  assert.equal(src.split('holdForUnsavedEdits(').length - 1, 3, 'used by exactly three moves');
+  assert.match(src, /const openEmergency = \(\) => setQuickActionModal\('emergency'\);/, 'Emergency is not gated');
+  for (const field of ['ninoInput', 'utrInput', 'licenceNumberInput', 'bankHolderInput, bankSortInput, bankAccountInput']) {
+    assert.ok(src.includes(`inputs: [${field}]`), field);
+  }
+});
+
+test('STYLE-01 every Profile section uses the flat Profile card, sentence case and UK dates', () => {
+  const { src, start, end } = profileRegion();
+  const region = src.slice(start, end);
+  assert.doesNotMatch(region, /<FeatureCard/, 'no FeatureCard (shadow, 22dp radius) inside the Profile');
+  assert.equal(region.split('<ProfileCard').length - 1, 7);
+  assert.doesNotMatch(region, /title="[^"]*\b[A-Z][a-z]+ [A-Z][a-z]+"/, 'card titles in sentence case');
+  assert.doesNotMatch(region, /styles\.guardSectionLabel/, 'no uppercase captions inside the Profile');
+  assert.doesNotMatch(region, /\{(emp|rec)\.(startDate|endDate|payrollStartDate|payrollEndDate)\}/, 'no raw ISO dates');
+  for (const field of ['emp.startDate', 'emp.endDate', 'rec.payrollStartDate', 'rec.payrollEndDate']) assert.ok(region.includes(`profileDate(${field})`), field);
+  assert.equal(overview.profileDate('2026-03-02'), '02/03/2026');
+  assert.equal(overview.profileDate('2026-03-02T09:00:00.000Z'), '02/03/2026');
+  assert.equal(overview.profileDate(null), '—');
+  assert.equal(overview.profileDate('soon'), 'soon');
+  const availability = read('src/screens/GuardAvailabilityScreen.tsx');
+  assert.doesNotMatch(availability, /<FeatureCard/, 'Availability & travel uses the Profile card too');
+  const card = read('src/components/guard/profile/ProfileCard.tsx');
+  assert.doesNotMatch(stripComments(card), /shadow|elevation|fontStyle/, 'flat, no italics');
+  assert.match(card, /borderRadius: t\.shape\.cardRadius/);
+  // Short requirement tags for the overview rows; the full wording stays for headings and screen readers.
+  assert.deepEqual(Object.values(copy.REQUIREMENT_LABELS).map((r) => r.short), ['Required', 'Company may ask', 'Optional', 'Set by company', 'By invitation']);
+  // Status chips in the compliance panel are sentence case; StatusBadge elsewhere is unchanged (title case).
+  assert.match(read(COMPLIANCE_PANEL), /<StatusBadge label=\{value\} casing="sentence" \/>/);
+  const badge = read('src/components/StatusBadge.tsx');
+  assert.match(badge, /casing = 'title'/);
+  assert.match(badge, /textTransform: 'capitalize'/);
+});
 
 (async () => {
   let passed = 0;

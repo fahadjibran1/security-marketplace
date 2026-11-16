@@ -43,7 +43,9 @@ function TestModal({ visible, children }) {
 }
 const TestTextInput = (props) => React.createElement('test-text-input', props);
 const FakeAppState = { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) };
-const RN_SHIM = { ...RNW, Modal: TestModal, TextInput: TestTextInput, AppState: FakeAppState, Alert: { alert: () => undefined } };
+// Every Alert.alert call, so a test can read a confirmation and press its buttons (Profile Phase 2D).
+const ALERTS = [];
+const RN_SHIM = { ...RNW, Modal: TestModal, TextInput: TestTextInput, AppState: FakeAppState, Alert: { alert: (...args) => { ALERTS.push(args); } } };
 Module._load = function (request, ...rest) {
   if (request === 'react-native') return RN_SHIM;
   return originalLoad.call(this, request, ...rest);
@@ -1598,8 +1600,14 @@ test('UX-T33-PROFILE-OVERVIEW-HEADER-AVATAR-FACTS-ATTENTION-AND-SEVEN-SECTIONS',
   assert.equal(avatar.props.accessibilityElementsHidden, true, 'decorative: the name is read out instead');
   assert.equal(avatar.props.importantForAccessibility, 'no-hide-descendants');
   assert.equal(flat(avatar.props.style).borderRadius, flat(avatar.props.style).width / 2, 'circular');
-  assert.equal(texts(byTestId(root, 'guard-profile-sia-status')[0])[0], 'SIA expired 01/01/2020');
-  assert.equal(texts(byTestId(root, 'guard-profile-deployment-status')[0])[0], 'Not eligible for deployment', 'from `assignable` only');
+  // Phase 2D: two equal fact cells, a caption and a short value; the full sentence is what a screen reader hears.
+  const cell = (id) => root.findAll((n) => n.props?.testID === id && typeof n.props.accessibilityLabel === 'string')[0];
+  const siaCell = cell('guard-profile-sia-status');
+  const deploymentCell = cell('guard-profile-deployment-status');
+  assert.deepEqual([...new Set(texts(siaCell))], ['SIA licence', 'Expired 01/01/2020']);
+  assert.equal(siaCell.props.accessibilityLabel, 'SIA expired 01/01/2020');
+  assert.deepEqual([...new Set(texts(deploymentCell))], ['Deployment', 'Not eligible'], 'from `assignable` only');
+  assert.equal(deploymentCell.props.accessibilityLabel, 'Not eligible for deployment');
   // Needs attention: facts, most serious first, at most three; each one opens its section.
   const attention = pressables(byTestId(root, 'guard-profile-attention')[0], () => true);
   assert.deepEqual(attention.map((a) => a.props.testID), ['guard-profile-attention-sia-expired', 'guard-profile-attention-deployment-blocked', 'guard-profile-attention-no-company']);
@@ -1619,7 +1627,9 @@ test('UX-T33-PROFILE-OVERVIEW-HEADER-AVATAR-FACTS-ATTENTION-AND-SEVEN-SECTIONS',
   assert.equal(tagColours.size, 1, 'requirement tags are all one neutral colour');
   assert.ok(!['#FEE2E2', '#FEF3C7', '#DCFCE7'].includes(String([...tagColours][0]).toUpperCase()), 'not a danger, warning or success surface');
   // No invented completion figure, and no forms on the overview itself.
-  assert.ok(!texts(overview).some((t) => /%/.test(t) && !/^Optional · /.test(t)), 'no profile completion percentage');
+  // The only percentage allowed is the screening file's own progress, inside its row's summary.
+  const screeningSummary = texts(rows[5]).slice(-1)[0];
+  assert.ok(!texts(overview).some((t) => /%/.test(t) && t !== screeningSummary), 'no profile completion percentage');
   assert.equal(overview.findAll((n) => n.type === 'test-text-input' || n.type === RNW.Switch).length, 0, 'the overview has no form controls');
   // The attention item opens the right section.
   await run(() => attention[2].props.onPress());
@@ -1654,11 +1664,13 @@ test('UX-T34-PROFILE-SECTIONS-OPEN-ONE-AT-A-TIME-RETURN-TO-THE-OVERVIEW-AND-KEEP
   assert.equal(profileTab(root).props.accessibilityState.selected, false, 'Home is now selected');
   await run(() => profileTab(root).props.onPress());
   assert.ok(byTestId(root, 'guard-profile-overview')[0], 'coming back to Profile shows the overview');
-  // Every navigation path goes through the one scroll reset (the ScrollView is shared by every tab).
+  // Every navigation path goes through the one scroll reset (the ScrollView is shared by every tab), after the
+  // Phase 2D unsaved-edit check (which, once answered Discard, repeats the same move).
   const src = read(SCREEN);
-  assert.match(src, /const selectTab = useCallback\(\(tab: GuardTab\) => \{\s*setActiveTab\(tab\);\s*\/\/[^\n]*\n\s*if \(tab === 'profile'\) setProfileSection\(null\);\s*scrollToTop\(\);/);
-  assert.match(src, /const openProfileSection = useCallback\(\(section: ProfileSectionKey \| null\) => \{\s*setActiveTab\('profile'\);\s*setProfileSection\(section\);\s*scrollToTop\(\);/);
-  assert.match(src, /const openScreeningJourney = useCallback\(\(from: ProfileSectionKey\) => \{\s*screeningReturnSectionRef\.current = from;\s*setActiveTab\('screening'\);\s*scrollToTop\(\);/);
+  const hold = (call) => `\\s*if \\(holdForUnsavedEdits\\(\\(\\) => ${call}\\)\\) return;`;
+  assert.match(src, new RegExp(`const selectTab = useCallback\\(\\(tab: GuardTab\\) => \\{${hold('selectTab\\(tab\\)')}\\s*setActiveTab\\(tab\\);\\s*\\/\\/[^\\n]*\\n\\s*if \\(tab === 'profile'\\) setProfileSection\\(null\\);\\s*scrollToTop\\(\\);`));
+  assert.match(src, new RegExp(`const openProfileSection = useCallback\\(\\(section: ProfileSectionKey \\| null\\) => \\{${hold('openProfileSection\\(section\\)')}\\s*setActiveTab\\('profile'\\);\\s*setProfileSection\\(section\\);\\s*scrollToTop\\(\\);`));
+  assert.match(src, new RegExp(`const openScreeningJourney = useCallback\\(\\(from: ProfileSectionKey\\) => \\{${hold('openScreeningJourney\\(from\\)')}\\s*screeningReturnSectionRef\\.current = from;\\s*setActiveTab\\('screening'\\);\\s*scrollToTop\\(\\);`));
   assert.match(src, /const scrollToTop = useCallback\(\(\) => \{\s*try \{\s*screeningScrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\);/);
   await run(() => renderer.unmount());
 });
@@ -1686,7 +1698,24 @@ test('UX-T35-PROFILE-LEAVING-A-SECTION-HIDES-REVEALED-VALUES-AND-CLOSES-MASKED-E
   await run(() => byLabel(root, 'Edit National Insurance number')[0].props.onPress());
   const ninoInput = () => root.findAll((n) => n.type === 'test-text-input' && n.props.accessibilityLabel === 'National Insurance number')[0];
   await run(() => ninoInput().props.onChangeText('QQ123456C'));
-  await openProfile(root, run, 'employmentPay');
+  // Phase 2D: a typed, unsaved value is not dropped silently. Leaving asks first; Keep editing stays put.
+  ALERTS.length = 0;
+  await run(() => profileTab(root).props.onPress());
+  assert.equal(ALERTS.length, 1, 'leaving with a typed NINO asks first');
+  const [title, message, buttons] = ALERTS[0];
+  assert.equal(title, 'Discard unsaved changes?');
+  assert.match(message, /not been saved/);
+  assert.deepEqual(buttons.map((b) => [b.text, b.style]), [['Keep editing', 'cancel'], ['Discard', 'destructive']]);
+  assert.ok(ninoInput() && ninoInput().props.value !== '', 'nothing is discarded before the Guard answers');
+  assert.ok(!byTestId(root, 'guard-profile-overview')[0], 'and the section is still open');
+  await run(() => buttons[0].onPress?.());
+  assert.ok(ninoInput() && ninoInput().props.value !== '', 'Keep editing keeps what was typed');
+  // Discard carries on with the same move: the overview, with the edit closed and what was typed gone.
+  ALERTS.length = 0;
+  await run(() => profileTab(root).props.onPress());
+  await run(() => ALERTS[0][2][1].onPress());
+  assert.ok(byTestId(root, 'guard-profile-overview')[0], 'Discard completes the move');
+  await openSection(root, run, 'employmentPay');
   assert.ok(!ninoInput(), 'the NINO editor is closed'); // boolean: a failing equal() would print the whole render tree
   await run(() => byLabel(root, 'Edit National Insurance number')[0].props.onPress());
   assert.equal(ninoInput().props.value, '', 'and what was typed is gone');
@@ -1710,7 +1739,10 @@ test('UX-T36-PROFILE-COMPLIANCE-IS-SEPARATE-FROM-OPTIONAL-SCREENING', async () =
   // SIA & compliance: the backend's own status, and the update route named for what it is.
   await openProfile(root, run, 'compliance');
   const shown = texts(root);
-  assert.ok(shown.includes('Compliance summary') && shown.includes('Not eligible'), 'the compliance status from the backend');
+  // Phase 2D: the panel no longer repeats the section title as its own heading; it is found by its testID.
+  assert.ok(byTestId(root, 'guard-compliance-summary')[0] && shown.includes('Not eligible'), 'the compliance status from the backend');
+  assert.equal(root.findAll((n) => n.type === RNW.Text && n.props.children === 'Not eligible').length, 1, 'the eligibility is shown once, not twice');
+  assert.ok(!shown.includes('Compliance summary'), 'no duplicate heading under SIA & compliance');
   assert.ok(shown.includes(profileCopy.COMPLIANCE_COPY.deploymentNote), 'not derived from screening');
   assert.ok(!shown.includes('Manage compliance'), 'no unlabelled route into screening');
   assert.ok(!shown.includes(profileCopy.SCREENING_COPY.optionalStatement), 'the screening summary is not part of compliance');
@@ -1720,13 +1752,16 @@ test('UX-T36-PROFILE-COMPLIANCE-IS-SEPARATE-FROM-OPTIONAL-SCREENING', async () =
   assert.equal(byTestId(root, 'guard-profile-overview').length + byTestId(root, 'guard-profile-section-view-compliance').length, 0, 'the screening file is open');
   assert.ok(texts(root).includes('Screening'), 'titled Screening');
   assert.equal(profileTab(root).props.accessibilityState.selected, true, 'Profile stays selected');
-  const journeyBack = () => root.findAll((n) => typeof n.props?.onPress === 'function' && texts(n).includes('‹ Back to Profile'))[0];
+  // Phase 2D: the same short Back control as the sections, announced as Back to Profile.
+  const journeyBack = () => byTestId(root, 'guard-screening-journey-back')[0];
+  assert.ok(texts(journeyBack()).includes('‹ Back') && journeyBack().props.accessibilityLabel === 'Back to Profile');
+  assert.ok(flat(journeyBack().props.style).minHeight >= 44, 'a 44pt target');
   await run(() => journeyBack().props.onPress());
   assert.ok(byTestId(root, 'guard-profile-section-view-compliance')[0], 'Back returns to SIA & compliance');
   // Optional S4 screening: its own section, optional, and its journey returns there.
   await openProfile(root, run, 'screening');
   assert.ok(texts(root).includes(profileCopy.SCREENING_COPY.optionalStatement));
-  assert.ok(!texts(root).includes('Compliance summary'), 'compliance is not part of screening');
+  assert.ok(!byTestId(root, 'guard-compliance-summary')[0], 'compliance is not part of screening');
   const section = byTestId(root, 'guard-profile-section-view-screening')[0];
   const action = pressables(section, (p) => p.accessibilityRole === 'button' && p.testID !== 'guard-profile-back')[0];
   assert.ok(action, 'the screening action');
@@ -1748,7 +1783,8 @@ test('UX-T37-PROFILE-OVERVIEW-ADAPTS-TO-SMALL-PHONES-AND-LARGE-TEXT', async () =
     const at = `${width}pt @ ${fontScale}x`;
     await openProfile(root, run, null);
     const avatar = flat(byTestId(root, 'guard-profile-avatar')[0].props.style);
-    assert.equal(avatar.width, compact ? 48 : 56, `${at}: avatar size`);
+    // Phase 2D: one 48pt avatar everywhere, a true circle with every dimension pinned.
+    assert.deepEqual([avatar.width, avatar.height, avatar.minWidth, avatar.maxWidth, avatar.minHeight, avatar.maxHeight, avatar.borderRadius], [48, 48, 48, 48, 48, 48, 24], `${at}: avatar circle`);
     for (const key of PROFILE_SECTION_KEYS) {
       const row = byTestId(root, `guard-profile-section-${key}`)[0];
       const titleBox = row.findAll((n) => n.type === RNW.View && n.props.style && flat(n.props.style).flexDirection && n.findAll((c) => /^guard-profile-requirement-/.test(c.props?.testID ?? '')).length > 0 && !/^guard-profile-requirement-/.test(n.props.testID ?? ''))
@@ -1757,8 +1793,15 @@ test('UX-T37-PROFILE-OVERVIEW-ADAPTS-TO-SMALL-PHONES-AND-LARGE-TEXT', async () =
       assert.equal(flat(titleBox.props.style).flexDirection, compact ? 'column' : 'row', `${at} ${key}: the tag ${compact ? 'goes under' : 'sits beside'} the title`);
       for (const text of row.findAll((n) => n.type === RNW.Text)) assert.equal(text.props.numberOfLines, undefined, `${at} ${key}: never truncated`);
     }
-    // The header wraps its facts rather than squeezing them.
-    assert.equal(flat(root.findAll((n) => n.props?.testID === 'guard-profile-sia-status' && n.props.style)[0].props.style).maxWidth, '100%');
+    // Phase 2D: the header's two facts are equal cells side by side, never wrapping pills.
+    for (const id of ['guard-profile-sia-status', 'guard-profile-deployment-status']) {
+      const cell = flat(root.findAll((n) => n.props?.testID === id && n.props.style)[0].props.style);
+      assert.deepEqual([cell.flex, cell.minWidth, cell.maxWidth], [1, 0, '100%'], `${at} ${id}: an equal cell`);
+    }
+    const facts = root.findAll((n) => n.props?.style && n.findAll((c) => c.props?.testID === 'guard-profile-sia-status').length && n.findAll((c) => c.props?.testID === 'guard-profile-deployment-status').length && flat(n.props.style).flexDirection === 'row');
+    assert.ok(facts.length > 0 && !facts.some((n) => flat(n.props.style).flexWrap === 'wrap'), `${at}: one row of facts`);
+    // Each row's tag is the short form, so it fits beside the title on a standard phone.
+    assert.ok(texts(byTestId(root, 'guard-profile-section-compliance')[0]).includes('Company may ask'), `${at}: short tag`);
     await run(() => renderer.unmount());
   }
 });
@@ -1828,6 +1871,114 @@ test('UX-T10-THE-PATROL-CODE-IS-BYTE-IDENTICAL-TO-BUILD-22', () => {
   const screen = read(SCREEN);
   assert.match(screen, /<GuardPatrolPanel\s+userId=\{user\.id\}\s+shift=\{currentHomeShift \? \{ id: currentHomeShift\.id, status: normalizeShiftLifecycleStatus\(currentHomeShift\.status\), companyId: currentHomeShift\.companyId \?\? null, siteName: currentHomeShift\.siteName \} : null\}\s+\/>/);
   assert.equal((screen.match(/<GuardPatrolPanel\b/g) || []).length, 1, 'mounted once');
+});
+
+// ═══════════════════ Profile Phase 2D ═══════════════════
+
+const EMPLOYMENT = [{ companyGuardId: 41, companyId: 3, companyName: 'Fictional Guarding Ltd', guardId: 107, engagementType: 'EMPLOYEE', jobRole: 'SECURITY_OFFICER', customRole: null,
+  workingArrangement: 'PART_TIME', startDate: '2026-03-02', endDate: null, payBasis: 'HOURLY', noticePeriodDays: 7, updatedAt: '2026-03-02T09:00:00.000Z' }];
+const PAYROLL = [{ companyGuardId: 41, guardId: 107, companyId: 3, companyName: 'Fictional Guarding Ltd', payFrequency: 'WEEKLY', payrollStatus: 'ACTIVE',
+  payrollStartDate: '2026-03-09', payrollEndDate: null, updatedAt: '2026-03-02T09:00:00.000Z' }];
+
+test('UX-T39-PROFILE-2D-COMPACT-RECORDS-UK-DATES-ONE-SIA-READING-AND-A-COMPACT-SECTION-HEADER', async () => {
+  for (const [width, fontScale, stacked] of [[412, 1, false], [360, 1, true], [412, 1.3, true]]) {
+    const at = `${width}pt @ ${fontScale}x`;
+    const { api } = overviewServer({
+      getMyEmployments: async () => EMPLOYMENT,
+      getMyPayrollAdmin: async () => PAYROLL,
+      getMyBankDetails: async () => ({ guardId: 107, bankSet: true, accountHolderNameMasked: 'D••• G••••', sortCodeMasked: '••-••-00', accountNumberMasked: '••••0000', updatedAt: '2026-04-01T09:00:00.000Z' }),
+    });
+    const { renderer, run } = await mountApp({
+      shifts: [liveShift()],
+      apiOverrides: api,
+      moduleOverrides: { 'src/components/guard/home/useGuardHomeLayout': { useGuardHomeLayout: () => layoutRules.guardHomeLayout({ width, height: 700, fontScale }) } },
+    });
+    const root = renderer.root;
+    await openProfile(root, run, 'employmentPay');
+    // The section header: Back and the title share one row.
+    const section = byTestId(root, 'guard-profile-section-view-employmentPay')[0];
+    const headRow = section.findAll((n) => n.type === RNW.View && n.props.style && flat(n.props.style).flexDirection === 'row'
+      && n.findAll((c) => c.props?.testID === 'guard-profile-back').length > 0)[0];
+    assert.ok(headRow && texts(headRow).includes('Employment & pay'), `${at}: Back and title on one row`);
+    // A long requirement ("May be requested by company" and its explanation) goes under the tag, never squeezed beside it.
+    const requirement = root.findAll((n) => n.props?.testID === 'guard-profile-section-requirement' && n.props.style)[0];
+    assert.equal(flat(requirement.props.style).flexDirection, 'column', `${at}: long requirement stacks`);
+    // Read-only records: label beside value on a standard phone, above it when compact; dates as DD/MM/YYYY.
+    const employment = byTestId(root, 'guard-profile-employment-record')[0];
+    const payroll = byTestId(root, 'guard-profile-payroll-record')[0];
+    assert.ok(employment && payroll, `${at}: both records`);
+    const shown = [...texts(employment), ...texts(payroll)];
+    for (const date of ['02/03/2026', '09/03/2026']) assert.ok(shown.includes(date), `${at}: ${date}`);
+    assert.ok(!shown.some((t) => /\d{4}-\d{2}-\d{2}/.test(t)), `${at}: no ISO dates`);
+    const rows = employment.findAll((n) => typeof n.props?.accessibilityLabel === 'string' && /^Start date: /.test(n.props.accessibilityLabel) && n.props.style);
+    assert.equal(rows[0].props.accessibilityLabel, 'Start date: 02/03/2026', `${at}: the row is read as one`);
+    assert.equal(flat(rows[0].props.style).flexDirection === 'row', !stacked, `${at}: ${stacked ? 'stacked' : 'side by side'}`);
+    // Masked bank details use the same rows; nothing is revealed by restyling.
+    assert.ok(texts(root).includes('••••0000') && !texts(root).some((t) => /^\d{8}$/.test(t)), `${at}: bank stays masked`);
+    // Flat Profile cards with sentence-case titles.
+    for (const [id, title] of [['employment', 'Employment'], ['payroll', 'Pay administration'], ['bank', 'Bank details'], ['tax', 'Tax identifiers']]) {
+      const card = root.findAll((n) => n.props?.testID === `guard-profile-card-${id}` && n.props.style)[0];
+      assert.ok(card && texts(card).includes(title), `${at}: ${title}`);
+      const style = flat(card.props.style);
+      assert.deepEqual([style.borderRadius, style.borderWidth, style.elevation, style.shadowOpacity], [8, 1, undefined, undefined], `${at}: ${id} card is flat`);
+    }
+    await run(() => renderer.unmount());
+  }
+});
+
+test('UX-T40-PROFILE-2D-SIA-IS-READ-THE-SAME-ON-THE-OVERVIEW-AND-IN-SIA-AND-COMPLIANCE', async () => {
+  const { api } = overviewServer({
+    getMyGuardComplianceStatus: async () => ({ guardId: 107, fullName: 'Dana Guard', siaLicenceNumber: 'SIA-FICTIONAL', assignable: true, blockingReasons: [], expiringReasons: [], missingDocuments: [], documents: [], complianceStatus: 'valid', siaExpiryDate: '2032-06-30' }),
+  });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: api });
+  const root = renderer.root;
+  await openProfile(root, run, null);
+  const headerSia = root.findAll((n) => n.props?.testID === 'guard-profile-sia-status' && typeof n.props.accessibilityLabel === 'string')[0];
+  assert.deepEqual([...new Set(texts(headerSia))], ['SIA licence', 'Valid to 30/06/2032']);
+  await openSection(root, run, 'compliance');
+  const row = byTestId(root, 'guard-compliance-sia')[0];
+  assert.ok(texts(row).includes('SIA-FICTIONAL') && texts(row).includes('Valid to 30/06/2032'), 'the same number, date and wording');
+  // Statuses in sentence case: StatusBadge does not capitalise each word here.
+  const panel = byTestId(root, 'guard-compliance-summary')[0];
+  const badges = panel.findAll((n) => typeof n.props?.label === 'string' && 'casing' in n.props);
+  assert.ok(badges.length >= 5 && badges.every((b) => b.props.casing === 'sentence'), 'every status chip in the panel is sentence case');
+  // The licence number is an identifier, shown as text, not as a status chip.
+  assert.ok(!badges.some((b) => b.props.label === 'SIA-FICTIONAL'), 'the SIA number is not a chip');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T41-PROFILE-2D-DISCARD-PROMPT-ONLY-FOR-TYPED-VALUES-AND-NEVER-IN-FRONT-OF-EMERGENCY', async () => {
+  const { api } = overviewServer({
+    getMyPersonnelIdentity: async () => ({ guardId: 107, ninoSet: true, ninoMasked: 'QQ •• •• •• C', utrSet: false, utrMasked: null }),
+    getMyBankDetails: async () => ({ guardId: 107, bankSet: false }),
+  });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: api });
+  const root = renderer.root;
+  // An open but empty editor leaves silently, as before.
+  await openProfile(root, run, 'employmentPay');
+  await run(() => byLabel(root, 'Edit National Insurance number')[0].props.onPress());
+  ALERTS.length = 0;
+  await run(() => byTestId(root, 'guard-profile-back')[0].props.onPress());
+  assert.equal(ALERTS.length, 0, 'nothing typed: no question');
+  assert.ok(byTestId(root, 'guard-profile-overview')[0], 'and the overview opens');
+  // Bank details typed, then Back: asked; Keep editing keeps the form and its values.
+  await openSection(root, run, 'employmentPay');
+  await run(() => byLabel(root, 'Add bank details')[0].props.onPress());
+  const sortCode = () => root.findAll((n) => n.type === 'test-text-input' && n.props.accessibilityLabel === 'Sort code')[0];
+  await run(() => sortCode().props.onChangeText('00-00-00'));
+  await run(() => byTestId(root, 'guard-profile-back')[0].props.onPress());
+  assert.equal(ALERTS.length, 1, 'a typed sort code asks first');
+  await run(() => ALERTS[0][2][0].onPress?.());
+  assert.equal(sortCode().props.value, '00-00-00', 'Keep editing keeps it');
+  // The Emergency control is never held up by the question: it opens its own form at once.
+  ALERTS.length = 0;
+  const emergency = root.findAll((n) => typeof n.props?.onPress === 'function' && /emergency/i.test(n.props.accessibilityLabel ?? '') && !/contact/i.test(n.props.accessibilityLabel ?? ''))[0];
+  assert.ok(emergency, 'the Emergency control is on screen');
+  await run(() => emergency.props.onPress());
+  assert.equal(ALERTS.length, 0, 'no discard question in front of Emergency');
+  assert.ok(texts(root).includes('Send Emergency Alert'), 'the Emergency form opened');
+  assert.equal(sortCode().props.value, '00-00-00', 'and the typed value is untouched');
+  await run(() => renderer.unmount());
 });
 
 (async () => {

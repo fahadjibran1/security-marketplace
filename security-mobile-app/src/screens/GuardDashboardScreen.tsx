@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { Fragment } from 'react/jsx-runtime';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeatureCard } from '../components/FeatureCard';
@@ -150,6 +150,8 @@ import { GuardComplianceUpdateRoute } from '../components/guard/profile/GuardCom
 import { GuardPrivacySummary } from '../components/guard/profile/GuardPrivacySummary';
 import { GuardProfileOverview } from '../components/guard/profile/GuardProfileOverview';
 import { GuardProfileSection } from '../components/guard/profile/GuardProfileSection';
+import { ProfileCard, ProfileField, ProfileFieldGroup, profileDate } from '../components/guard/profile/ProfileCard';
+import { UNSAVED_EDIT_COPY, hasUnsavedSensitiveEdit } from '../components/guard/profile/profileUnsaved';
 import { profileLayout } from '../components/guard/profile/profileLayout';
 import { overviewSourceFromDashboard, type ProfileSectionKey } from '../components/guard/profile/profileOverview';
 import {
@@ -261,6 +263,23 @@ function formatHistoryTimesheetStatus(status?: string | null) {
 function formatSummaryAttendanceLine(iso?: string | null) {
   if (!iso) return 'Pending';
   return `${formatDateLabel(iso)} · ${formatTimeLabel(iso)}`;
+}
+
+// Profile Phase 2D: "Discard unsaved changes?" before leaving a section with a typed, unsaved masked value.
+function confirmDiscardUnsavedEdits(onDiscard: () => void) {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof (window as any).confirm === 'function') {
+    if ((window as any).confirm(`${UNSAVED_EDIT_COPY.title}\n\n${UNSAVED_EDIT_COPY.message}`)) onDiscard();
+    return;
+  }
+  Alert.alert(
+    UNSAVED_EDIT_COPY.title,
+    UNSAVED_EDIT_COPY.message,
+    [
+      { text: UNSAVED_EDIT_COPY.keep, style: 'cancel' },
+      { text: UNSAVED_EDIT_COPY.discard, style: 'destructive', onPress: onDiscard },
+    ],
+    { cancelable: true },
+  );
 }
 
 function showAlert(title: string, message: string) {
@@ -725,6 +744,17 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // Profile rather than a sixth tab, so it keeps Profile lit in the bar; so does every Profile section.
   const navActiveTab: GuardTab =
     activeTab === 'screening' ? 'profile' : activeTab === 'inbox' ? 'home' : activeTab;
+  // Profile Phase 2D: set on every render (below, once the editors' state exists). When a masked value has been typed
+  // but not saved, a move away asks first; Discard carries on with the same move, Keep editing stays put.
+  const unsavedSensitiveRef = useRef(false);
+  const holdForUnsavedEdits = useCallback((proceed: () => void): boolean => {
+    if (!unsavedSensitiveRef.current) return false;
+    confirmDiscardUnsavedEdits(() => {
+      unsavedSensitiveRef.current = false;
+      proceed();
+    });
+    return true;
+  }, []);
   const scrollToTop = useCallback(() => {
     try {
       screeningScrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -733,6 +763,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     }
   }, []);
   const selectTab = useCallback((tab: GuardTab) => {
+    if (holdForUnsavedEdits(() => selectTab(tab))) return;
     setActiveTab(tab);
     // The Profile tab always opens on its overview, including a second tap while a section is open.
     if (tab === 'profile') setProfileSection(null);
@@ -740,11 +771,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   }, [scrollToTop]);
   // Opens one Profile section (null: the overview) at the top of the page, with Profile still selected.
   const openProfileSection = useCallback((section: ProfileSectionKey | null) => {
+    if (holdForUnsavedEdits(() => openProfileSection(section))) return;
     setActiveTab('profile');
     setProfileSection(section);
     scrollToTop();
   }, [scrollToTop]);
   const openScreeningJourney = useCallback((from: ProfileSectionKey) => {
+    if (holdForUnsavedEdits(() => openScreeningJourney(from))) return;
     screeningReturnSectionRef.current = from;
     setActiveTab('screening');
     scrollToTop();
@@ -1199,6 +1232,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     setBankReveal(null);
     setBankRevealCountdown(0);
   }
+
+  unsavedSensitiveRef.current = hasUnsavedSensitiveEdit({
+    nino: { editing: editingNino, inputs: [ninoInput] },
+    utr: { editing: editingUtr, inputs: [utrInput] },
+    drivingLicence: { editing: editingLicenceNumber, inputs: [licenceNumberInput] },
+    bank: { editing: editingBankDetails, inputs: [bankHolderInput, bankSortInput, bankAccountInput] },
+  });
 
   // Profile Phase 2C: leaving a Profile section — for the overview, another section or another tab — hides every
   // revealed value straight away (instead of leaving its timer running off screen) and closes any open edit of a masked
@@ -2530,13 +2570,12 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 profileUnavailable={!loadedProfile && !loading ? { message: PROFILE_UNAVAILABLE_MESSAGE, onRetry: () => loadData() } : null}
               />
             ) : (
-              <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)}>
+              <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)} compact={profileLayoutRules.compact}>
                 {profileSection === 'personal' ? (
                   <>
-                    <FeatureCard
-                      title="Your profile"
+                    <ProfileCard
                       subtitle="What your company and payroll see. Save when you change anything below."
-                      style={styles.guardProfileCard}
+                      testID="guard-profile-card-details"
                     >
                       <View style={styles.guardProfileBody}>
                         {!loadedProfile ? (
@@ -2561,7 +2600,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           </View>
                         ) : null}
                         <View style={styles.guardProfileSection}>
-                          <Text style={styles.guardSectionLabel}>Contact & identity</Text>
+                          <Text style={styles.profileLabel}>Contact & identity</Text>
                           <View style={styles.guardProfileFields}>
                             <View style={styles.profileField}>
                               <Text style={styles.profileFieldLabel}>Full name</Text>
@@ -2591,7 +2630,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           </View>
                         </View>
                         <View style={[styles.guardProfileSection, styles.guardProfileSwitchSection]}>
-                          <Text style={styles.guardSectionLabel}>On shift</Text>
+                          <Text style={styles.profileLabel}>On shift</Text>
                           <View style={styles.switchRow}>
                             <View style={styles.flexGrow}>
                               <Text style={styles.guardProfileSwitchTitle}>Live location sharing</Text>
@@ -2635,13 +2674,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           </Pressable>
                         </View>
                       </View>
-                    </FeatureCard>
+                    </ProfileCard>
 
                     {/* P1E — Emergency Contact */}
-                    <FeatureCard
+                    <ProfileCard
                       title="Emergency contact"
                       subtitle="A person we should contact in an emergency. Phone numbers are encrypted at rest."
-                      style={styles.guardProfileCard}
+                      testID="guard-profile-card-emergency"
                     >
                       {emergencyContactLoading ? (
                         <Text style={styles.helperText}>Loading...</Text>
@@ -2650,7 +2689,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       ) : editingEmergencyContact ? (
                         <View style={styles.guardProfileBody}>
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Contact name</Text>
+                            <Text style={styles.profileLabel}>Contact name</Text>
                             <TextInput
                               style={[styles.input, styles.guardProfileInput]}
                               value={ecNameInput}
@@ -2664,7 +2703,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           </View>
 
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Relationship</Text>
+                            <Text style={styles.profileLabel}>Relationship</Text>
                             <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                               {(['SPOUSE_PARTNER', 'PARENT', 'SIBLING', 'CHILD', 'RELATIVE', 'FRIEND', 'OTHER'] as EmergencyContactRelationship[]).map((r) => (
                                 <Pressable
@@ -2703,7 +2742,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           </View>
 
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Primary phone number</Text>
+                            <Text style={styles.profileLabel}>Primary phone number</Text>
                             <TextInput
                               style={[styles.input, styles.guardProfileInput]}
                               value={ecPrimaryPhoneInput}
@@ -2718,7 +2757,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           </View>
 
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Alternative phone number (optional)</Text>
+                            <Text style={styles.profileLabel}>Alternative phone number (optional)</Text>
                             <TextInput
                               style={[styles.input, styles.guardProfileInput]}
                               value={ecAlternatePhoneInput}
@@ -2774,28 +2813,20 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         </View>
                       ) : emergencyContact ? (
                         <View style={styles.guardProfileBody}>
-                          <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Contact name</Text>
-                            <Text style={styles.profileFieldValue}>{emergencyContact.contactName}</Text>
-                          </View>
-                          <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Relationship</Text>
-                            <Text style={styles.profileFieldValue}>
-                              {emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
+                          <ProfileFieldGroup first>
+                            <ProfileField label="Contact name" value={emergencyContact.contactName} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField
+                              label="Relationship"
+                              value={emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
                                 ? emergencyContact.customRelationship
                                 : profileEnumLabel(RELATIONSHIP_LABELS, emergencyContact.relationship)}
-                            </Text>
-                          </View>
-                          <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Primary phone number</Text>
-                            <Text style={styles.profileFieldValue}>{emergencyContact.primaryPhone}</Text>
-                          </View>
-                          {emergencyContact.alternatePhone ? (
-                            <View style={styles.guardProfileSection}>
-                              <Text style={styles.guardSectionLabel}>Alternative phone number</Text>
-                              <Text style={styles.profileFieldValue}>{emergencyContact.alternatePhone}</Text>
-                            </View>
-                          ) : null}
+                              stacked={profileLayoutRules.detailRowStacks}
+                            />
+                            <ProfileField label="Primary phone number" value={emergencyContact.primaryPhone} stacked={profileLayoutRules.detailRowStacks} />
+                            {emergencyContact.alternatePhone ? (
+                              <ProfileField label="Alternative phone number" value={emergencyContact.alternatePhone} stacked={profileLayoutRules.detailRowStacks} />
+                            ) : null}
+                          </ProfileFieldGroup>
                           <Pressable
                             style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
                             onPress={openEmergencyContactEditor}
@@ -2824,7 +2855,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       {!editingEmergencyContact ? (
                         <Text style={styles.profileFieldHint} testID="guard-profile-privacy-emergency">{PRIVACY_COPY.emergencyContact.note}</Text>
                       ) : null}
-                    </FeatureCard>
+                    </ProfileCard>
                   </>
                 ) : null}
                 {profileSection === 'companies' ? (
@@ -2847,10 +2878,10 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   <>
                     <GuardAvailabilityScreen />
                     {/* P1D — Driving & Transport */}
-                    <FeatureCard
+                    <ProfileCard
                       title="Driving & transport"
                       subtitle="Your licence and travel preferences. Licence number is encrypted and masked by default."
-                      style={styles.guardProfileCard}
+                      testID="guard-profile-card-driving"
                     >
                       {drivingLoading ? (
                         <Text style={styles.helperText}>Loading...</Text>
@@ -2861,7 +2892,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                           {/* Licence status */}
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Driving Licence Status</Text>
+                            <Text style={styles.profileLabel}>Driving licence status</Text>
                             <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                               {(['NONE', 'PROVISIONAL', 'FULL', 'OTHER_OR_FOREIGN'] as DrivingLicenceStatus[]).map((s) => (
                                 <Pressable
@@ -2890,7 +2921,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           {/* Licence number — only shown when licence is not NONE */}
                           {driving?.licenceStatus && driving.licenceStatus !== 'NONE' ? (
                             <View style={styles.guardProfileSection}>
-                              <Text style={styles.guardSectionLabel}>Licence Number</Text>
+                              <Text style={styles.profileLabel}>Licence number</Text>
                               {editingLicenceNumber ? (
                                 <View>
                                   <TextInput
@@ -2980,7 +3011,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                           {/* Primary travel method */}
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Primary way to get to work</Text>
+                            <Text style={styles.profileLabel}>Primary way to get to work</Text>
                             <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
                               {(['CAR', 'MOTORCYCLE', 'PUBLIC_TRANSPORT', 'BICYCLE', 'WALK', 'OTHER'] as PrimaryTravelMethod[]).map((m) => (
                                 <Pressable
@@ -3008,7 +3039,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                           {/* Max travel distance */}
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Max travel distance (miles)</Text>
+                            <Text style={styles.profileLabel}>Max travel distance (miles)</Text>
                             <Text style={[styles.profileFieldHint, { fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
                               {driving?.maxTravelDistanceMiles != null ? `${driving.maxTravelDistanceMiles} miles` : 'Not set'}
                             </Text>
@@ -3040,7 +3071,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                           {/* Boolean toggles */}
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Travel preferences</Text>
+                            <Text style={styles.profileLabel}>Travel preferences</Text>
                             <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
                               <Text style={styles.profileFieldHint}>Willing to drive to work</Text>
                               <Switch
@@ -3073,15 +3104,16 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           <Text style={styles.profileFieldHint} testID="guard-profile-privacy-driving">{PRIVACY_COPY.drivingLicence.note}</Text>
                         </View>
                       )}
-                    </FeatureCard>
+                    </ProfileCard>
                   </>
                 ) : null}
                 {profileSection === 'employmentPay' ? (
                   <>
                     {/* P1F — Employment & Engagement Record */}
-                    <FeatureCard
+                    <ProfileCard
                       title="Employment"
                       subtitle="Your employment record with each security company"
+                      testID="guard-profile-card-employment"
                     >
                       {employmentsLoading ? (
                         <Text style={styles.helperText}>Loading…</Text>
@@ -3090,44 +3122,29 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       ) : employments.length === 0 ? (
                         <Text style={styles.helperText}>No employment records on file. Your employing company will add your employment details.</Text>
                       ) : (
-                        employments.map((emp) => (
-                          <View key={emp.companyGuardId} style={styles.summaryBlock}>
-                            <Text style={styles.profileFieldLabel}>Company</Text>
-                            <Text style={styles.profileFieldValue}>{emp.companyName}</Text>
-                            <Text style={styles.profileFieldLabel}>Role</Text>
-                            <Text style={styles.profileFieldValue}>{jobRoleLabel(emp.jobRole, emp.customRole)}</Text>
-                            <Text style={styles.profileFieldLabel}>Engagement</Text>
-                            <Text style={styles.profileFieldValue}>{profileEnumLabel(ENGAGEMENT_TYPE_LABELS, emp.engagementType)}</Text>
-                            <Text style={styles.profileFieldLabel}>Working arrangement</Text>
-                            <Text style={styles.profileFieldValue}>{profileEnumLabel(WORKING_ARRANGEMENT_LABELS, emp.workingArrangement)}</Text>
-                            <Text style={styles.profileFieldLabel}>Pay basis</Text>
-                            <Text style={styles.profileFieldValue}>{profileEnumLabel(PAY_BASIS_LABELS, emp.payBasis)}</Text>
-                            <Text style={styles.profileFieldLabel}>Start date</Text>
-                            <Text style={styles.profileFieldValue}>{emp.startDate}</Text>
-                            {emp.endDate ? (
-                              <>
-                                <Text style={styles.profileFieldLabel}>End date</Text>
-                                <Text style={styles.profileFieldValue}>{emp.endDate}</Text>
-                              </>
-                            ) : null}
-                            {emp.noticePeriodDays !== null ? (
-                              <>
-                                <Text style={styles.profileFieldLabel}>Notice period</Text>
-                                <Text style={styles.profileFieldValue}>{emp.noticePeriodDays} days</Text>
-                              </>
-                            ) : null}
-                          </View>
+                        employments.map((emp, index) => (
+                          <ProfileFieldGroup key={emp.companyGuardId} first={index === 0} testID="guard-profile-employment-record">
+                            <ProfileField label="Company" value={emp.companyName} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Role" value={jobRoleLabel(emp.jobRole, emp.customRole)} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Engagement" value={profileEnumLabel(ENGAGEMENT_TYPE_LABELS, emp.engagementType)} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Working arrangement" value={profileEnumLabel(WORKING_ARRANGEMENT_LABELS, emp.workingArrangement)} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Pay basis" value={profileEnumLabel(PAY_BASIS_LABELS, emp.payBasis)} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Start date" value={profileDate(emp.startDate)} stacked={profileLayoutRules.detailRowStacks} />
+                            {emp.endDate ? <ProfileField label="End date" value={profileDate(emp.endDate)} stacked={profileLayoutRules.detailRowStacks} /> : null}
+                            {emp.noticePeriodDays !== null ? <ProfileField label="Notice period" value={`${emp.noticePeriodDays} days`} stacked={profileLayoutRules.detailRowStacks} /> : null}
+                          </ProfileFieldGroup>
                         ))
                       )}
                       <Text style={styles.profileFieldHint}>
                         Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator.
                       </Text>
-                    </FeatureCard>
+                    </ProfileCard>
 
                     {/* P1G-B — Payroll / Payment Administration (read-only) */}
-                    <FeatureCard
-                      title="Pay Administration"
+                    <ProfileCard
+                      title="Pay administration"
                       subtitle="Your payment arrangement with each security company"
+                      testID="guard-profile-card-payroll"
                     >
                       {payrollAdminLoading ? (
                         <Text style={styles.helperText}>Loading…</Text>
@@ -3136,38 +3153,26 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       ) : payrollAdminRecords.length === 0 ? (
                         <Text style={styles.helperText}>No payment administration record on file. Your employing company will add your payment details.</Text>
                       ) : (
-                        payrollAdminRecords.map((rec) => (
-                          <View key={rec.companyGuardId} style={styles.summaryBlock}>
-                            <Text style={styles.profileFieldLabel}>Company</Text>
-                            <Text style={styles.profileFieldValue}>{rec.companyName}</Text>
-                            <Text style={styles.profileFieldLabel}>Pay frequency</Text>
-                            <Text style={styles.profileFieldValue}>{formatPayFrequencyLabel(rec.payFrequency)}</Text>
-                            <Text style={styles.profileFieldLabel}>Payment status</Text>
-                            <Text style={styles.profileFieldValue}>{profileEnumLabel(PAYROLL_STATUS_LABELS, rec.payrollStatus)}</Text>
-                            {rec.payrollStartDate ? (
-                              <>
-                                <Text style={styles.profileFieldLabel}>Arrangement start</Text>
-                                <Text style={styles.profileFieldValue}>{rec.payrollStartDate}</Text>
-                              </>
-                            ) : null}
-                            {rec.payrollEndDate ? (
-                              <>
-                                <Text style={styles.profileFieldLabel}>Arrangement end</Text>
-                                <Text style={styles.profileFieldValue}>{rec.payrollEndDate}</Text>
-                              </>
-                            ) : null}
-                          </View>
+                        payrollAdminRecords.map((rec, index) => (
+                          <ProfileFieldGroup key={rec.companyGuardId} first={index === 0} testID="guard-profile-payroll-record">
+                            <ProfileField label="Company" value={rec.companyName} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Pay frequency" value={formatPayFrequencyLabel(rec.payFrequency)} stacked={profileLayoutRules.detailRowStacks} />
+                            <ProfileField label="Payment status" value={profileEnumLabel(PAYROLL_STATUS_LABELS, rec.payrollStatus)} stacked={profileLayoutRules.detailRowStacks} />
+                            {rec.payrollStartDate ? <ProfileField label="Arrangement start" value={profileDate(rec.payrollStartDate)} stacked={profileLayoutRules.detailRowStacks} /> : null}
+                            {rec.payrollEndDate ? <ProfileField label="Arrangement end" value={profileDate(rec.payrollEndDate)} stacked={profileLayoutRules.detailRowStacks} /> : null}
+                          </ProfileFieldGroup>
                         ))
                       )}
                       <Text style={styles.profileFieldHint}>
                         Payment details are set by your employing company. Contact your company administrator if you have any questions.
                       </Text>
-                    </FeatureCard>
+                    </ProfileCard>
 
                     {/* P1G-A — Bank Details */}
-                    <FeatureCard
-                      title="Bank Details"
+                    <ProfileCard
+                      title="Bank details"
                       subtitle="Your bank account for payroll payments"
+                      testID="guard-profile-card-bank"
                     >
                       {bankLoading ? (
                         <Text style={styles.helperText}>Loading…</Text>
@@ -3240,27 +3245,21 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       ) : (
                         <View>
                           {bankReveal ? (
-                            <View style={styles.summaryBlock}>
-                              <Text style={styles.profileFieldLabel}>Account holder</Text>
-                              <Text style={styles.profileFieldValue}>{bankReveal.accountHolderName ?? '—'}</Text>
-                              <Text style={styles.profileFieldLabel}>Sort code</Text>
-                              <Text style={styles.profileFieldValue}>{bankReveal.sortCode ?? '—'}</Text>
-                              <Text style={styles.profileFieldLabel}>Account number</Text>
-                              <Text style={styles.profileFieldValue}>{bankReveal.accountNumber ?? '—'}</Text>
+                            <ProfileFieldGroup first>
+                              <ProfileField label="Account holder" value={bankReveal.accountHolderName ?? '—'} stacked={profileLayoutRules.detailRowStacks} />
+                              <ProfileField label="Sort code" value={bankReveal.sortCode ?? '—'} stacked={profileLayoutRules.detailRowStacks} />
+                              <ProfileField label="Account number" value={bankReveal.accountNumber ?? '—'} stacked={profileLayoutRules.detailRowStacks} />
                               <Text style={[styles.helperText, { marginTop: 4 }]}>Hiding in {bankRevealCountdown}s</Text>
                               <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={clearBankReveal} accessibilityRole="button" accessibilityLabel="Hide bank details now">
                                 <Text style={styles.guardSecondaryBtnText}>Hide now</Text>
                               </Pressable>
-                            </View>
+                            </ProfileFieldGroup>
                           ) : (
-                            <View style={styles.summaryBlock}>
-                              <Text style={styles.profileFieldLabel}>Account holder</Text>
-                              <Text style={styles.profileFieldValue}>{bankDetails.accountHolderNameMasked ?? '••••••'}</Text>
-                              <Text style={styles.profileFieldLabel}>Sort code</Text>
-                              <Text style={styles.profileFieldValue}>{bankDetails.sortCodeMasked ?? '——'}</Text>
-                              <Text style={styles.profileFieldLabel}>Account number</Text>
-                              <Text style={styles.profileFieldValue}>{bankDetails.accountNumberMasked ?? '——'}</Text>
-                            </View>
+                            <ProfileFieldGroup first>
+                              <ProfileField label="Account holder" value={bankDetails.accountHolderNameMasked ?? '••••••'} stacked={profileLayoutRules.detailRowStacks} />
+                              <ProfileField label="Sort code" value={bankDetails.sortCodeMasked ?? '——'} stacked={profileLayoutRules.detailRowStacks} />
+                              <ProfileField label="Account number" value={bankDetails.accountNumberMasked ?? '——'} stacked={profileLayoutRules.detailRowStacks} />
+                            </ProfileFieldGroup>
                           )}
 
                           {!editingBankDetails ? (
@@ -3343,12 +3342,12 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         </View>
                       )}
                       <Text style={styles.profileFieldHint} testID="guard-profile-privacy-bank">{PRIVACY_COPY.bankDetails.note}</Text>
-                    </FeatureCard>
+                    </ProfileCard>
 
-                    <FeatureCard
+                    <ProfileCard
                       title="Tax identifiers"
                       subtitle="Encrypted and masked by default. Who can see them is explained below."
-                      style={styles.guardProfileCard}
+                      testID="guard-profile-card-tax"
                     >
                       {identityLoading ? (
                         <Text style={styles.helperText}>Loading...</Text>
@@ -3359,7 +3358,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                           {/* NINO */}
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>National Insurance Number</Text>
+                            <Text style={styles.profileLabel}>National Insurance number</Text>
                             {editingNino ? (
                               <View>
                                 <TextInput
@@ -3453,7 +3452,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
                           {/* UTR */}
                           <View style={styles.guardProfileSection}>
-                            <Text style={styles.guardSectionLabel}>Unique Taxpayer Reference (UTR)</Text>
+                            <Text style={styles.profileLabel}>Unique Taxpayer Reference (UTR)</Text>
                             {editingUtr ? (
                               <View>
                                 <TextInput
@@ -3543,7 +3542,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           <Text style={styles.profileFieldHint} testID="guard-profile-privacy-tax">{PRIVACY_COPY.taxIdentifiers.note}</Text>
                         </View>
                       )}
-                    </FeatureCard>
+                    </ProfileCard>
                   </>
                 ) : null}
                 {profileSection === 'screening' ? (
@@ -3914,8 +3913,8 @@ const styles = StyleSheet.create({
   },
   guardSecondaryBtn: {
     flex: 1,
-    minHeight: 50,
-    borderRadius: 14,
+    minHeight: 48,
+    borderRadius: guardShape.controlRadius,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
@@ -3940,7 +3939,7 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     minWidth: 44,
     minHeight: 44,
-    borderRadius: 14,
+    borderRadius: guardShape.controlRadius,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
@@ -4129,21 +4128,24 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
-  guardProfileBody: { gap: 18, marginTop: 4 },
+  guardProfileBody: { gap: 12 },
   guardProfileSection: { gap: 8 },
   guardProfileFields: { gap: 10 },
   guardProfileInput: {
     minHeight: 48,
-    borderRadius: 14,
+    borderRadius: guardShape.controlRadius,
   },
   profileField: { gap: 4 },
   profileFieldLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
   profileFieldValue: { color: colors.textPrimary, fontSize: 15, marginTop: 2 },
-  profileFieldHint: { color: colors.textSecondary, fontSize: 12, fontStyle: 'italic', marginTop: 2 },
+  // Phase 2D: privacy and help notes stay visible but read as plain captions (no italics), as on the Guard Home.
+  profileFieldHint: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginTop: 2 },
+  // Phase 2D: Profile field captions in sentence case (the uppercase guardSectionLabel stays for the Home).
+  profileLabel: { ...guardType.sectionLabel, fontSize: 13, lineHeight: 18, color: colors.textSecondary },
   guardProfileSwitchSection: {
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: guardShape.controlRadius,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,

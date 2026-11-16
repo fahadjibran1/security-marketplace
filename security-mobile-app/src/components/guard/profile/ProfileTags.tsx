@@ -4,11 +4,12 @@ import type { Tone } from './profileOverview';
 import { PROFILE_TONE_COLORS, REQUIREMENT_TAG_COLORS, profileTokens } from './profileTheme';
 
 /** A requirement level ("Required", "By invitation"…). Always neutral: a requirement is not a problem. */
-export function RequirementTag({ requirement }: { requirement: ProfileRequirement }) {
+export function RequirementTag({ requirement, short = false }: { requirement: ProfileRequirement; short?: boolean }) {
   const c = REQUIREMENT_TAG_COLORS[requirement];
+  const words = REQUIREMENT_LABELS[requirement];
   return (
     <View style={[styles.tag, { backgroundColor: c.surface }]} testID={`guard-profile-requirement-${requirement}`}>
-      <Text style={[styles.tagText, { color: c.text }]}>{REQUIREMENT_LABELS[requirement].label}</Text>
+      <Text style={[styles.tagText, { color: c.text }]}>{short ? words.short : words.label}</Text>
     </View>
   );
 }
@@ -26,6 +27,7 @@ export function StatusPill({ label, tone, testID }: { label: string; tone: Tone;
 const styles = StyleSheet.create({
   tag: {
     alignSelf: 'flex-start',
+    flexShrink: 0,
     maxWidth: '100%',
     paddingHorizontal: 8,
     paddingVertical: 2,

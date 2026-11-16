@@ -29,9 +29,11 @@ type StatusBadgeProps = {
   label: string;
   tone?: StatusTone;
   size?: StatusBadgeSize;
+  /** 'title' (default, unchanged) capitalises each word; 'sentence' shows the label as written (Guard Profile, Phase 2D). */
+  casing?: 'title' | 'sentence';
 };
 
-export function StatusBadge({ label, tone, size = 'standard' }: StatusBadgeProps) {
+export function StatusBadge({ label, tone, size = 'standard', casing = 'title' }: StatusBadgeProps) {
   const palette = palettes[tone || inferStatusTone(label)];
   return (
     <View
@@ -47,6 +49,7 @@ export function StatusBadge({ label, tone, size = 'standard' }: StatusBadgeProps
           styles.label,
           size === 'small' ? styles.labelSmall : styles.labelStandard,
           { color: palette.color },
+          casing === 'sentence' && styles.labelSentence,
         ]}
       >
         {label.replace(/_/g, ' ')}
@@ -72,6 +75,7 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
     fontWeight: '700',
   },
+  labelSentence: { textTransform: 'none' },
   labelStandard: {
     fontSize: 12,
     lineHeight: 18,

@@ -408,8 +408,8 @@ test('[STATIC ANALYSIS] dashboard imports getMyBankDetails, revealMyBankDetails,
 });
 
 test('[STATIC ANALYSIS] dashboard has Bank Details feature card', () => {
-  assert.match(dashboard, /Bank Details/);
-  assert.match(dashboard, /FeatureCard/);
+  // Profile Phase 2D: the shared Profile card, title in sentence case.
+  assert.match(dashboard, /<ProfileCard\s+title="Bank details"/);
 });
 
 // ── Reveal confirmation ───────────────────────────────────────────────────────

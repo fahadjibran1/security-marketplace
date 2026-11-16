@@ -96,7 +96,7 @@ export interface ProfileOverviewInput {
   /** YYYY-MM-DD in the UK, from the caller (the model never reads a clock). */
   today: string;
   guard: Loadable<{ fullName?: string | null; phone?: string | null; siaLicenseNumber?: string | null; siaLicenceNumber?: string | null; siaExpiryDate?: string | null }>;
-  compliance: Loadable<Pick<GuardComplianceSummary, 'assignable' | 'blockingReasons'> & { siaExpiryDate?: string | null }>;
+  compliance: Loadable<Pick<GuardComplianceSummary, 'assignable' | 'blockingReasons'> & { siaExpiryDate?: string | null; siaLicenceNumber?: string | null }>;
   companies: Loadable<GuardCompanyMembership[]>;
   emergencyContact: Loadable<GuardEmergencyContact | null>;
   identity: Loadable<Pick<GuardPersonnelIdentity, 'ninoSet' | 'utrSet'>>;
@@ -128,8 +128,10 @@ export interface ProfileOverview {
     name: string;
     initials: string;
     phone: string | null;
-    sia: { label: string; tone: Tone };
-    deployment: { label: string; tone: Tone };
+    /** label: the full sentence (read out); detail: the shorter value shown under the cell's 'SIA licence' caption. */
+    sia: { label: string; detail: string; tone: Tone };
+    /** label: the full sentence (read out); short: the value shown under the cell's 'Deployment' caption. */
+    deployment: { label: string; short: string; tone: Tone };
   };
   attention: ProfileAttentionItem[];
   sections: ProfileSectionSummary[];
@@ -156,6 +158,12 @@ export function ukDate(date: string): string {
   return y && m && d ? `${d}/${m}/${y}` : String(date);
 }
 
+/** A Profile date (Phase 2D): DD/MM/YYYY for a YYYY-MM-DD or ISO date, `empty` when there is none, anything else as given. */
+export function profileDate(value: string | null | undefined, empty = '—'): string {
+  if (!value) return empty;
+  return /^\d{4}-\d{2}-\d{2}/.test(String(value)) ? ukDate(String(value)) : String(value);
+}
+
 export function initialsOf(name: string | null | undefined): string {
   const parts = String(name ?? '').trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return '?';
@@ -164,26 +172,55 @@ export function initialsOf(name: string | null | undefined): string {
   return `${first}${last}`.toUpperCase();
 }
 
-function siaStatus(input: ProfileOverviewInput): { label: string; tone: Tone; days: number | null } {
-  const g = input.guard.status === 'ready' ? input.guard.value : null;
-  const c = input.compliance.status === 'ready' ? input.compliance.value : null;
-  if (!g && input.guard.status === 'loading') return { label: LOADING_TEXT, tone: 'neutral', days: null };
-  const number = g?.siaLicenseNumber || g?.siaLicenceNumber || null;
-  const expiry = c?.siaExpiryDate ?? g?.siaExpiryDate ?? null;
-  if (!number) return { label: 'SIA licence not added', tone: 'warning', days: null };
-  const days = daysUntil(input.today, expiry);
-  if (days === null) return { label: 'SIA licence added', tone: 'neutral', days: null };
-  if (days < 0) return { label: `SIA expired ${ukDate(String(expiry))}`, tone: 'danger', days };
-  if (days <= SIA_EXPIRY_WARNING_DAYS) return { label: `SIA expires ${ukDate(String(expiry))}`, tone: 'warning', days };
-  return { label: `SIA valid to ${ukDate(String(expiry))}`, tone: 'success', days };
+/** The SIA licence as the Guard's own record and compliance status report it. */
+export interface SiaLicenceSources {
+  guard?: { siaLicenseNumber?: string | null; siaLicenceNumber?: string | null; siaExpiryDate?: string | null } | null;
+  compliance?: { siaLicenceNumber?: string | null; siaExpiryDate?: string | null } | null;
 }
 
-function deploymentStatus(input: ProfileOverviewInput): { label: string; tone: Tone } {
-  if (input.compliance.status === 'loading') return { label: LOADING_TEXT, tone: 'neutral' };
-  if (input.compliance.status === 'error') return { label: 'Deployment status could not load', tone: 'neutral' };
+export interface SiaLicenceStatus {
+  number: string | null;
+  expiry: string | null;
+  /** With the "SIA" prefix, for the overview: "SIA valid to 30/06/2028". */
+  label: string;
+  /** Without it, under the licence number: "Valid to 30/06/2028". */
+  detail: string;
+  tone: Tone;
+  days: number | null;
+}
+
+/**
+ * Phase 2D — the ONE reading of the SIA licence, shared by the Profile overview and the SIA & compliance section so
+ * they can never disagree. The number comes from the Guard's record (then the compliance status); the expiry from the
+ * compliance status (then the Guard's record), because that is the date the deployment check itself uses.
+ */
+export function siaLicenceStatus(sources: SiaLicenceSources, today: string): SiaLicenceStatus {
+  const number = sources.guard?.siaLicenseNumber || sources.guard?.siaLicenceNumber || sources.compliance?.siaLicenceNumber || null;
+  const expiry = sources.compliance?.siaExpiryDate ?? sources.guard?.siaExpiryDate ?? null;
+  const base = { number, expiry };
+  if (!number) return { ...base, label: 'SIA licence not added', detail: 'Not added', tone: 'warning', days: null };
+  const days = daysUntil(today, expiry);
+  if (days === null) return { ...base, label: 'SIA licence added', detail: 'Expiry date not recorded', tone: 'neutral', days: null };
+  const date = ukDate(String(expiry));
+  if (days < 0) return { ...base, label: `SIA expired ${date}`, detail: `Expired ${date}`, tone: 'danger', days };
+  if (days <= SIA_EXPIRY_WARNING_DAYS) return { ...base, label: `SIA expires ${date}`, detail: `Expires ${date}`, tone: 'warning', days };
+  return { ...base, label: `SIA valid to ${date}`, detail: `Valid to ${date}`, tone: 'success', days };
+}
+
+function siaStatus(input: ProfileOverviewInput): { label: string; detail: string; tone: Tone; days: number | null } {
+  const g = input.guard.status === 'ready' ? input.guard.value : null;
+  const c = input.compliance.status === 'ready' ? input.compliance.value : null;
+  if (!g && input.guard.status === 'loading') return { label: LOADING_TEXT, detail: LOADING_TEXT, tone: 'neutral', days: null };
+  const { label, detail, tone, days } = siaLicenceStatus({ guard: g, compliance: c }, input.today);
+  return { label, detail, tone, days };
+}
+
+function deploymentStatus(input: ProfileOverviewInput): { label: string; short: string; tone: Tone } {
+  if (input.compliance.status === 'loading') return { label: LOADING_TEXT, short: LOADING_TEXT, tone: 'neutral' };
+  if (input.compliance.status === 'error') return { label: 'Deployment status could not load', short: ERROR_TEXT, tone: 'neutral' };
   return input.compliance.value.assignable
-    ? { label: 'Eligible for deployment', tone: 'success' }
-    : { label: 'Not eligible for deployment', tone: 'warning' };
+    ? { label: 'Eligible for deployment', short: 'Eligible', tone: 'success' }
+    : { label: 'Not eligible for deployment', short: 'Not eligible', tone: 'warning' };
 }
 
 function summaryOf<T>(value: Loadable<T>, describe: (v: T) => { summary: string; tone: Tone }): { summary: string; tone: Tone } {
@@ -263,7 +300,8 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
       const status = (s?.status ?? 'NOT_STARTED') as ScreeningStatus;
       const text = SCREENING_STATUS_TEXT[status] ?? 'Not started';
       const progress = status === 'IN_PROGRESS' && typeof s?.progress === 'number' ? ` ${Math.max(0, Math.min(100, Math.round(s.progress)))}%` : '';
-      return { summary: `Optional · ${text}${progress}`, tone: status === 'VETTED' ? 'success' : 'neutral' };
+      // Phase 2D: no "Optional ·" prefix — the row's own tag already says Optional.
+      return { summary: `${text}${progress}`, tone: status === 'VETTED' ? 'success' : 'neutral' };
     }),
     privacyAccount: { summary: input.email ? `Signed in as ${input.email}` : 'Who can see your information', tone: 'neutral' },
   };
@@ -273,7 +311,7 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
       name,
       initials: initialsOf(g?.fullName),
       phone: (g?.phone ?? '').trim() || null,
-      sia: { label: sia.label, tone: sia.tone },
+      sia: { label: sia.label, detail: sia.detail, tone: sia.tone },
       deployment,
     },
     attention: attention.slice(0, MAX_ATTENTION),

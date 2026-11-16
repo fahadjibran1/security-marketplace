@@ -9,7 +9,9 @@ import { profileTokens } from './profileTheme';
  * decorative: the Guard's name is read out next to it, so screen readers skip it.
  */
 export function ProfileAvatar({ initials, size = 56, imageUri = null }: { initials: string; size?: number; imageUri?: string | null }) {
-  const box = { width: size, height: size, borderRadius: size / 2 };
+  // Phase 2D: every dimension is pinned so neither flex layout nor a large font scale can stretch the circle into a
+  // rounded rectangle (seen at 360dp with 1.3x text in the 2C review).
+  const box = { width: size, height: size, minWidth: size, minHeight: size, maxWidth: size, maxHeight: size, borderRadius: size / 2 };
   return (
     <View
       style={[styles.avatar, box]}
@@ -37,6 +39,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: profileTokens.colors.accent,
     flexShrink: 0,
+    flexGrow: 0,
+    alignSelf: 'center',
   },
   initials: { ...profileTokens.type.button, color: profileTokens.colors.onAccent, lineHeight: undefined },
 });

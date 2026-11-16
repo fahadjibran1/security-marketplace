@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { getMyGuardComplianceStatus, getMyScreening } from '../../../services/api';
 import type { GuardComplianceSummary, GuardScreening } from '../../../types/models';
 import { ProfileAvatar } from './ProfileAvatar';
-import { RequirementTag, StatusPill } from './ProfileTags';
+import { RequirementTag } from './ProfileTags';
 import type { ProfileLayout } from './profileLayout';
 import {
   buildProfileOverview,
@@ -14,6 +14,7 @@ import {
   type Loadable,
   type ProfileOverviewSource,
   type ProfileSectionKey,
+  type Tone,
 } from './profileOverview';
 import { PROFILE_TONE_COLORS, profileTokens } from './profileTheme';
 
@@ -36,7 +37,7 @@ export interface GuardProfileOverviewProps {
   profileUnavailable?: { message: string; onRetry: () => void } | null;
 }
 
-type ComplianceFacts = Pick<GuardComplianceSummary, 'assignable' | 'blockingReasons'> & { siaExpiryDate?: string | null };
+type ComplianceFacts = Pick<GuardComplianceSummary, 'assignable' | 'blockingReasons'> & { siaExpiryDate?: string | null; siaLicenceNumber?: string | null };
 type ScreeningFacts = Pick<GuardScreening, 'status' | 'progress'> | null;
 
 export function GuardProfileOverview({ source, layout, onOpenSection, profileUnavailable }: GuardProfileOverviewProps) {
@@ -46,7 +47,7 @@ export function GuardProfileOverview({ source, layout, onOpenSection, profileUna
   useEffect(() => {
     let live = true;
     getMyGuardComplianceStatus()
-      .then((summary) => live && setCompliance(ready({ assignable: Boolean(summary?.assignable), blockingReasons: summary?.blockingReasons ?? [], siaExpiryDate: summary?.siaExpiryDate ?? null })))
+      .then((summary) => live && setCompliance(ready({ assignable: Boolean(summary?.assignable), blockingReasons: summary?.blockingReasons ?? [], siaExpiryDate: summary?.siaExpiryDate ?? null, siaLicenceNumber: summary?.siaLicenceNumber ?? null })))
       .catch(() => live && setCompliance(failed()));
     getMyScreening()
       .then((file) => live && setScreening(ready(file ? { status: file.status, progress: file.progress } : null)))
@@ -78,21 +79,23 @@ export function GuardProfileOverview({ source, layout, onOpenSection, profileUna
 
       <View style={styles.card} testID="guard-profile-header">
         <View style={styles.identityRow}>
-          <ProfileAvatar initials={header.initials} size={layout.compact ? 48 : 56} />
+          <ProfileAvatar initials={header.initials} size={48} />
           <View style={styles.identityText}>
             <Text style={styles.name} accessibilityRole="header" testID="guard-profile-name">{header.name}</Text>
             {header.phone ? <Text style={styles.meta} testID="guard-profile-phone-summary">{header.phone}</Text> : null}
           </View>
         </View>
-        <View style={styles.pills}>
-          <StatusPill label={header.sia.label} tone={header.sia.tone} testID="guard-profile-sia-status" />
-          <StatusPill label={header.deployment.label} tone={header.deployment.tone} testID="guard-profile-deployment-status" />
+        {/* Phase 2D: two equal cells with a fixed caption and a short value, so the header is the same height loading
+            and loaded and never wraps into stacked pills. The full sentence is what a screen reader hears. */}
+        <View style={styles.facts}>
+          <FactCell caption="SIA licence" value={header.sia.detail} spoken={header.sia.label} tone={header.sia.tone} testID="guard-profile-sia-status" />
+          <FactCell caption="Deployment" value={header.deployment.short} spoken={header.deployment.label} tone={header.deployment.tone} testID="guard-profile-deployment-status" />
         </View>
       </View>
 
       {attention.length ? (
-        <View style={styles.card} testID="guard-profile-attention">
-          <Text style={styles.eyebrow}>NEEDS ATTENTION</Text>
+        <View style={[styles.card, styles.attentionCard]} testID="guard-profile-attention">
+          <Text style={styles.eyebrow} accessibilityRole="header">Needs attention</Text>
           {attention.map((item) => (
             <Pressable
               key={item.key}
@@ -126,7 +129,7 @@ export function GuardProfileOverview({ source, layout, onOpenSection, profileUna
               <View style={styles.sectionText}>
                 <View style={layout.sectionRowStacksTag ? styles.titleStack : styles.titleRow}>
                   <Text style={styles.sectionTitle}>{section.title}</Text>
-                  <RequirementTag requirement={section.requirement} />
+                  <RequirementTag requirement={section.requirement} short />
                 </View>
                 <Text style={[styles.sectionSummary, { color: toneColour }]}>{section.summary}</Text>
               </View>
@@ -139,6 +142,21 @@ export function GuardProfileOverview({ source, layout, onOpenSection, profileUna
   );
 }
 
+function FactCell({ caption, value, spoken, tone, testID }: { caption: string; value: string; spoken: string; tone: Tone; testID: string }) {
+  const colour = tone === 'neutral' ? profileTokens.colors.textPrimary : PROFILE_TONE_COLORS[tone].text;
+  return (
+    <View
+      style={[styles.fact, { backgroundColor: PROFILE_TONE_COLORS[tone].surface }]}
+      accessible
+      accessibilityLabel={spoken}
+      testID={testID}
+    >
+      <Text style={styles.factCaption}>{caption}</Text>
+      <Text style={[styles.factValue, { color: colour }]}>{value}</Text>
+    </View>
+  );
+}
+
 const t = profileTokens;
 const styles = StyleSheet.create({
   root: { gap: 12, width: '100%' },
@@ -147,23 +165,28 @@ const styles = StyleSheet.create({
     borderColor: t.colors.border,
     borderWidth: t.shape.cardBorderWidth,
     borderRadius: t.shape.cardRadius,
-    padding: t.spacing.sectionPadding,
+    padding: 12,
     gap: 10,
   },
   identityRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   identityText: { flex: 1, minWidth: 0, gap: 2 },
   name: { ...t.type.sectionTitle, color: t.colors.textPrimary },
   meta: { ...t.type.body, color: t.colors.textSecondary },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  facts: { flexDirection: 'row', gap: 8 },
+  fact: { flex: 1, minWidth: 0, maxWidth: '100%', borderRadius: t.shape.tagRadius, paddingHorizontal: 10, paddingVertical: 6, gap: 2 },
+  factCaption: { ...t.type.sectionLabel, color: t.colors.textSecondary },
+  factValue: { ...t.type.value, fontFamily: t.type.button.fontFamily },
   eyebrow: { ...t.type.sectionLabel, color: t.colors.textSecondary },
+  attentionCard: { gap: 0, paddingVertical: 8 },
   attentionRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
   attentionMark: { width: 4, alignSelf: 'stretch', borderRadius: 2 },
   attentionText: { ...t.type.value, flex: 1, color: t.colors.textPrimary },
   sectionList: { paddingVertical: 0, gap: 0 },
-  sectionRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  sectionRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   sectionDivider: { borderTopWidth: 1, borderTopColor: t.colors.border },
-  sectionText: { flex: 1, minWidth: 0, gap: 4 },
-  titleRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  sectionText: { flex: 1, minWidth: 0, gap: 2 },
+  // Phase 2D: one deterministic rule — beside the title on a standard phone (no wrapping), under it when compact.
+  titleRow: { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', gap: 8 },
   titleStack: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 },
   sectionTitle: { ...t.type.value, fontFamily: t.type.button.fontFamily, color: t.colors.textPrimary, flexShrink: 1 },
   sectionSummary: { ...t.type.body },

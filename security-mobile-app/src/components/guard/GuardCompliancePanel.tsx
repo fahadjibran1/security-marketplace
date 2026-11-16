@@ -1,18 +1,15 @@
 import * as React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { formatApiErrorMessage, getMyGuard, getMyGuardComplianceStatus, listMyGuardDocuments } from '../../services/api';
 import { GuardComplianceSummary, GuardDocument, GuardProfile } from '../../types/models';
-import { FeatureCard } from '../FeatureCard';
 import { StatusBadge } from '../StatusBadge';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { getGuardVettingLabel, getGuardWorkEligibilityLabel } from '../../navigation/guard-lifecycle';
 import { COMPLIANCE_COPY, complianceChecksDisplayLabel } from './profile/profileCopy';
-
-function formatDate(value?: string | null) {
-  if (!value) return 'Not provided';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB');
-}
+import { ProfileCard, ProfileNote } from './profile/ProfileCard';
+import { profileLayout } from './profile/profileLayout';
+import { localToday, siaLicenceStatus } from './profile/profileOverview';
+import { PROFILE_TONE_COLORS, profileTokens } from './profile/profileTheme';
 
 function heroTone(value: string) {
   const v = value.toLowerCase();
@@ -45,25 +42,29 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
   const complianceChecks = complianceChecksDisplayLabel(getGuardVettingLabel(summary));
   const eligibility = getGuardWorkEligibilityLabel(summary);
   const eligibilityTone = heroTone(eligibility);
+  // Phase 2D: the SAME reading of the SIA licence as the Profile overview (number and expiry source, wording, UK date).
+  const sia = siaLicenceStatus({ guard, compliance: summary }, localToday());
+  const { width, height, fontScale } = useWindowDimensions();
+  const stacked = profileLayout({ width, height, fontScale }).detailRowStacks;
 
   return (
-    <FeatureCard title="Compliance summary" subtitle="See what is complete, what is under review and what may stop you being assigned to work.">
+    // Phase 2D: no inner 'Compliance summary' heading (the section is already titled SIA & compliance), the flat Profile
+    // card, one row per fact, and the eligibility shown once (the 'Work eligibility' row) instead of a hero repeating it.
+    <ProfileCard subtitle="What is complete, what is under review and what may stop you being assigned to work." testID="guard-compliance-summary">
       {error ? <View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>{error}</Text></View> : null}
 
-      <View style={[styles.readinessHero, { backgroundColor: eligibilityTone.bg }]}>
-        <Text style={styles.readinessLabel}>CURRENT STATUS</Text>
-        <Text style={[styles.readinessValue, { color: eligibilityTone.text }]}>{eligibility}</Text>
-        <Text style={styles.readinessHint}>{summary?.blockingReasons?.length ? `${summary.blockingReasons.length} item${summary.blockingReasons.length === 1 ? '' : 's'} need attention or review.` : 'No compliance blocker is currently shown.'}</Text>
-        <Text style={styles.readinessHint}>{COMPLIANCE_COPY.deploymentNote}</Text>
+      <View style={styles.rows}>
+        <Summary label="Work eligibility" value={eligibility} stacked={stacked} />
+        <Summary label="Account access" value="Active" stacked={stacked} />
+        <Summary label={COMPLIANCE_COPY.checksLabel} value={complianceChecks} stacked={stacked} />
+        <Summary label="SIA licence" value={sia.number || 'Not added'} detail={sia.number ? sia.detail : undefined} detailTone={sia.tone} plain={Boolean(sia.number)} testID="guard-compliance-sia" stacked={stacked} />
+        <Summary label="SIA evidence" value={documentState('sia_licence')} stacked={stacked} />
+        <Summary label="Right-to-work evidence" value={documentState('right_to_work')} detail={guard?.rightToWorkStatus ? 'Status: ' + sentence(guard.rightToWorkStatus) : undefined} stacked={stacked} />
       </View>
 
-      <View style={styles.grid}>
-        <Summary label="Account access" value="Active" />
-        <Summary label="Work eligibility" value={eligibility} />
-        <Summary label={COMPLIANCE_COPY.checksLabel} value={complianceChecks} />
-        <Summary label="SIA licence" value={guard?.siaLicenseNumber || guard?.siaLicenceNumber || 'Not provided'} detail={`Expiry: ${formatDate(guard?.siaExpiryDate)}`} />
-        <Summary label="SIA evidence" value={documentState('sia_licence')} />
-        <Summary label="Right-to-work evidence" value={documentState('right_to_work')} detail={guard?.rightToWorkStatus ? `Status: ${guard.rightToWorkStatus}` : undefined} />
+      <View style={[styles.statusNote, { backgroundColor: eligibilityTone.bg }]}>
+        <Text style={[styles.statusNoteText, { color: eligibilityTone.text }]}>{summary?.blockingReasons?.length ? `${summary.blockingReasons.length} item${summary.blockingReasons.length === 1 ? '' : 's'} need attention or review.` : 'No compliance blocker is currently shown.'}</Text>
+        <Text style={styles.readinessHint}>{COMPLIANCE_COPY.deploymentNote}</Text>
       </View>
 
       {summary?.blockingReasons?.length ? (
@@ -80,23 +81,43 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
           <Text style={styles.buttonText}>Manage compliance</Text>
         </Pressable>
       ) : null}
-      <Text style={styles.note}>Providing evidence does not verify it. Verification is completed only by an authorised reviewer.</Text>
-    </FeatureCard>
+      <ProfileNote>Providing evidence does not verify it. Verification is completed only by an authorised reviewer.</ProfileNote>
+    </ProfileCard>
   );
 }
 
-function Summary({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return <View style={styles.summary}><Text style={styles.label}>{label}</Text><StatusBadge label={value} />{detail ? <Text style={styles.detail}>{detail}</Text> : null}</View>;
+/** One compliance fact: label beside its status on a standard phone, above it when the layout is compact. */
+// `plain`: the value is an identifier (the SIA licence number), shown as text rather than as a status chip.
+function Summary({ label, value, detail, detailTone, testID, stacked, plain = false }: { label: string; value: string; detail?: string; detailTone?: keyof typeof PROFILE_TONE_COLORS; testID?: string; stacked: boolean; plain?: boolean }) {
+    return (
+      <View style={[styles.row, stacked && styles.rowStacked]} testID={testID}>
+        <Text style={[styles.label, !stacked && styles.labelColumn]}>{label}</Text>
+        <View style={[styles.valueColumn, stacked && styles.valueStacked]}>
+          {plain ? <Text style={styles.plainValue}>{value}</Text> : <StatusBadge label={value} casing="sentence" />}
+          {detail ? <Text style={[styles.detail, detailTone && detailTone !== 'neutral' ? { color: PROFILE_TONE_COLORS[detailTone].text } : null]}>{detail}</Text> : null}
+        </View>
+      </View>
+    );
+}
+
+/** 'verified' / 'NOT_PROVIDED' as 'Verified' / 'Not provided': sentence case, as every Profile status is shown. */
+function sentence(value: string): string {
+  const text = String(value).replace(/_/g, ' ').trim().toLowerCase();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 const styles = StyleSheet.create({
-  readinessHero: { borderRadius: radii.lg, padding: spacing.lg, gap: spacing.xs },
-  readinessLabel: { color: colors.textSecondary, ...typography.caption, fontWeight: '700', letterSpacing: 0.8 },
-  readinessValue: { ...typography.heading },
+  statusNote: { borderRadius: profileTokens.shape.controlRadius, paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
+  statusNoteText: { ...profileTokens.type.value },
   readinessHint: { color: colors.textSecondary, ...typography.caption },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  summary: { minWidth: 160, flexGrow: 1, flexBasis: '30%', padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, gap: spacing.sm },
-  label: { color: colors.textSecondary, ...typography.caption, fontWeight: '700' },
+  rows: { gap: 0 },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 6, borderTopWidth: 1, borderTopColor: profileTokens.colors.border },
+  rowStacked: { flexDirection: 'column', gap: 4 },
+  labelColumn: { flexBasis: '42%', flexShrink: 0, flexGrow: 0, paddingTop: 2 },
+  valueColumn: { flex: 1, minWidth: 0, gap: 2 },
+  valueStacked: { flex: 0 },
+  plainValue: { ...profileTokens.type.value, color: profileTokens.colors.textPrimary },
+  label: { color: colors.textSecondary, ...profileTokens.type.body },
   detail: { color: colors.textMuted, ...typography.caption },
   blockers: { padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.warningSurface, gap: spacing.sm },
   blockerTitle: { color: colors.warning, ...typography.label },
