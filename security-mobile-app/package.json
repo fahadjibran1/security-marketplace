@@ -93,7 +93,8 @@
     "test:patrol-management-ui": "node scripts/patrol-management-ui.spec.cjs",
     "test:patrol-monitor-ui": "node scripts/patrol-monitor-ui.spec.cjs",
     "test:guard-patrols": "node scripts/guard-patrols.spec.cjs",
-    "test:guard-home-ux01": "node scripts/guard-home-ux01.spec.cjs"
+    "test:guard-home-ux01": "node scripts/guard-home-ux01.spec.cjs",
+    "test:guard-profile-foundations": "node scripts/guard-profile-foundations.spec.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

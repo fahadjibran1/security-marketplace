@@ -471,6 +471,13 @@ jobs:
       - name: Verify the adaptive Guard Home (UX-01)
         run: npm run test:guard-home-ux01
 
+      # Guard Profile Phase 2A/2B: S4 screening is presented as optional and never as work eligibility; the Profile's
+      # privacy notes come from one table checked against the backend's real access rules (routes, membership roles,
+      # ACTIVE relationship, masking, audit); every Profile input, switch and sensitive-value action is labelled; and the
+      # overview model and responsive rules are executed. Fictional data only.
+      - name: Verify Guard Profile copy, privacy notes, accessibility and foundations
+        run: npm run test:guard-profile-foundations
+
       - name: Verify Expo dependency compatibility
         run: npx expo install --check
 

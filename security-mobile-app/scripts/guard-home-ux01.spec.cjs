@@ -1452,6 +1452,84 @@ test('UX-T31-PROFILE-CHIPS-WRAP-AT-44PT-GUARD-TEAL-AND-AN-ACCURATE-SIA-HINT', as
   await run(() => renderer.unmount());
 });
 
+// Profile Phase 2A: rendered, not just read. Fictional data only.
+test('UX-T32-PROFILE-2A-ACCURATE-PRIVACY-OPTIONAL-SCREENING-LABELLED-CONTROLS-AND-AN-UNCHANGED-REVEAL', async () => {
+  const profileCopy = loadTs('src/components/guard/profile/profileCopy.ts');
+  const server = profileServer();
+  const reveals = [];
+  const apiOverrides = {
+    ...server.api,
+    getMyPersonnelIdentity: async () => ({ guardId: 107, ninoSet: true, ninoMasked: 'QQ •• •• •• C', utrSet: false, utrMasked: null }),
+    revealMyPersonnelField: async (field) => { reveals.push(field); return { field, revealedValue: 'QQ 12 34 56 C' }; },
+    getMyDrivingTransport: async () => ({ guardId: 107, licenceStatus: 'FULL', licenceNumberSet: true, licenceNumberMasked: '••••••••••ABC', licenceCategories: null, licenceExpiryDate: null,
+      willingToDriveToWork: true, ownsVehicle: false, hasVehicleAccess: null, primaryTravelMethod: 'CAR', maxTravelDistanceMiles: 20 }),
+    getMyEmergencyContact: async () => ({ guardId: 107, contactName: 'Fictional Contact', relationship: 'SPOUSE_PARTNER', customRelationship: null, primaryPhone: '07000 000009', alternatePhone: null, updatedAt: '2030-01-01' }),
+    getMyBankDetails: async () => ({ guardId: 107, bankSet: true, accountHolderNameMasked: 'F•••••', sortCodeMasked: '••-••-00', accountNumberMasked: '••••0000', updatedAt: '2030-01-01' }),
+    getMyEmployments: async () => [{ companyGuardId: 1, companyId: 3, companyName: 'Fictional Guarding Ltd', guardId: 107, engagementType: 'SELF_EMPLOYED_CONTRACTOR', jobRole: 'CCTV_OPERATOR', customRole: null,
+      workingArrangement: 'ZERO_HOURS', startDate: '2030-01-01', endDate: null, payBasis: 'HOURLY', noticePeriodDays: null, updatedAt: '2030-01-01' }],
+    getMyPayrollAdmin: async () => [{ companyGuardId: 1, guardId: 107, companyId: 3, companyName: 'Fictional Guarding Ltd', payFrequency: 'FOUR_WEEKLY', payrollStatus: 'ON_HOLD', payrollStartDate: null, payrollEndDate: null, updatedAt: '2030-01-01' }],
+    getMyScreening: async () => ({ id: 9, status: 'IN_PROGRESS', progress: 40, requirements: { remediation: [] }, evidence: [] }),
+  };
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides });
+  const root = renderer.root;
+  await openProfile(root, run);
+  const shown = texts(root);
+
+  // Privacy: each note is the table's sentence, and the old inaccurate ones are gone.
+  for (const topic of ['taxIdentifiers', 'drivingLicence', 'emergencyContact', 'bankDetails']) {
+    assert.ok(shown.includes(profileCopy.PRIVACY_COPY[topic].note), `${topic}: the accurate note is shown`);
+  }
+  const joined = shown.join('\n');
+  for (const old of ['Only you can view or update them from this app', 'Employers see sort code and account number only', 'only visible to you']) {
+    assert.ok(!joined.includes(old), `gone: ${old}`);
+  }
+
+  // Screening: optional, separate from company checks, and never "Work eligibility" from screening.
+  assert.ok(shown.includes(profileCopy.SCREENING_COPY.optionalStatement), 'screening is optional');
+  assert.ok(shown.includes(profileCopy.SCREENING_COPY.separateFromCompanyChecks), 'separate from company checks');
+  assert.ok(shown.includes(profileCopy.SCREENING_COPY.deploymentLine));
+  assert.ok(!/Work eligibility:|Not yet eligible|become eligible/.test(joined), 'no screening-derived eligibility');
+  assert.ok(shown.includes(profileCopy.COMPLIANCE_COPY.deploymentNote), 'the compliance panel says its status is not from screening');
+  assert.ok(shown.includes('Compliance checks') && !shown.includes('Vetting'), 'company checks are not called Vetting');
+
+  // Readable enum labels on the read-only records.
+  for (const label of ['CCTV operator', 'Self-employed contractor', 'Zero hours', 'Hourly', 'Every four weeks', 'On hold', 'Spouse or partner']) {
+    assert.ok(shown.includes(label), `shows "${label}"`);
+  }
+  assert.ok(!/SELF EMPLOYED|ZERO HOURS|CCTV OPERATOR|ON HOLD/.test(joined), 'no raw enum text');
+
+  // Every rendered input and switch on the Profile has an accessible name.
+  const inputs = root.findAll((n) => n.type === 'test-text-input');
+  const switches = root.findAll((n) => n.type === RNW.Switch);
+  assert.ok(inputs.length >= 3 && switches.length >= 4, `${inputs.length} inputs, ${switches.length} switches`);
+  for (const control of [...inputs, ...switches]) {
+    assert.ok(typeof control.props.accessibilityLabel === 'string' && control.props.accessibilityLabel.trim(), `labelled: ${control.props.testID || control.props.placeholder || control.props.value}`);
+  }
+  // Edit mode inputs are labelled too.
+  await run(() => byLabel(root, 'Edit National Insurance number')[0].props.onPress());
+  assert.ok(root.findAll((n) => n.type === 'test-text-input' && n.props.accessibilityLabel === 'National Insurance number').length === 1, 'NINO input labelled');
+  await run(() => byLabel(root, 'Cancel editing National Insurance number')[0].props.onPress());
+  await run(() => byLabel(root, 'Edit emergency contact')[0].props.onPress());
+  for (const label of ['Emergency contact name', 'Emergency contact primary phone number', 'Emergency contact alternative phone number (optional)']) {
+    assert.equal(root.findAll((n) => n.type === 'test-text-input' && n.props.accessibilityLabel === label).length, 1, label);
+  }
+  await run(() => byLabel(root, 'Cancel editing emergency contact')[0].props.onPress());
+
+  // Reveal behaviour is unchanged: Show calls the same reveal, shows the value, Hide masks it again.
+  const masked = root.findAll((n) => n.props?.accessibilityLabel === 'National Insurance number, hidden' && typeof n.props.children !== 'undefined');
+  assert.ok(masked.length >= 1, 'the masked NINO announces itself as hidden');
+  await run(() => byLabel(root, 'Show National Insurance number')[0].props.onPress());
+  assert.deepEqual(reveals, ['nino'], 'one reveal request for the NINO');
+  assert.ok(texts(root).includes('QQ 12 34 56 C'), 'the revealed value is shown');
+  const countdown = root.findAll((n) => n.type === RNW.Text && Array.isArray(n.props.children) && /^Hiding automatically in \d+s$/.test(n.props.children.join('')));
+  assert.ok(countdown.length >= 1, 'with its countdown');
+  assert.equal(countdown[0].props.children.join(''), 'Hiding automatically in 10s', 'the same 10-second reveal');
+  await run(() => byLabel(root, 'Hide National Insurance number')[0].props.onPress());
+  assert.ok(!texts(root).includes('QQ 12 34 56 C'), 'Hide masks it again');
+  assert.ok(byLabel(root, 'Show National Insurance number').length === 1, 'and Show is back');
+  await run(() => renderer.unmount());
+});
+
 // ═══════════════════ UX-T10 the patrol freeze ═══════════════════
 
 // Recorded from release/s4-pilot-rc1 at 1251a8e (iOS 1.2.1 (22), the verified Photo Patrol camera fix c82c442).

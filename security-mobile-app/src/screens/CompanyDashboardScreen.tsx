@@ -3873,9 +3873,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
 
   const guardOnboardingMessage = (message: string) => {
     const compliancePrefix = 'Guard compliance invalid:';
-    if (message.includes('Guard screening is not complete.')) {
-      return 'Guard onboarding incomplete. Guard cannot yet be approved. The candidate must complete screening and authorised verification.';
-    }
+    // S4 screening is optional and the backend no longer refuses on it (ComplianceService.assertGuardAssignable),
+    // so there is no screening-specific wording here: any other refusal is shown as the server sent it.
     return message.includes(compliancePrefix)
       ? `Guard onboarding incomplete. Guard cannot yet be approved. Outstanding candidate requirement: ${message.split(compliancePrefix)[1].trim()}`
       : message;

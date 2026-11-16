@@ -145,6 +145,17 @@ import {
   planGuardProfileSave,
   type GuardProfileFields,
 } from '../components/guard/profile/guardProfileSave';
+import { COMPLIANCE_COPY, PRIVACY_COPY } from '../components/guard/profile/profileCopy';
+import {
+  ENGAGEMENT_TYPE_LABELS,
+  PAYROLL_STATUS_LABELS,
+  PAY_BASIS_LABELS,
+  PAY_FREQUENCY_LABELS,
+  RELATIONSHIP_LABELS,
+  WORKING_ARRANGEMENT_LABELS,
+  jobRoleLabel,
+  profileEnumLabel,
+} from '../components/guard/profile/profileLabels';
 import { GuardOnDutyBar } from '../components/guard/home/GuardOnDutyBar';
 import { guardHomeMode, showOnDutyBar, upcomingShifts } from '../components/guard/home/guardHomeModel';
 import { guardEmergencyPresentation } from '../components/guard/home/guardEmergencyPresentation';
@@ -1130,8 +1141,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   }
 
   function formatPayFrequencyLabel(freq: GuardPayrollAdminSummary['payFrequency']): string {
-    if (!freq) return '—';
-    return freq.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    return profileEnumLabel(PAY_FREQUENCY_LABELS, freq);
   }
 
   // P1G-A — Bank Details helpers
@@ -2495,10 +2505,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         value={siaLicence}
                         editable={false}
                         selectTextOnFocus={false}
+                        accessibilityLabel="SIA licence number, read only"
                       />
-                      <Text style={styles.profileFieldHint}>
-                        To update your SIA licence, scroll down to Compliance summary and tap Manage compliance.
-                      </Text>
+                      <Text style={styles.profileFieldHint}>{COMPLIANCE_COPY.siaHint}</Text>
                     </View>
                     <View style={styles.profileField}>
                       <Text style={styles.profileFieldLabel}>Phone number</Text>
@@ -2558,7 +2567,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       {savingProfile ? 'Saving...' : 'Save profile'}
                     </Text>
                   </Pressable>
-                  <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout}>
+                  <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Log out">
                     <Text style={styles.offerRejectBtnText}>Log out</Text>
                   </Pressable>
                 </View>
@@ -2566,7 +2575,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             </FeatureCard>
             <FeatureCard
               title="Tax identifiers"
-              subtitle="Stored securely and encrypted. Values are masked by default and only visible to you."
+              subtitle="Encrypted and masked by default. Who can see them is explained below."
               style={styles.guardProfileCard}
             >
               {identityLoading ? (
@@ -2594,6 +2603,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           // A grouped NINO is 13 characters: "AB 12 34 56 C".
                           maxLength={13}
                           autoFocus
+                          accessibilityLabel="National Insurance number"
                         />
                         {ninoInputError ? (
                           <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{ninoInputError}</Text>
@@ -2604,12 +2614,17 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                             style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
                             onPress={handleSaveNino}
                             disabled={identitySaving}
+                            accessibilityRole="button"
+                            accessibilityLabel="Save National Insurance number"
+                            accessibilityState={{ disabled: identitySaving, busy: identitySaving }}
                           >
                             <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
                           </Pressable>
                           <Pressable
                             style={styles.guardSecondaryBtn}
                             onPress={() => { setEditingNino(false); setNinoInput(''); setNinoInputError(''); }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Cancel editing National Insurance number"
                           >
                             <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                           </Pressable>
@@ -2618,13 +2633,18 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     ) : (
                       <View>
                         <View style={styles.guardSecondaryRow}>
-                          <Text style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                          <Text
+                            style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
+                            accessibilityLabel={revealedField === 'nino' && revealedValue
+                              ? `National Insurance number ${revealedValue}`
+                              : identity?.ninoSet ? 'National Insurance number, hidden' : 'National Insurance number, not yet provided'}
+                          >
                             {revealedField === 'nino' && revealedValue
                               ? revealedValue
                               : identity?.ninoMasked ?? (identity?.ninoSet ? '••••••••••' : 'Not yet provided')}
                           </Text>
                           {revealedField === 'nino' ? (
-                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal}>
+                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal} accessibilityRole="button" accessibilityLabel="Hide National Insurance number">
                               <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
                             </Pressable>
                           ) : (
@@ -2632,6 +2652,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                               style={[styles.guardSecondaryBtn, (!identity?.ninoSet || revealing) && styles.buttonDisabled]}
                               disabled={!identity?.ninoSet || revealing}
                               onPress={() => handleRevealField('nino')}
+                              accessibilityRole="button"
+                              accessibilityLabel="Show National Insurance number"
+                              accessibilityState={{ disabled: !identity?.ninoSet || revealing, busy: revealing }}
                             >
                               <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
                             </Pressable>
@@ -2640,6 +2663,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                             style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
                             disabled={identitySaving}
                             onPress={() => { clearReveal(); setEditingNino(true); setNinoInput(''); }}
+                            accessibilityRole="button"
+                            accessibilityLabel={identity?.ninoSet ? 'Edit National Insurance number' : 'Add National Insurance number'}
+                            accessibilityState={{ disabled: identitySaving }}
                           >
                             <Text style={styles.guardSecondaryBtnText}>{identity?.ninoSet ? 'Edit' : 'Add'}</Text>
                           </Pressable>
@@ -2666,6 +2692,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           keyboardType="number-pad"
                           maxLength={10}
                           autoFocus
+                          accessibilityLabel="Unique Taxpayer Reference"
                         />
                         {utrInputError ? (
                           <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{utrInputError}</Text>
@@ -2676,12 +2703,17 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                             style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
                             onPress={handleSaveUtr}
                             disabled={identitySaving}
+                            accessibilityRole="button"
+                            accessibilityLabel="Save Unique Taxpayer Reference"
+                            accessibilityState={{ disabled: identitySaving, busy: identitySaving }}
                           >
                             <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
                           </Pressable>
                           <Pressable
                             style={styles.guardSecondaryBtn}
                             onPress={() => { setEditingUtr(false); setUtrInput(''); setUtrInputError(''); }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Cancel editing Unique Taxpayer Reference"
                           >
                             <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                           </Pressable>
@@ -2690,13 +2722,18 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     ) : (
                       <View>
                         <View style={styles.guardSecondaryRow}>
-                          <Text style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                          <Text
+                            style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
+                            accessibilityLabel={revealedField === 'utr' && revealedValue
+                              ? `Unique Taxpayer Reference ${revealedValue}`
+                              : identity?.utrSet ? 'Unique Taxpayer Reference, hidden' : 'Unique Taxpayer Reference, not yet provided'}
+                          >
                             {revealedField === 'utr' && revealedValue
                               ? revealedValue
                               : identity?.utrMasked ?? (identity?.utrSet ? '••••••••••' : 'Not yet provided')}
                           </Text>
                           {revealedField === 'utr' ? (
-                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal}>
+                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal} accessibilityRole="button" accessibilityLabel="Hide Unique Taxpayer Reference">
                               <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
                             </Pressable>
                           ) : (
@@ -2704,6 +2741,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                               style={[styles.guardSecondaryBtn, (!identity?.utrSet || revealing) && styles.buttonDisabled]}
                               disabled={!identity?.utrSet || revealing}
                               onPress={() => handleRevealField('utr')}
+                              accessibilityRole="button"
+                              accessibilityLabel="Show Unique Taxpayer Reference"
+                              accessibilityState={{ disabled: !identity?.utrSet || revealing, busy: revealing }}
                             >
                               <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
                             </Pressable>
@@ -2712,6 +2752,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                             style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
                             disabled={identitySaving}
                             onPress={() => { clearReveal(); setEditingUtr(true); setUtrInput(''); }}
+                            accessibilityRole="button"
+                            accessibilityLabel={identity?.utrSet ? 'Edit Unique Taxpayer Reference' : 'Add Unique Taxpayer Reference'}
+                            accessibilityState={{ disabled: identitySaving }}
                           >
                             <Text style={styles.guardSecondaryBtnText}>{identity?.utrSet ? 'Edit' : 'Add'}</Text>
                           </Pressable>
@@ -2725,9 +2768,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     )}
                   </View>
 
-                  <Text style={styles.profileFieldHint}>
-                    Your NINO and UTR are encrypted at rest. Only you can view or update them from this app.
-                  </Text>
+                  <Text style={styles.profileFieldHint} testID="guard-profile-privacy-tax">{PRIVACY_COPY.taxIdentifiers.note}</Text>
                 </View>
               )}
             </FeatureCard>
@@ -2787,6 +2828,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                             autoCapitalize="characters"
                             maxLength={50}
                             autoFocus
+                            accessibilityLabel="Driving licence number"
                           />
                           {licenceNumberInputError ? (
                             <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{licenceNumberInputError}</Text>
@@ -2797,12 +2839,17 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                               style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
                               onPress={handleSaveLicenceNumber}
                               disabled={drivingSaving}
+                              accessibilityRole="button"
+                              accessibilityLabel="Save driving licence number"
+                              accessibilityState={{ disabled: drivingSaving, busy: drivingSaving }}
                             >
                               <Text style={styles.guardSecondaryBtnText}>{drivingSaving ? 'Saving...' : 'Save'}</Text>
                             </Pressable>
                             <Pressable
                               style={styles.guardSecondaryBtn}
                               onPress={() => { setEditingLicenceNumber(false); setLicenceNumberInput(''); setLicenceNumberInputError(''); }}
+                              accessibilityRole="button"
+                              accessibilityLabel="Cancel editing driving licence number"
                             >
                               <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                             </Pressable>
@@ -2811,13 +2858,18 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       ) : (
                         <View>
                           <View style={styles.guardSecondaryRow}>
-                            <Text style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                            <Text
+                              style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
+                              accessibilityLabel={revealedLicenceValue
+                                ? `Driving licence number ${revealedLicenceValue}`
+                                : driving?.licenceNumberSet ? 'Driving licence number, hidden' : 'Driving licence number, not yet provided'}
+                            >
                               {revealedLicenceValue
                                 ? revealedLicenceValue
                                 : driving?.licenceNumberMasked ?? (driving?.licenceNumberSet ? '••••••••••' : 'Not yet provided')}
                             </Text>
                             {revealedLicenceValue ? (
-                              <Pressable style={styles.guardSecondaryBtn} onPress={clearLicenceReveal}>
+                              <Pressable style={styles.guardSecondaryBtn} onPress={clearLicenceReveal} accessibilityRole="button" accessibilityLabel="Hide driving licence number">
                                 <Text style={styles.guardSecondaryBtnText}>Hide ({licenceRevealCountdown}s)</Text>
                               </Pressable>
                             ) : (
@@ -2825,6 +2877,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                                 style={[styles.guardSecondaryBtn, (!driving?.licenceNumberSet || revealingLicence) && styles.buttonDisabled]}
                                 disabled={!driving?.licenceNumberSet || revealingLicence}
                                 onPress={handleRevealLicenceNumber}
+                                accessibilityRole="button"
+                                accessibilityLabel="Show driving licence number"
+                                accessibilityState={{ disabled: !driving?.licenceNumberSet || revealingLicence, busy: revealingLicence }}
                               >
                                 <Text style={styles.guardSecondaryBtnText}>{revealingLicence ? '...' : 'Show'}</Text>
                               </Pressable>
@@ -2833,6 +2888,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                               style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
                               disabled={drivingSaving}
                               onPress={() => { clearLicenceReveal(); setEditingLicenceNumber(true); setLicenceNumberInput(''); }}
+                              accessibilityRole="button"
+                              accessibilityLabel={driving?.licenceNumberSet ? 'Edit driving licence number' : 'Add driving licence number'}
+                              accessibilityState={{ disabled: drivingSaving }}
                             >
                               <Text style={styles.guardSecondaryBtnText}>{driving?.licenceNumberSet ? 'Edit' : 'Add'}</Text>
                             </Pressable>
@@ -2916,6 +2974,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         value={!!driving?.willingToDriveToWork}
                         onValueChange={(v: boolean) => handleUpdateDrivingField({ willingToDriveToWork: v })}
                         disabled={drivingSaving}
+                        accessibilityLabel="Willing to drive to work"
                       />
                     </View>
                     <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
@@ -2924,6 +2983,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         value={!!driving?.ownsVehicle}
                         onValueChange={(v: boolean) => handleUpdateDrivingField({ ownsVehicle: v })}
                         disabled={drivingSaving}
+                        accessibilityLabel="Owns a vehicle"
                       />
                     </View>
                     <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
@@ -2932,13 +2992,12 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         value={!!driving?.hasVehicleAccess}
                         onValueChange={(v: boolean) => handleUpdateDrivingField({ hasVehicleAccess: v })}
                         disabled={drivingSaving}
+                        accessibilityLabel="Has access to a vehicle"
                       />
                     </View>
                   </View>
 
-                  <Text style={styles.profileFieldHint}>
-                    Your licence number is encrypted at rest. Only you can view the full number from this app.
-                  </Text>
+                  <Text style={styles.profileFieldHint} testID="guard-profile-privacy-driving">{PRIVACY_COPY.drivingLicence.note}</Text>
                 </View>
               )}
             </FeatureCard>
@@ -2965,6 +3024,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       placeholderTextColor={colors.textSecondary}
                       maxLength={100}
                       editable={!emergencyContactSaving}
+                      accessibilityLabel="Emergency contact name"
                     />
                   </View>
 
@@ -3002,6 +3062,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         placeholderTextColor={colors.textSecondary}
                         maxLength={100}
                         editable={!emergencyContactSaving}
+                        accessibilityLabel="Describe the relationship (optional)"
                       />
                     ) : null}
                   </View>
@@ -3017,6 +3078,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       keyboardType="phone-pad"
                       maxLength={20}
                       editable={!emergencyContactSaving}
+                      accessibilityLabel="Emergency contact primary phone number"
                     />
                   </View>
 
@@ -3031,6 +3093,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       keyboardType="phone-pad"
                       maxLength={20}
                       editable={!emergencyContactSaving}
+                      accessibilityLabel="Emergency contact alternative phone number (optional)"
                     />
                   </View>
 
@@ -3043,6 +3106,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       style={[styles.guardSecondaryBtn, emergencyContactSaving && styles.buttonDisabled]}
                       onPress={() => setEditingEmergencyContact(false)}
                       disabled={emergencyContactSaving}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel editing emergency contact"
                     >
                       <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                     </Pressable>
@@ -3050,6 +3115,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       style={[styles.guardSecondaryBtn, styles.guardProfilePrimarySave, emergencyContactSaving && styles.buttonDisabled]}
                       onPress={handleSaveEmergencyContact}
                       disabled={emergencyContactSaving}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save emergency contact"
+                      accessibilityState={{ disabled: emergencyContactSaving, busy: emergencyContactSaving }}
                     >
                       <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>
                         {emergencyContactSaving ? 'Saving…' : 'Save'}
@@ -3062,6 +3130,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }, emergencyContactSaving && styles.buttonDisabled]}
                       onPress={handleRemoveEmergencyContact}
                       disabled={emergencyContactSaving}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove emergency contact"
                     >
                       <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove emergency contact</Text>
                     </Pressable>
@@ -3076,11 +3146,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   <View style={styles.guardProfileSection}>
                     <Text style={styles.guardSectionLabel}>Relationship</Text>
                     <Text style={styles.profileFieldValue}>
-                      {emergencyContact.relationship === 'SPOUSE_PARTNER'
-                        ? 'Spouse / Partner'
-                        : emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
+                      {emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
                         ? emergencyContact.customRelationship
-                        : emergencyContact.relationship.charAt(0) + emergencyContact.relationship.slice(1).toLowerCase()}
+                        : profileEnumLabel(RELATIONSHIP_LABELS, emergencyContact.relationship)}
                     </Text>
                   </View>
                   <View style={styles.guardProfileSection}>
@@ -3097,6 +3165,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
                     onPress={openEmergencyContactEditor}
                     disabled={emergencyContactSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit emergency contact"
                   >
                     <Text style={styles.guardSecondaryBtnText}>Edit</Text>
                   </Pressable>
@@ -3108,6 +3178,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
                     onPress={openEmergencyContactEditor}
                     disabled={emergencyContactSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add emergency contact"
                   >
                     <Text style={styles.guardSecondaryBtnText}>Add emergency contact</Text>
                   </Pressable>
@@ -3115,9 +3187,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               )}
 
               {!editingEmergencyContact ? (
-                <Text style={styles.profileFieldHint}>
-                  Contact name and phone numbers are encrypted at rest and only accessible to you, authorised platform staff, and your employing security company.
-                </Text>
+                <Text style={styles.profileFieldHint} testID="guard-profile-privacy-emergency">{PRIVACY_COPY.emergencyContact.note}</Text>
               ) : null}
             </FeatureCard>
 
@@ -3138,17 +3208,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     <Text style={styles.profileFieldLabel}>Company</Text>
                     <Text style={styles.profileFieldValue}>{emp.companyName}</Text>
                     <Text style={styles.profileFieldLabel}>Role</Text>
-                    <Text style={styles.profileFieldValue}>
-                      {emp.jobRole === 'OTHER' && emp.customRole
-                        ? emp.customRole
-                        : emp.jobRole.replace(/_/g, ' ')}
-                    </Text>
+                    <Text style={styles.profileFieldValue}>{jobRoleLabel(emp.jobRole, emp.customRole)}</Text>
                     <Text style={styles.profileFieldLabel}>Engagement</Text>
-                    <Text style={styles.profileFieldValue}>{emp.engagementType.replace(/_/g, ' ')}</Text>
+                    <Text style={styles.profileFieldValue}>{profileEnumLabel(ENGAGEMENT_TYPE_LABELS, emp.engagementType)}</Text>
                     <Text style={styles.profileFieldLabel}>Working arrangement</Text>
-                    <Text style={styles.profileFieldValue}>{emp.workingArrangement.replace(/_/g, ' ')}</Text>
+                    <Text style={styles.profileFieldValue}>{profileEnumLabel(WORKING_ARRANGEMENT_LABELS, emp.workingArrangement)}</Text>
                     <Text style={styles.profileFieldLabel}>Pay basis</Text>
-                    <Text style={styles.profileFieldValue}>{emp.payBasis}</Text>
+                    <Text style={styles.profileFieldValue}>{profileEnumLabel(PAY_BASIS_LABELS, emp.payBasis)}</Text>
                     <Text style={styles.profileFieldLabel}>Start date</Text>
                     <Text style={styles.profileFieldValue}>{emp.startDate}</Text>
                     {emp.endDate ? (
@@ -3184,7 +3250,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 <View>
                   <Text style={styles.helperText}>No bank details on file.</Text>
                   {!editingBankDetails ? (
-                    <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={() => setEditingBankDetails(true)}>
+                    <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={() => setEditingBankDetails(true)} accessibilityRole="button" accessibilityLabel="Add bank details">
                       <Text style={styles.guardSecondaryBtnText}>Add bank details</Text>
                     </Pressable>
                   ) : (
@@ -3197,6 +3263,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         placeholder="e.g. John A Smith"
                         autoCapitalize="words"
                         maxLength={100}
+                        accessibilityLabel="Account holder name"
                       />
                       <Text style={styles.profileFieldLabel}>Sort code</Text>
                       <TextInput
@@ -3206,6 +3273,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         placeholder="e.g. 12-34-56"
                         keyboardType="numeric"
                         maxLength={8}
+                        accessibilityLabel="Sort code"
                       />
                       <Text style={styles.profileFieldLabel}>Account number</Text>
                       <TextInput
@@ -3215,6 +3283,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         placeholder="e.g. 12345678"
                         keyboardType="numeric"
                         maxLength={8}
+                        accessibilityLabel="Account number"
                       />
                       {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
                       <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
@@ -3222,6 +3291,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
                           onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
                           disabled={bankSaving}
+                          accessibilityRole="button"
+                          accessibilityLabel="Cancel editing bank details"
                         >
                           <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                         </Pressable>
@@ -3229,6 +3300,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
                           onPress={handleSaveBankDetails}
                           disabled={bankSaving}
+                          accessibilityRole="button"
+                          accessibilityLabel="Save bank details"
+                          accessibilityState={{ disabled: bankSaving, busy: bankSaving }}
                         >
                           <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
                         </Pressable>
@@ -3247,7 +3321,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                       <Text style={styles.profileFieldLabel}>Account number</Text>
                       <Text style={styles.profileFieldValue}>{bankReveal.accountNumber ?? '—'}</Text>
                       <Text style={[styles.helperText, { marginTop: 4 }]}>Hiding in {bankRevealCountdown}s</Text>
-                      <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={clearBankReveal}>
+                      <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={clearBankReveal} accessibilityRole="button" accessibilityLabel="Hide bank details now">
                         <Text style={styles.guardSecondaryBtnText}>Hide now</Text>
                       </Pressable>
                     </View>
@@ -3269,14 +3343,17 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           style={[styles.guardSecondaryBtn, bankRevealing && styles.buttonDisabled]}
                           onPress={handleRevealBankDetails}
                           disabled={bankRevealing}
+                          accessibilityRole="button"
+                          accessibilityLabel="Show bank details"
+                          accessibilityState={{ disabled: bankRevealing, busy: bankRevealing }}
                         >
                           <Text style={styles.guardSecondaryBtnText}>{bankRevealing ? 'Loading…' : 'Show details'}</Text>
                         </Pressable>
                       ) : null}
-                      <Pressable style={styles.guardSecondaryBtn} onPress={() => { setEditingBankDetails(true); clearBankReveal(); }}>
+                      <Pressable style={styles.guardSecondaryBtn} onPress={() => { setEditingBankDetails(true); clearBankReveal(); }} accessibilityRole="button" accessibilityLabel="Update bank details">
                         <Text style={styles.guardSecondaryBtnText}>Update</Text>
                       </Pressable>
-                      <Pressable style={[styles.guardSecondaryBtn, { borderColor: colors.danger }]} onPress={handleDeleteBankDetails}>
+                      <Pressable style={[styles.guardSecondaryBtn, { borderColor: colors.danger }]} onPress={handleDeleteBankDetails} accessibilityRole="button" accessibilityLabel="Remove bank details">
                         <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove</Text>
                       </Pressable>
                     </View>
@@ -3287,6 +3364,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         style={[styles.input, styles.guardProfileInput]}
                         value={bankHolderInput}
                         onChangeText={setBankHolderInput}
+                        accessibilityLabel="New account holder name (leave blank to keep the current one)"
                         placeholder="Leave blank to keep existing"
                         autoCapitalize="words"
                         maxLength={100}
@@ -3296,6 +3374,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         style={[styles.input, styles.guardProfileInput]}
                         value={bankSortInput}
                         onChangeText={setBankSortInput}
+                        accessibilityLabel="New sort code (leave blank to keep the current one)"
                         placeholder="Leave blank to keep existing"
                         keyboardType="numeric"
                         maxLength={8}
@@ -3305,6 +3384,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                         style={[styles.input, styles.guardProfileInput]}
                         value={bankAccountInput}
                         onChangeText={setBankAccountInput}
+                        accessibilityLabel="New account number (leave blank to keep the current one)"
                         placeholder="Leave blank to keep existing"
                         keyboardType="numeric"
                         maxLength={8}
@@ -3315,6 +3395,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
                           onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
                           disabled={bankSaving}
+                          accessibilityRole="button"
+                          accessibilityLabel="Cancel editing bank details"
                         >
                           <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                         </Pressable>
@@ -3322,6 +3404,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                           style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
                           onPress={handleSaveBankDetails}
                           disabled={bankSaving}
+                          accessibilityRole="button"
+                          accessibilityLabel="Save bank details"
+                          accessibilityState={{ disabled: bankSaving, busy: bankSaving }}
                         >
                           <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
                         </Pressable>
@@ -3330,9 +3415,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   )}
                 </View>
               )}
-              <Text style={styles.profileFieldHint}>
-                Bank details are encrypted at rest. Only you can view the full details. Employers see sort code and account number only — never your account holder name.
-              </Text>
+              <Text style={styles.profileFieldHint} testID="guard-profile-privacy-bank">{PRIVACY_COPY.bankDetails.note}</Text>
             </FeatureCard>
 
             {/* P1G-B — Payroll / Payment Administration (read-only) */}
@@ -3354,7 +3437,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                     <Text style={styles.profileFieldLabel}>Pay frequency</Text>
                     <Text style={styles.profileFieldValue}>{formatPayFrequencyLabel(rec.payFrequency)}</Text>
                     <Text style={styles.profileFieldLabel}>Payment status</Text>
-                    <Text style={styles.profileFieldValue}>{rec.payrollStatus.replace(/_/g, ' ')}</Text>
+                    <Text style={styles.profileFieldValue}>{profileEnumLabel(PAYROLL_STATUS_LABELS, rec.payrollStatus)}</Text>
                     {rec.payrollStartDate ? (
                       <>
                         <Text style={styles.profileFieldLabel}>Arrangement start</Text>

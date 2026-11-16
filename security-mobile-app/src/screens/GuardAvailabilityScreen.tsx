@@ -62,7 +62,7 @@ export function GuardAvailabilityScreen() {
   </View>;
 }
 
-function Field({label,...props}:{label:string;[key:string]:any}){return <View style={styles.field}><Text style={styles.label}>{label}</Text><TextInput {...props} placeholderTextColor={colors.fieldPlaceholder} style={styles.input}/></View>}
+function Field({label,...props}:{label:string;[key:string]:any}){return <View style={styles.field}><Text style={styles.label}>{label}</Text><TextInput accessibilityLabel={label} {...props} placeholderTextColor={colors.fieldPlaceholder} style={styles.input}/></View>}
 function PrimaryButton({label,onPress}:{label:string;onPress:()=>void}){return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({pressed}:any)=>[styles.primary,pressed&&styles.pressed]}><Text style={styles.primaryText}>{label}</Text></Pressable>}
 function SecondaryButton({label,onPress,disabled=false}:{label:string;onPress:()=>void;disabled?:boolean}){return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled}} disabled={disabled} onPress={onPress} style={({pressed}:any)=>[styles.secondary,disabled&&styles.disabled,pressed&&!disabled&&styles.pressed]}><Text style={styles.secondaryText}>{label}</Text></Pressable>}
 function Status({value}:{value:string}){const positive=value.toLowerCase().includes('available')&&!value.toLowerCase().includes('unavailable')||value.toLowerCase().includes('approved');return <View style={[styles.status,positive?styles.statusGood:styles.statusNeutral]}><Text style={[styles.statusText,positive?styles.statusGoodText:styles.statusNeutralText]}>{value.replace(/_/g,' ')}</Text></View>}

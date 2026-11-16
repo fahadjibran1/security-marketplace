@@ -6,6 +6,7 @@ import { FeatureCard } from '../FeatureCard';
 import { StatusBadge } from '../StatusBadge';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { getGuardVettingLabel, getGuardWorkEligibilityLabel } from '../../navigation/guard-lifecycle';
+import { COMPLIANCE_COPY, complianceChecksDisplayLabel } from './profile/profileCopy';
 
 function formatDate(value?: string | null) {
   if (!value) return 'Not provided';
@@ -40,7 +41,8 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
     return matching.some((item) => item.verified) ? 'Verified' : 'Provided — awaiting verification';
   };
 
-  const vetting = getGuardVettingLabel(summary);
+  // The company compliance file, not S4 screening: shown as "Compliance checks" so it cannot read as screening.
+  const complianceChecks = complianceChecksDisplayLabel(getGuardVettingLabel(summary));
   const eligibility = getGuardWorkEligibilityLabel(summary);
   const eligibilityTone = heroTone(eligibility);
 
@@ -52,12 +54,13 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
         <Text style={styles.readinessLabel}>CURRENT STATUS</Text>
         <Text style={[styles.readinessValue, { color: eligibilityTone.text }]}>{eligibility}</Text>
         <Text style={styles.readinessHint}>{summary?.blockingReasons?.length ? `${summary.blockingReasons.length} item${summary.blockingReasons.length === 1 ? '' : 's'} need attention or review.` : 'No compliance blocker is currently shown.'}</Text>
+        <Text style={styles.readinessHint}>{COMPLIANCE_COPY.deploymentNote}</Text>
       </View>
 
       <View style={styles.grid}>
         <Summary label="Account access" value="Active" />
         <Summary label="Work eligibility" value={eligibility} />
-        <Summary label="Vetting" value={vetting} />
+        <Summary label={COMPLIANCE_COPY.checksLabel} value={complianceChecks} />
         <Summary label="SIA licence" value={guard?.siaLicenseNumber || guard?.siaLicenceNumber || 'Not provided'} detail={`Expiry: ${formatDate(guard?.siaExpiryDate)}`} />
         <Summary label="SIA evidence" value={documentState('sia_licence')} />
         <Summary label="Right-to-work evidence" value={documentState('right_to_work')} detail={guard?.rightToWorkStatus ? `Status: ${guard.rightToWorkStatus}` : undefined} />

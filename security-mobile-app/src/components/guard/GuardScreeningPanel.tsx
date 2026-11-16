@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import { SCREENING_COPY } from "./profile/profileCopy";
 import {
   acceptMyScreeningConsent,
   addMyScreeningAddress,
@@ -150,9 +151,9 @@ export function GuardScreeningPanel({
   return (
     <View
       style={s.card}
-      accessibilityLabel="Your vetting and screening summary"
+      accessibilityLabel={SCREENING_COPY.summaryAccessibilityLabel}
     >
-      <Text style={s.eyebrow}>YOUR VETTING & SCREENING</Text>
+      <Text style={s.eyebrow}>{SCREENING_COPY.eyebrow}</Text>
       <View style={s.summaryRow}>
         <View>
           <Text style={s.label}>Screening status</Text>
@@ -168,10 +169,8 @@ export function GuardScreeningPanel({
           ]}
         />
       </View>
-      <Text style={s.note}>
-        Complete your screening to become eligible for operational security
-        work.
-      </Text>
+      <Text style={s.note}>{SCREENING_COPY.optionalStatement}</Text>
+      <Text style={s.note}>{SCREENING_COPY.separateFromCompanyChecks}</Text>
       <View style={s.checkGrid}>
         {checks.map(([label, done]) => (
           <Text key={label} style={done ? s.done : s.pending}>
@@ -180,17 +179,10 @@ export function GuardScreeningPanel({
         ))}
       </View>
       <View style={s.accessBox}>
-        <Text style={s.accessGood}>Marketplace access: Available</Text>
-        <Text style={data?.status === "VETTED" ? s.accessGood : s.accessWarn}>
-          Work eligibility:{" "}
-          {data?.status === "VETTED"
-            ? "Screening complete — compliance checks still apply"
-            : "Not yet eligible"}
-        </Text>
+        <Text style={s.accessGood}>{SCREENING_COPY.marketplaceAccess}</Text>
+        <Text style={s.meta}>{SCREENING_COPY.deploymentLine}</Text>
       </View>
-      <Text style={s.note}>
-        You can browse and apply for jobs while completing your screening.
-      </Text>
+      <Text style={s.note}>{SCREENING_COPY.benefit}</Text>
       <Pressable
         accessibilityRole="button"
         style={s.button}
@@ -427,13 +419,9 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
           <Text style={s.back}>‹ Back to Profile</Text>
         </Pressable>
         <View style={s.hero}>
-          <Text style={s.eyebrow}>GUARD SCREENING</Text>
-          <Text style={s.heroTitle}>Complete screening at your own pace</Text>
-          <Text style={s.note}>
-            Your account is active. You can browse and apply for jobs now.
-            Operational hiring and assignment require completed screening and
-            compliance checks.
-          </Text>
+          <Text style={s.eyebrow}>{SCREENING_COPY.eyebrow}</Text>
+          <Text style={s.heroTitle}>{SCREENING_COPY.journeyStartTitle}</Text>
+          <Text style={s.note}>{SCREENING_COPY.journeyStartBody}</Text>
           <Action
             disabled={busy}
             label={busy ? "Starting…" : "Start screening"}
@@ -450,7 +438,7 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
         <Text style={s.back}>‹ Back to Profile</Text>
       </Pressable>
       <View style={s.hero}>
-        <Text style={s.eyebrow}>GUARD SCREENING</Text>
+        <Text style={s.eyebrow}>{SCREENING_COPY.eyebrow}</Text>
         <View style={s.summaryRow}>
           <View style={s.flex}>
             <Text style={s.heroTitle}>{STATUS[data.status]}</Text>
@@ -464,12 +452,9 @@ export function GuardScreeningJourney({ onBack, scrollViewRef }: { onBack: () =>
         <View style={s.track}>
           <View style={[s.trackFill, { width: `${data.progress}%` }]} />
         </View>
-        <Text style={s.accessGood}>Marketplace access: Available</Text>
-        <Text style={data.status === "VETTED" ? s.accessGood : s.accessWarn}>
-          Work eligibility:{" "}
-          {data.status === "VETTED"
-            ? "Screening complete — operational compliance still applies"
-            : "Not yet eligible"}
+        <Text style={s.accessGood}>{SCREENING_COPY.marketplaceAccess}</Text>
+        <Text style={data.status === "VETTED" ? s.accessGood : s.meta}>
+          {data.status === "VETTED" ? SCREENING_COPY.vettedLine : SCREENING_COPY.deploymentLine}
         </Text>
         {data.status === "VETTED" ? (
           <View style={s.vettedMeta}>

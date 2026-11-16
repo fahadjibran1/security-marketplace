@@ -142,6 +142,7 @@ export function AccountSettingsPanel({ email, onDeleted }: AccountSettingsPanelP
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            accessibilityLabel="Password"
             autoCapitalize="none"
             autoComplete="current-password"
             textContentType="password"
