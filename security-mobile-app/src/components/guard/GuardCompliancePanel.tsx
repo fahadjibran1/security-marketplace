@@ -20,16 +20,28 @@ function heroTone(value: string) {
   return { bg: colors.pendingSurface, text: colors.pending };
 }
 
-export function GuardCompliancePanel({ onManageCompliance }: { onManageCompliance?: () => void }) {
+// Phase 2E: `onSummary` hands the compliance status this panel has just read to the Profile overview's in-memory cache,
+// so Back to the overview shows the same SIA reading without reading it again.
+export function GuardCompliancePanel({ onManageCompliance, onSummary }: { onManageCompliance?: () => void; onSummary?: (summary: GuardComplianceSummary) => void }) {
   const [guard, setGuard] = React.useState<GuardProfile | null>(null);
   const [summary, setSummary] = React.useState<GuardComplianceSummary | null>(null);
   const [documents, setDocuments] = React.useState<GuardDocument[]>([]);
   const [error, setError] = React.useState('');
 
+  // Read fresh each time the section opens (the authoritative SIA and compliance view). `live` drops a response that
+  // arrives after the Guard has left the section (Phase 2E stale-response guard).
   React.useEffect(() => {
+    let live = true;
     Promise.all([getMyGuard(), getMyGuardComplianceStatus(), listMyGuardDocuments()])
-      .then(([nextGuard, nextSummary, nextDocuments]) => { setGuard(nextGuard); setSummary(nextSummary); setDocuments(nextDocuments); })
-      .catch((loadError) => setError(formatApiErrorMessage(loadError, 'Unable to load your work-readiness status.')));
+      .then(([nextGuard, nextSummary, nextDocuments]) => {
+        if (!live) return;
+        setGuard(nextGuard); setSummary(nextSummary); setDocuments(nextDocuments);
+        if (nextSummary) onSummary?.(nextSummary);
+      })
+      .catch((loadError) => { if (live) setError(formatApiErrorMessage(loadError, 'Unable to load your work-readiness status.')); });
+    return () => { live = false; };
+    // Read once per opening; onSummary is a stable dashboard callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const documentState = (type: string) => {

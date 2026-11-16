@@ -228,9 +228,13 @@ test('dashboard has handleUpdateDrivingField for field-level updates', () => {
   assert.match(fn, /updateMyDrivingTransport/);
 });
 
-test('loadDriving is called inside loadData', () => {
-  const loadDataFn = dashboard.split('async function loadData')[1].split('async function handleSaveProfile')[0];
-  assert.match(loadDataFn, /loadDriving/);
+test('loadDriving is read when a Profile view showing driving opens (Phase 2E), not inside loadData', () => {
+  // Profile Phase 2E: no longer read on every dashboard refresh — read when a Profile view that shows it opens.
+  const loadDataFn = dashboard.split('async function loadData')[1].split('async function loadShiftAmendments')[0];
+  assert.doesNotMatch(loadDataFn, /loadDriving\(/, 'not called by loadData');
+  assert.match(dashboard, /driving: loadDriving,/, 'reached through the Profile view reader');
+  const views = require('./load-ts.cjs').loadTs('src/components/guard/profile/profileData.ts').PROFILE_RECORDS_BY_VIEW;
+  for (const view of ["overview","availability"]) assert.ok(views[view].includes('driving'), view + ' reads driving');
 });
 
 test('cleanup useEffect also clears licenceRevealTimerRef', () => {

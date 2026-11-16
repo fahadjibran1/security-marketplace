@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { getMyGuardComplianceStatus, getMyScreening } from '../../../services/api';
 import type { GuardComplianceSummary, GuardScreening } from '../../../types/models';
 import { ProfileAvatar } from './ProfileAvatar';
+import { freshValue, type TimedValue } from './profileData';
 import { RequirementTag } from './ProfileTags';
 import type { ProfileLayout } from './profileLayout';
 import {
@@ -27,7 +28,9 @@ import { PROFILE_TONE_COLORS, profileTokens } from './profileTheme';
  * per-company requirement list, so any such figure would be invented.
  *
  * The compliance status and the screening status are the only data the dashboard does not already hold; they are
- * read here, with the same calls the Compliance and Screening panels make, each time the overview opens.
+ * read here, with the same calls the Compliance and Screening panels make. Profile Phase 2E: a read younger than the
+ * freshness window is reused from the dashboard's in-memory cache (so Back from a section sends nothing), and the
+ * overview reads again when it is older or when the dashboard asks (refreshKey).
  */
 export interface GuardProfileOverviewProps {
   source: ProfileOverviewSource;
@@ -35,27 +38,70 @@ export interface GuardProfileOverviewProps {
   onOpenSection: (section: ProfileSectionKey) => void;
   /** Shown when the Guard's own record could not load, so the overview offers the same recovery as before. */
   profileUnavailable?: { message: string; onRetry: () => void } | null;
+  /** Phase 2E: the dashboard's short-lived copy of the two backend summaries (held in memory only). */
+  cache?: ProfileOverviewCache;
+  /** Phase 2E: changing it re-checks freshness and reads whatever is stale (for example on return to the foreground). */
+  refreshKey?: number;
 }
 
-type ComplianceFacts = Pick<GuardComplianceSummary, 'assignable' | 'blockingReasons'> & { siaExpiryDate?: string | null; siaLicenceNumber?: string | null };
-type ScreeningFacts = Pick<GuardScreening, 'status' | 'progress'> | null;
+export interface ProfileOverviewCache {
+  compliance?: TimedValue<ComplianceFacts>;
+  screening?: TimedValue<ScreeningFacts>;
+}
 
-export function GuardProfileOverview({ source, layout, onOpenSection, profileUnavailable }: GuardProfileOverviewProps) {
-  const [compliance, setCompliance] = useState<Loadable<ComplianceFacts>>(loading());
-  const [screening, setScreening] = useState<Loadable<ScreeningFacts>>(loading());
+export type ComplianceFacts = Pick<GuardComplianceSummary, 'assignable' | 'blockingReasons'> & { siaExpiryDate?: string | null; siaLicenceNumber?: string | null };
+export type ScreeningFacts = Pick<GuardScreening, 'status' | 'progress'> | null;
+
+/** The facts the overview shows from a compliance summary, so the Compliance panel's read can refresh the same cache. */
+export function complianceFactsFrom(summary: GuardComplianceSummary | null | undefined): ComplianceFacts {
+  return { assignable: Boolean(summary?.assignable), blockingReasons: summary?.blockingReasons ?? [], siaExpiryDate: summary?.siaExpiryDate ?? null, siaLicenceNumber: summary?.siaLicenceNumber ?? null };
+}
+
+export function GuardProfileOverview({ source, layout, onOpenSection, profileUnavailable, cache, refreshKey = 0 }: GuardProfileOverviewProps) {
+  // A fresh cached read is shown at once (no loading flash on Back); otherwise the status loads as before.
+  const [compliance, setCompliance] = useState<Loadable<ComplianceFacts>>(() => {
+    const cached = freshValue(cache?.compliance, Date.now());
+    return cached ? ready(cached) : loading();
+  });
+  const [screening, setScreening] = useState<Loadable<ScreeningFacts>>(() => {
+    const cached = freshValue(cache?.screening, Date.now());
+    return cached !== undefined ? ready(cached) : loading();
+  });
 
   useEffect(() => {
+    // `live` drops a response that arrives after the overview closed or a newer read began (stale-response guard).
     let live = true;
-    getMyGuardComplianceStatus()
-      .then((summary) => live && setCompliance(ready({ assignable: Boolean(summary?.assignable), blockingReasons: summary?.blockingReasons ?? [], siaExpiryDate: summary?.siaExpiryDate ?? null, siaLicenceNumber: summary?.siaLicenceNumber ?? null })))
-      .catch(() => live && setCompliance(failed()));
-    getMyScreening()
-      .then((file) => live && setScreening(ready(file ? { status: file.status, progress: file.progress } : null)))
-      .catch(() => live && setScreening(failed()));
+    const now = Date.now();
+    const cachedCompliance = freshValue(cache?.compliance, now);
+    if (cachedCompliance) setCompliance(ready(cachedCompliance));
+    else {
+      getMyGuardComplianceStatus()
+        .then((summary) => {
+          if (!live) return;
+          const facts = complianceFactsFrom(summary);
+          if (cache) cache.compliance = { value: facts, at: Date.now() };
+          setCompliance(ready(facts));
+        })
+        .catch(() => live && setCompliance(failed()));
+    }
+    const cachedScreening = freshValue(cache?.screening, now);
+    if (cachedScreening !== undefined) setScreening(ready(cachedScreening));
+    else {
+      getMyScreening()
+        .then((file) => {
+          if (!live) return;
+          const facts: ScreeningFacts = file ? { status: file.status, progress: file.progress } : null;
+          if (cache) cache.screening = { value: facts, at: Date.now() };
+          setScreening(ready(facts));
+        })
+        .catch(() => live && setScreening(failed()));
+    }
     return () => {
       live = false;
     };
-  }, []);
+    // The cache object is the dashboard's ref and never changes identity; refreshKey is the only trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   const overview = buildProfileOverview({ ...source, compliance, screening, today: localToday() });
   const { header, attention, sections } = overview;

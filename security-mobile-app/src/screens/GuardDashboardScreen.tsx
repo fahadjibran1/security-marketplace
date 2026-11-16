@@ -148,7 +148,9 @@ import {
 import { PRIVACY_COPY } from '../components/guard/profile/profileCopy';
 import { GuardComplianceUpdateRoute } from '../components/guard/profile/GuardComplianceUpdateRoute';
 import { GuardPrivacySummary } from '../components/guard/profile/GuardPrivacySummary';
-import { GuardProfileOverview } from '../components/guard/profile/GuardProfileOverview';
+import { GuardProfileOverview, complianceFactsFrom, type ProfileOverviewCache } from '../components/guard/profile/GuardProfileOverview';
+import { createProfileReadTracker, recordsToRead, type ProfileReadTracker, type ProfileRecord, type ProfileView } from '../components/guard/profile/profileData';
+import type { GuardComplianceSummary } from '../types/models';
 import { GuardProfileSection } from '../components/guard/profile/GuardProfileSection';
 import { ProfileCard, ProfileField, ProfileFieldGroup, profileDate } from '../components/guard/profile/ProfileCard';
 import { UNSAVED_EDIT_COPY, hasUnsavedSensitiveEdit } from '../components/guard/profile/profileUnsaved';
@@ -583,27 +585,44 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   const [profileSection, setProfileSection] = useState<ProfileSectionKey | null>(null);
   // The section the screening journey was opened from, so its Back returns there.
   const screeningReturnSectionRef = useRef<ProfileSectionKey>('screening');
+  // Profile Phase 2E: when each Profile record was last read and which read is the latest (no data is held there).
+  const profileReadsRef = useRef<ProfileReadTracker | null>(null);
+  if (!profileReadsRef.current) profileReadsRef.current = createProfileReadTracker();
+  const profileReads = profileReadsRef.current;
+  useEffect(() => {
+    profileReads.setActive(true);
+    return () => profileReads.setActive(false);
+  }, [profileReads]);
+  // The Profile view on screen (null when another tab is), read by handlers registered once (AppState, loadData).
+  const profileViewRef = useRef<ProfileView | null>(null);
+  const readProfileViewRef = useRef<(view: ProfileView) => void>(() => undefined);
+  // The overview's in-memory copy of the compliance and screening summaries (never persisted; no sensitive values).
+  const overviewCacheRef = useRef<ProfileOverviewCache>({});
+  const [overviewRefreshKey, setOverviewRefreshKey] = useState(0);
   const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
   const [myCompaniesLoading, setMyCompaniesLoading] = useState(false);
   // Whether the list has ever loaded, so the Profile overview never reads "no companies" before it knows.
   const [myCompaniesStatus, setMyCompaniesStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
+  // Always reads (the section's Refresh, and after join or decline). Phase 2E: no longer read at start-up — the Profile
+  // overview and the Companies section read it when they open, at most once per freshness window — and a response
+  // that a newer read has overtaken is dropped.
   const refreshMyCompanies = useCallback(async () => {
+    const ticket = profileReads.begin('companies');
     setMyCompaniesLoading(true);
     try {
-      setMyCompanies(await listMyCompanies());
-      setMyCompaniesStatus('ready');
+      const rows = await listMyCompanies();
+      if (profileReads.accept(ticket, Date.now())) {
+        setMyCompanies(rows);
+        setMyCompaniesStatus('ready');
+      }
     } catch {
       /* the list keeps its previous contents; join/decline report their own outcome */
-      setMyCompaniesStatus((status) => (status === 'ready' ? status : 'error'));
+      if (profileReads.isCurrent(ticket)) setMyCompaniesStatus((status) => (status === 'ready' ? status : 'error'));
     } finally {
-      setMyCompaniesLoading(false);
+      if (profileReads.finish(ticket)) setMyCompaniesLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void refreshMyCompanies();
-  }, [refreshMyCompanies]);
+  }, [profileReads]);
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
   const [liveNow, setLiveNow] = useState<number>(Date.now());
   const [fullName, setFullName] = useState('');
@@ -785,7 +804,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
   // P1A — Tax Identifiers
   const [identity, setIdentity] = useState<GuardPersonnelIdentity | null>(null);
-  const [identityLoading, setIdentityLoading] = useState(false);
+  const [identityLoading, setIdentityLoading] = useState(true);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [editingNino, setEditingNino] = useState(false);
   const [editingUtr, setEditingUtr] = useState(false);
@@ -802,7 +821,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
   // P1D — Driving & Transport
   const [driving, setDriving] = useState<GuardDrivingTransport | null>(null);
-  const [drivingLoading, setDrivingLoading] = useState(false);
+  const [drivingLoading, setDrivingLoading] = useState(true);
   const [drivingError, setDrivingError] = useState<string | null>(null);
   const [editingLicenceNumber, setEditingLicenceNumber] = useState(false);
   const [licenceNumberInput, setLicenceNumberInput] = useState('');
@@ -815,7 +834,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
   // P1E — Emergency Contact
   const [emergencyContact, setEmergencyContact] = useState<GuardEmergencyContact | null>(null);
-  const [emergencyContactLoading, setEmergencyContactLoading] = useState(false);
+  const [emergencyContactLoading, setEmergencyContactLoading] = useState(true);
   const [emergencyContactError, setEmergencyContactError] = useState<string | null>(null);
   const [emergencyContactSaving, setEmergencyContactSaving] = useState(false);
   const [editingEmergencyContact, setEditingEmergencyContact] = useState(false);
@@ -828,17 +847,17 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
   // P1F — Employment & Engagement Record
   const [employments, setEmployments] = useState<GuardEmploymentRecord[]>([]);
-  const [employmentsLoading, setEmploymentsLoading] = useState(false);
+  const [employmentsLoading, setEmploymentsLoading] = useState(true);
   const [employmentsError, setEmploymentsError] = useState<string | null>(null);
 
   // P1G-B — Payroll / Payment Administration (read-only for guard)
   const [payrollAdminRecords, setPayrollAdminRecords] = useState<GuardPayrollAdminSummary[]>([]);
-  const [payrollAdminLoading, setPayrollAdminLoading] = useState(false);
+  const [payrollAdminLoading, setPayrollAdminLoading] = useState(true);
   const [payrollAdminError, setPayrollAdminError] = useState<string | null>(null);
 
   // P1G-A — Bank Details
   const [bankDetails, setBankDetails] = useState<GuardBankDetailsSummary | null>(null);
-  const [bankLoading, setBankLoading] = useState(false);
+  const [bankLoading, setBankLoading] = useState(true);
   const [bankError, setBankError] = useState<string | null>(null);
   const [bankReveal, setBankReveal] = useState<GuardBankDetailsReveal | null>(null);
   const [bankRevealCountdown, setBankRevealCountdown] = useState(0);
@@ -884,17 +903,42 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     return !['BG', 'GB', 'NK', 'KN', 'TN', 'NT', 'ZZ'].includes(n.slice(0, 2));
   }
 
-  async function loadIdentity() {
-    try {
-      setIdentityLoading(true);
-      setIdentityError(null);
-      const data = await getMyPersonnelIdentity();
-      setIdentity(data);
-    } catch {
-      setIdentityError('Tax identifier details could not be loaded.');
-    } finally {
-      setIdentityLoading(false);
+  /**
+   * Profile Phase 2E: the one read path for the personnel records. Only the latest read applies, and not after a save
+   * has replaced the record or the screen has gone (stale-response guard). Only a first load shows "Loading..." (which
+   * replaces the card body); refreshing loaded data is silent, so an open editor and what is typed in it stay on screen.
+   * A failed refresh keeps the last good value; only a record that never loaded shows its error, and it is read again
+   * the next time its view opens. Reveals never pass through here.
+   */
+  async function readProfileRecord<T>(
+    record: ProfileRecord,
+    read: () => Promise<T>,
+    apply: (value: T) => void,
+    setBusy: (busy: boolean) => void,
+    setProblem: (message: string | null) => void,
+    problem: string,
+  ) {
+    const ticket = profileReads.begin(record);
+    const firstLoad = !profileReads.hasLoaded(record);
+    if (firstLoad) {
+      setBusy(true);
+      setProblem(null);
     }
+    try {
+      const value = await read();
+      if (profileReads.accept(ticket, Date.now())) {
+        apply(value);
+        setProblem(null);
+      }
+    } catch {
+      if (profileReads.isCurrent(ticket) && !profileReads.hasLoaded(record)) setProblem(problem);
+    } finally {
+      if (profileReads.finish(ticket)) setBusy(false);
+    }
+  }
+
+  async function loadIdentity() {
+    await readProfileRecord('identity', getMyPersonnelIdentity, setIdentity, setIdentityLoading, setIdentityError, 'Tax identifier details could not be loaded.');
   }
 
   function clearReveal() {
@@ -954,6 +998,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       setIdentitySaving(true);
       setNinoInputError('');
       const updated = await updateMyPersonnelIdentity({ ninoPlaintext: normalised });
+      profileReads.wrote('identity', Date.now());
       setIdentity(updated);
       setEditingNino(false);
       setNinoInput('');
@@ -974,6 +1019,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       setIdentitySaving(true);
       setUtrInputError('');
       const updated = await updateMyPersonnelIdentity({ utrPlaintext: normalised });
+      profileReads.wrote('identity', Date.now());
       setIdentity(updated);
       setEditingUtr(false);
       setUtrInput('');
@@ -987,16 +1033,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // P1D — Driving & Transport helpers
 
   async function loadDriving() {
-    try {
-      setDrivingLoading(true);
-      setDrivingError(null);
-      const data = await getMyDrivingTransport();
-      setDriving(data);
-    } catch {
-      setDrivingError('Driving details could not be loaded.');
-    } finally {
-      setDrivingLoading(false);
-    }
+    await readProfileRecord('driving', getMyDrivingTransport, setDriving, setDrivingLoading, setDrivingError, 'Driving details could not be loaded.');
   }
 
   function clearLicenceReveal() {
@@ -1051,6 +1088,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       setDrivingSaving(true);
       setLicenceNumberInputError('');
       const updated = await updateMyDrivingTransport({ licenceNumberPlaintext: normalised });
+      profileReads.wrote('driving', Date.now());
       setDriving(updated);
       setEditingLicenceNumber(false);
       setLicenceNumberInput('');
@@ -1065,6 +1103,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     try {
       setDrivingSaving(true);
       const updated = await updateMyDrivingTransport(payload);
+      profileReads.wrote('driving', Date.now());
       setDriving(updated);
     } catch (e) {
       pushFeedback('error', 'Update failed', formatApiErrorMessage(e, 'Could not save driving details.'));
@@ -1102,16 +1141,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // P1E — Emergency Contact helpers
 
   async function loadEmergencyContact() {
-    try {
-      setEmergencyContactLoading(true);
-      setEmergencyContactError(null);
-      const data = await getMyEmergencyContact();
-      setEmergencyContact(data);
-    } catch {
-      setEmergencyContactError('Emergency contact could not be loaded.');
-    } finally {
-      setEmergencyContactLoading(false);
-    }
+    await readProfileRecord('emergencyContact', getMyEmergencyContact, setEmergencyContact, setEmergencyContactLoading, setEmergencyContactError, 'Emergency contact could not be loaded.');
   }
 
   function openEmergencyContactEditor() {
@@ -1138,6 +1168,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
         primaryPhone: ecPrimaryPhoneInput.trim(),
         alternatePhone: ecAlternatePhoneInput.trim() || null,
       });
+      profileReads.wrote('emergencyContact', Date.now());
       setEmergencyContact(updated);
       setEditingEmergencyContact(false);
       pushFeedback('success', 'Saved', 'Emergency contact updated.');
@@ -1161,6 +1192,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             try {
               setEmergencyContactSaving(true);
               await removeMyEmergencyContact();
+              profileReads.wrote('emergencyContact', Date.now());
               setEmergencyContact(null);
               setEditingEmergencyContact(false);
               pushFeedback('success', 'Removed', 'Emergency contact removed.');
@@ -1178,31 +1210,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // P1F — Employment helpers
 
   async function loadEmployments() {
-    try {
-      setEmploymentsLoading(true);
-      setEmploymentsError(null);
-      const data = await getMyEmployments();
-      setEmployments(data);
-    } catch {
-      setEmploymentsError('Employment records could not be loaded.');
-    } finally {
-      setEmploymentsLoading(false);
-    }
+    await readProfileRecord('employments', getMyEmployments, setEmployments, setEmploymentsLoading, setEmploymentsError, 'Employment records could not be loaded.');
   }
 
   // P1G-B — Payroll / Payment Administration helpers
 
   async function loadPayrollAdmin() {
-    try {
-      setPayrollAdminLoading(true);
-      setPayrollAdminError(null);
-      const data = await getMyPayrollAdmin();
-      setPayrollAdminRecords(data);
-    } catch {
-      setPayrollAdminError('Pay administration details could not be loaded.');
-    } finally {
-      setPayrollAdminLoading(false);
-    }
+    await readProfileRecord('payroll', getMyPayrollAdmin, setPayrollAdminRecords, setPayrollAdminLoading, setPayrollAdminError, 'Pay administration details could not be loaded.');
   }
 
   function formatPayFrequencyLabel(freq: GuardPayrollAdminSummary['payFrequency']): string {
@@ -1212,17 +1226,35 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // P1G-A — Bank Details helpers
 
   async function loadBankDetails() {
-    try {
-      setBankLoading(true);
-      setBankError(null);
-      const data = await getMyBankDetails();
-      setBankDetails(data);
-    } catch {
-      setBankError('Bank details could not be loaded.');
-    } finally {
-      setBankLoading(false);
-    }
+    await readProfileRecord('bank', getMyBankDetails, setBankDetails, setBankLoading, setBankError, 'Bank details could not be loaded.');
   }
+
+  // Profile Phase 2E: each Profile view reads only the records it shows, and only those due a read (never read, or
+  // older than the freshness window, and not already being read).
+  const PROFILE_READERS: Record<ProfileRecord, () => Promise<void>> = {
+    identity: loadIdentity,
+    driving: loadDriving,
+    emergencyContact: loadEmergencyContact,
+    employments: loadEmployments,
+    payroll: loadPayrollAdmin,
+    bank: loadBankDetails,
+    companies: refreshMyCompanies,
+  };
+  function readProfileView(view: ProfileView) {
+    for (const record of recordsToRead(profileReads, view, Date.now())) void PROFILE_READERS[record]();
+  }
+  readProfileViewRef.current = readProfileView;
+  const profileView: ProfileView | null = activeTab === 'profile' ? (profileSection ?? 'overview') : null;
+  profileViewRef.current = profileView;
+  useEffect(() => {
+    if (profileView) readProfileView(profileView);
+    // Only opening a view triggers a read; the reader is recreated on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileView]);
+  // The Compliance section's fresh read also refreshes the overview's copy, so Back shows the same SIA reading.
+  const rememberComplianceSummary = useCallback((summary: GuardComplianceSummary) => {
+    overviewCacheRef.current.compliance = { value: complianceFactsFrom(summary), at: Date.now() };
+  }, []);
 
   function clearBankReveal() {
     if (bankRevealTimerRef.current) {
@@ -1317,6 +1349,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       setBankSaving(true);
       setBankInputError('');
       const updated = await upsertMyBankDetails(payload);
+      profileReads.wrote('bank', Date.now());
       setBankDetails(updated);
       setEditingBankDetails(false);
       setBankHolderInput('');
@@ -1379,6 +1412,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
           onPress: async () => {
             try {
               await deleteMyBankDetails();
+              profileReads.wrote('bank', Date.now());
               setBankDetails(null);
               clearBankReveal();
               pushFeedback('success', 'Bank details removed', 'Your bank details have been deleted.');
@@ -1418,13 +1452,14 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
         listMyDailyLogs(),
         listMyTimesheets(),
       ]);
-      // Load identity, driving, emergency contact, employments, bank details, and payroll admin separately — non-critical; failures must not block rendering.
-      loadIdentity();
-      loadDriving();
-      loadEmergencyContact();
-      loadEmployments();
-      loadBankDetails();
-      loadPayrollAdmin();
+      // Profile Phase 2E: the personnel records and the company list are no longer read on every dashboard refresh.
+      // When Profile is on screen, its view re-reads only what it shows and only what is older than the freshness
+      // window; the overview re-checks its compliance and screening summaries the same way.
+      const visibleProfileView = profileViewRef.current;
+      if (visibleProfileView) {
+        readProfileViewRef.current(visibleProfileView);
+        if (visibleProfileView === 'overview') setOverviewRefreshKey((key) => key + 1);
+      }
 
       const profileFields = guardProfileFieldsFrom(myGuard);
       setLoadedProfile(profileFields);
@@ -1736,14 +1771,20 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     return () => clearTimeout(t);
   }, [actionFeedback]);
 
-  // Refresh when app returns to foreground — respects 30s minimum interval to avoid storms
+  // Refresh when app returns to foreground — respects 30s minimum interval to avoid storms.
+  // Profile Phase 2E: leaving the app hides every revealed value (NINO, UTR, licence number and bank details), not only
+  // the bank details; their timers stop. What is typed in an open editor is kept.
   useEffect(() => {
     function handleAppStateChange(nextState: string) {
       if (nextState === 'background' || nextState === 'inactive') {
         clearBankReveal();
+        clearReveal();
+        clearLicenceReveal();
         return;
       }
       if (nextState === 'active') {
+        clearReveal();
+        clearLicenceReveal();
         clearBankReveal();
         if (Date.now() - lastLoadTimeRef.current > 30_000) {
           loadData();
@@ -2568,6 +2609,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 layout={profileLayoutRules}
                 onOpenSection={openProfileSection}
                 profileUnavailable={!loadedProfile && !loading ? { message: PROFILE_UNAVAILABLE_MESSAGE, onRetry: () => loadData() } : null}
+                cache={overviewCacheRef.current}
+                refreshKey={overviewRefreshKey}
               />
             ) : (
               <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)} compact={profileLayoutRules.compact}>
@@ -2870,7 +2913,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 ) : null}
                 {profileSection === 'compliance' ? (
                   <>
-                    <GuardCompliancePanel />
+                    <GuardCompliancePanel onSummary={rememberComplianceSummary} />
                     <GuardComplianceUpdateRoute onOpenScreening={() => openScreeningJourney('compliance')} />
                   </>
                 ) : null}

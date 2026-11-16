@@ -1981,6 +1981,313 @@ test('UX-T41-PROFILE-2D-DISCARD-PROMPT-ONLY-FOR-TYPED-VALUES-AND-NEVER-IN-FRONT-
   await run(() => renderer.unmount());
 });
 
+// ═══════════════════ Profile Phase 2E — lazy, fresh and stale-safe Profile data (fictional data only) ═══════════════════
+
+const PERSONNEL_READS = ['getMyPersonnelIdentity', 'getMyDrivingTransport', 'getMyEmergencyContact', 'getMyEmployments', 'getMyPayrollAdmin', 'getMyBankDetails'];
+/** Wraps an API override set so every call is counted by name. */
+function counted(api) {
+  const counts = {};
+  const impl = { ...api };
+  const out = {};
+  for (const [name, fn] of Object.entries(api)) {
+    out[name] = typeof fn === 'function' ? (...args) => { counts[name] = (counts[name] ?? 0) + 1; return impl[name](...args); } : fn;
+  }
+  // The app copies the API when it mounts, so later changes go through set(), which the counting wrapper reads.
+  return { api: out, counts, n: (name) => counts[name] ?? 0, set: (name, fn) => { impl[name] = fn; } };
+}
+/** A promise the test resolves or rejects itself, to hold a read in flight. */
+function deferred() {
+  let resolve; let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+/** Moves Date.now forward (the freshness window and the dashboard's 30 s foreground rule both read it). */
+function clock() {
+  const real = Date.now;
+  let skew = 0;
+  Date.now = () => real() + skew;
+  return { advance: (ms) => { skew += ms; }, restore: () => { Date.now = real; } };
+}
+/** Captures AppState listeners so a test can send the app to the background and back. */
+function appStateHarness() {
+  const listeners = [];
+  const original = FakeAppState.addEventListener;
+  FakeAppState.addEventListener = (_type, fn) => { listeners.push(fn); return { remove: () => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); } }; };
+  return { send: (state) => { FakeAppState.currentState = state; for (const fn of [...listeners]) fn(state); }, restore: () => { FakeAppState.addEventListener = original; } };
+}
+function personnelServer(patch = {}) {
+  const { api } = overviewServer({
+    getMyPersonnelIdentity: async () => ({ guardId: 107, ninoSet: true, ninoMasked: 'QQ •• •• •• C', utrSet: false, utrMasked: null }),
+    revealMyPersonnelField: async (field) => ({ field, revealedValue: 'QQ 12 34 56 C' }),
+    getMyDrivingTransport: async () => ({ guardId: 107, licenceStatus: 'FULL', licenceNumberSet: true, licenceNumberMasked: '••••••••••ABC', licenceCategories: null, licenceExpiryDate: null, willingToDriveToWork: true, ownsVehicle: false, hasVehicleAccess: null, primaryTravelMethod: 'CAR', maxTravelDistanceMiles: 20 }),
+    revealMyDrivingLicenceNumber: async () => ({ revealedValue: 'FICTI701010AB9CD' }),
+    getMyBankDetails: async () => ({ guardId: 107, bankSet: true, accountHolderNameMasked: 'D••• G••••', sortCodeMasked: '••-••-00', accountNumberMasked: '••••0000', updatedAt: '2030-01-01' }),
+    revealMyBankDetails: async () => ({ accountHolderName: 'Dana Fictional', sortCode: '00-00-00', accountNumber: '00000000' }),
+    getMyEmployments: async () => [{ companyGuardId: 1, companyId: 3, companyName: 'Fictional Guarding Ltd', guardId: 107, engagementType: 'EMPLOYEE', jobRole: 'SECURITY_OFFICER', customRole: null, workingArrangement: 'PART_TIME', startDate: '2030-01-01', endDate: null, payBasis: 'HOURLY', noticePeriodDays: 7, updatedAt: '2030-01-01' }],
+    getMyPayrollAdmin: async () => [],
+    getMyGuardComplianceStatus: async () => ({ guardId: 107, fullName: 'Dana Guard', siaLicenceNumber: 'SIA-FICTIONAL', assignable: true, blockingReasons: [], expiringReasons: [], missingDocuments: [], documents: [], complianceStatus: 'valid', siaExpiryDate: '2032-06-30' }),
+    listMyCompanies: async () => [{ companyId: 3, companyName: 'Fictional Guarding Ltd', relationshipType: 'EMPLOYEE', acceptedAt: '2030-01-01T09:00:00.000Z', since: '2030-01-01T09:00:00.000Z' }],
+    updateMyPersonnelIdentity: async () => { throw new Error('not expected'); },
+    ...patch,
+  });
+  return counted(api);
+}
+const tabNamed = (root, label) => pressables(root, (p) => p.accessibilityRole === 'tab' && p.accessibilityLabel === label)[0];
+const backToOverview = async (root, run) => run(() => byTestId(root, 'guard-profile-back')[0].props.onPress());
+const personnelTotals = (c) => Object.fromEntries(PERSONNEL_READS.map((name) => [name, c.n(name)]));
+
+test('UX-T42-PROFILE-2E-NO-PROFILE-READS-ON-HOME-EACH-VIEW-READS-ONLY-WHAT-IT-SHOWS-ONCE-PER-WINDOW', async () => {
+  const c = personnelServer();
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: c.api });
+  const root = renderer.root;
+  // Guard Home: no personnel record, no company list, no compliance or screening summary.
+  assert.deepEqual(personnelTotals(c), Object.fromEntries(PERSONNEL_READS.map((n) => [n, 0])), 'Home reads no Profile record');
+  assert.equal(c.n('listMyCompanies'), 0, 'nor the company list');
+  assert.equal(c.n('getMyGuardComplianceStatus') + c.n('getMyScreening'), 0, 'nor the overview summaries');
+  // The overview: the five records it summarises, the company list and its two summaries — once each; no payroll.
+  await openProfile(root, run, null);
+  assert.deepEqual(personnelTotals(c), { getMyPersonnelIdentity: 1, getMyDrivingTransport: 1, getMyEmergencyContact: 1, getMyEmployments: 1, getMyPayrollAdmin: 0, getMyBankDetails: 1 });
+  assert.deepEqual([c.n('listMyCompanies'), c.n('getMyGuardComplianceStatus'), c.n('getMyScreening')], [1, 1, 1]);
+  // Sections inside the window: only what the overview did not read (pay administration) is read.
+  await openSection(root, run, 'personal');
+  await backToOverview(root, run);
+  await openSection(root, run, 'availability');
+  await backToOverview(root, run);
+  await openSection(root, run, 'employmentPay');
+  await backToOverview(root, run);
+  await openSection(root, run, 'companies');
+  await backToOverview(root, run);
+  assert.deepEqual(personnelTotals(c), { getMyPersonnelIdentity: 1, getMyDrivingTransport: 1, getMyEmergencyContact: 1, getMyEmployments: 1, getMyPayrollAdmin: 1, getMyBankDetails: 1 }, 'no repeated record reads');
+  assert.equal(c.n('listMyCompanies'), 1, 'the company list once');
+  assert.deepEqual([c.n('getMyGuardComplianceStatus'), c.n('getMyScreening')], [1, 1], 'Back to the overview reuses its summaries');
+  // The compliance section still reads fresh on opening (the authoritative SIA view).
+  await openSection(root, run, 'compliance');
+  assert.equal(c.n('getMyGuardComplianceStatus'), 2, 'compliance is read when its section opens');
+  await backToOverview(root, run);
+  assert.equal(c.n('getMyGuardComplianceStatus'), 2, 'and Back shows that reading without another request');
+  // Leaving Profile and coming back inside the window reads nothing.
+  await run(() => tabNamed(root, 'Home').props.onPress());
+  await run(() => tabNamed(root, 'Profile').props.onPress());
+  assert.equal(Object.values(personnelTotals(c)).reduce((a, b) => a + b, 0), 6, 'still one read per record');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T43-PROFILE-2E-FRESHNESS-WINDOW-DASHBOARD-REFRESH-AND-RETURN-FROM-BACKGROUND', async () => {
+  const c = personnelServer();
+  const app = appStateHarness();
+  const time = clock();
+  try {
+    const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: c.api });
+    const root = renderer.root;
+    const homeReads = () => c.n('getMyGuard');
+    await openProfile(root, run, 'personal');
+    assert.equal(c.n('getMyEmergencyContact'), 1);
+    // Older than the window: opening a view reads its records again.
+    time.advance(61_000);
+    await backToOverview(root, run);
+    assert.deepEqual([c.n('getMyEmergencyContact'), c.n('getMyPersonnelIdentity'), c.n('getMyGuardComplianceStatus')], [2, 2, 2], 'the overview re-reads what is stale');
+    // A dashboard refresh while on Home (return from background after 30 s) reads Home data, not Profile records.
+    await run(() => tabNamed(root, 'Home').props.onPress());
+    const before = { ...personnelTotals(c) };
+    const guardReads = homeReads();
+    time.advance(61_000);
+    await run(() => { app.send('background'); app.send('active'); });
+    assert.ok(homeReads() > guardReads, 'the dashboard refreshed');
+    assert.deepEqual(personnelTotals(c), before, 'no Profile record was read for Home');
+    // The same refresh while a Profile section is on screen re-reads only that section's stale records.
+    await run(() => tabNamed(root, 'Profile').props.onPress());
+    await openSection(root, run, 'personal');
+    const ec = c.n('getMyEmergencyContact');
+    const others = c.n('getMyPersonnelIdentity') + c.n('getMyBankDetails') + c.n('getMyPayrollAdmin');
+    time.advance(61_000);
+    await run(() => { app.send('background'); app.send('active'); });
+    assert.equal(c.n('getMyEmergencyContact'), ec + 1, 'the visible section is revalidated');
+    assert.equal(c.n('getMyPersonnelIdentity') + c.n('getMyBankDetails') + c.n('getMyPayrollAdmin'), others, 'nothing it does not show');
+    await run(() => renderer.unmount());
+  } finally {
+    time.restore();
+    app.restore();
+  }
+});
+
+test('UX-T44-PROFILE-2E-STALE-RESPONSES-NEVER-OVERWRITE-NEWER-STATE-AND-RAPID-SWITCHING-READS-ONCE', async () => {
+  // Rapid switching: three views opened while the first reads are still in flight read each record once.
+  const slow = { identity: deferred(), bank: deferred() };
+  const c = personnelServer({ getMyPersonnelIdentity: () => slow.identity.promise, getMyBankDetails: () => slow.bank.promise });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: c.api });
+  const root = renderer.root;
+  await openProfile(root, run, null);
+  await openSection(root, run, 'employmentPay');
+  await backToOverview(root, run);
+  await openSection(root, run, 'employmentPay');
+  assert.deepEqual([c.n('getMyPersonnelIdentity'), c.n('getMyBankDetails')], [1, 1], 'a read in flight is not repeated');
+  assert.ok(texts(byTestId(root, 'guard-profile-card-tax')[0]).includes('Loading...'), 'not loaded yet: Loading..., never a misleading "not added"');
+  assert.equal(byLabel(root, 'Add National Insurance number').length, 0);
+  // The Guard saves a NINO while an older read of the record is still in flight; that old answer must not win.
+  await run(() => { slow.bank.resolve({ guardId: 107, bankSet: false }); });
+  await run(() => { slow.identity.resolve({ guardId: 107, ninoSet: false, ninoMasked: null, utrSet: false, utrMasked: null }); });
+  assert.equal(byLabel(root, 'Add National Insurance number').length, 1, 'first load applied');
+  const late = deferred();
+  c.set('getMyPersonnelIdentity', () => late.promise);
+  // Re-read after the window (opening the section again), then save before that read answers.
+  const time = clock();
+  try {
+    time.advance(61_000);
+    await backToOverview(root, run);
+    await openSection(root, run, 'employmentPay');
+    assert.equal(c.n('getMyPersonnelIdentity'), 2, 'a stale record is read again');
+    let saved = 0;
+    c.set('updateMyPersonnelIdentity', async ({ ninoPlaintext }) => { saved += 1; return { guardId: 107, ninoSet: Boolean(ninoPlaintext), ninoMasked: 'QQ •• •• •• C', utrSet: false, utrMasked: null }; });
+    await run(() => byLabel(root, 'Add National Insurance number')[0].props.onPress());
+    const input = () => root.findAll((n) => n.type === 'test-text-input' && n.props.accessibilityLabel === 'National Insurance number')[0];
+    await run(() => input().props.onChangeText('AB123456C'));
+    await run(() => byLabel(root, 'Save National Insurance number')[0].props.onPress());
+    assert.equal(saved, 1, 'saved');
+    assert.equal(byLabel(root, 'Edit National Insurance number').length, 1, 'the saved NINO is shown');
+    await run(() => { late.resolve({ guardId: 107, ninoSet: false, ninoMasked: null, utrSet: false, utrMasked: null }); });
+    assert.equal(byLabel(root, 'Edit National Insurance number').length, 1, 'the older read arriving afterwards is ignored');
+    assert.equal(byLabel(root, 'Add National Insurance number').length, 0);
+  } finally {
+    time.restore();
+  }
+  // A read that answers after the screen has gone changes nothing (and does not throw).
+  const gone = deferred();
+  c.set('getMyEmergencyContact', () => gone.promise);
+  await run(() => renderer.unmount());
+  await quiet(async () => { gone.resolve(null); await settle(); });
+});
+
+test('UX-T45-PROFILE-2E-OFFLINE-AND-ERRORS-KEEP-GOOD-DATA-AND-UNSAVED-INPUT-AND-RETRY-ON-NEXT-OPEN', async () => {
+  let bankFails = true;
+  let ecFails = false;
+  const c = personnelServer({
+    getMyBankDetails: async () => { if (bankFails) throw new Error('offline'); return { guardId: 107, bankSet: true, accountHolderNameMasked: 'D••• G••••', sortCodeMasked: '••-••-00', accountNumberMasked: '••••0000', updatedAt: '2030-01-01' }; },
+    getMyEmergencyContact: async () => { if (ecFails) throw new Error('offline'); return { guardId: 107, contactName: 'Fictional Contact', relationship: 'SPOUSE_PARTNER', customRelationship: null, primaryPhone: '07000 000009', alternatePhone: null, updatedAt: '2030-01-01' }; },
+  });
+  const app = appStateHarness();
+  const time = clock();
+  try {
+    const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: c.api });
+    const root = renderer.root;
+    // A first load that fails says so; the rest of the section still renders.
+    await openProfile(root, run, 'employmentPay');
+    assert.ok(texts(root).includes('Bank details could not be loaded.'), 'the error is shown');
+    assert.ok(byLabel(root, 'Edit National Insurance number').length === 1, 'other cards are unaffected');
+    // Opening it again retries (a failed read never counts as fresh), and the error clears.
+    bankFails = false;
+    await backToOverview(root, run);
+    await openSection(root, run, 'employmentPay');
+    assert.ok(!texts(root).includes('Bank details could not be loaded.'), 'retried and loaded');
+    assert.ok(byLabel(root, 'Show bank details').length === 1);
+    // Offline later: a failed refresh keeps the good data on screen, without an error.
+    bankFails = true;
+    time.advance(61_000);
+    await backToOverview(root, run);
+    await openSection(root, run, 'employmentPay');
+    assert.ok(byLabel(root, 'Show bank details').length === 1, 'the last good bank details stay');
+    assert.ok(!texts(root).includes('Bank details could not be loaded.'), 'no error over good data');
+    // Unsaved input survives a failed background refresh of the same record.
+    await backToOverview(root, run);
+    await openSection(root, run, 'personal');
+    await run(() => byLabel(root, 'Edit emergency contact')[0].props.onPress());
+    const nameInput = () => root.findAll((n) => n.type === 'test-text-input' && n.props.accessibilityLabel === 'Emergency contact name')[0];
+    await run(() => nameInput().props.onChangeText('Typed Fictional Name'));
+    ecFails = true;
+    time.advance(61_000);
+    await run(() => { app.send('background'); app.send('active'); });
+    assert.ok(c.n('getMyEmergencyContact') >= 2, 'the refresh was attempted');
+    assert.equal(nameInput()?.props.value, 'Typed Fictional Name', 'the editor and what was typed are kept');
+    assert.ok(!texts(root).includes('Emergency contact could not be loaded.'), 'no error replaces the editor');
+    await run(() => renderer.unmount());
+  } finally {
+    time.restore();
+    app.restore();
+  }
+});
+
+test('UX-T46-PROFILE-2E-REVEALED-VALUES-CLEARED-ON-BACKGROUND-NEVER-CACHED-REVEALS-UNCHANGED', async () => {
+  const reveals = [];
+  const c = personnelServer({
+    revealMyPersonnelField: async (field) => { reveals.push(field); return { field, revealedValue: 'QQ 12 34 56 C' }; },
+    revealMyDrivingLicenceNumber: async () => { reveals.push('licence'); return { revealedValue: 'FICTI701010AB9CD' }; },
+    revealMyBankDetails: async () => { reveals.push('bank'); return { accountHolderName: 'Dana Fictional', sortCode: '00-00-00', accountNumber: '00000000' }; },
+  });
+  const app = appStateHarness();
+  try {
+    const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: c.api });
+    const root = renderer.root;
+    // NINO: shown, then the app is backgrounded — hidden at once, and still hidden on return.
+    await openProfile(root, run, 'employmentPay');
+    await run(() => byLabel(root, 'Show National Insurance number')[0].props.onPress());
+    assert.ok(texts(root).includes('QQ 12 34 56 C'), 'revealed');
+    await run(() => app.send('background'));
+    assert.ok(!texts(root).includes('QQ 12 34 56 C'), 'hidden when backgrounded');
+    await run(() => app.send('active'));
+    assert.ok(!texts(root).includes('QQ 12 34 56 C'), 'still hidden on return');
+    // Bank details keep their confirmation, then clear the same way.
+    ALERTS.length = 0;
+    await run(() => byLabel(root, 'Show bank details')[0].props.onPress());
+    assert.equal(ALERTS.length, 1, 'the confirmation is unchanged');
+    const confirm = ALERTS[0][2].find((b) => b.style !== 'cancel');
+    await run(() => confirm.onPress());
+    assert.ok(texts(root).some((t) => t.includes('00000000')), 'revealed after confirming');
+    await run(() => app.send('inactive'));
+    assert.ok(!texts(root).some((t) => t.includes('00000000')), 'hidden when the app goes inactive');
+    // Driving licence (Availability & travel).
+    await backToOverview(root, run);
+    await openSection(root, run, 'availability');
+    await run(() => byLabel(root, 'Show driving licence number')[0].props.onPress());
+    assert.ok(texts(root).some((t) => t.includes('FICTI701010AB9CD')), 'licence revealed');
+    await run(() => app.send('background'));
+    assert.ok(!texts(root).some((t) => t.includes('FICTI701010AB9CD')), 'licence hidden when backgrounded');
+    // Each reveal is the single audited call it was; returning does not reveal again on its own.
+    await run(() => app.send('active'));
+    assert.deepEqual(reveals, ['nino', 'bank', 'licence'], 'one reveal call per press, none automatic');
+    // The read tracker and the overview cache hold no revealed (or masked) value at all.
+    const data = read('src/components/guard/profile/profileData.ts');
+    assert.ok(!/revealedValue|accountNumber|sortCode|ninoMasked|licenceNumber/.test(data), 'profileData.ts touches no record values');
+    await run(() => renderer.unmount());
+  } finally {
+    app.restore();
+  }
+});
+
+test('UX-T47-PROFILE-2E-SIA-AND-COMPANY-STATUS-STAY-CONSISTENT-ACROSS-OVERVIEW-AND-SECTIONS', async () => {
+  let expired = false;
+  let companies = [];
+  const c = personnelServer({
+    getMyGuardComplianceStatus: async () => ({ guardId: 107, fullName: 'Dana Guard', siaLicenceNumber: 'SIA-FICTIONAL', assignable: !expired, blockingReasons: expired ? ['SIA licence expired'] : [], expiringReasons: [], missingDocuments: [], documents: [], complianceStatus: expired ? 'blocked' : 'valid', siaExpiryDate: expired ? '2020-01-01' : '2032-06-30' }),
+    listMyCompanies: async () => companies,
+  });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: c.api });
+  const root = renderer.root;
+  const headerSia = () => root.findAll((n) => n.props?.testID === 'guard-profile-sia-status' && typeof n.props.accessibilityLabel === 'string')[0].props.accessibilityLabel;
+  const headerDeployment = () => root.findAll((n) => n.props?.testID === 'guard-profile-deployment-status' && typeof n.props.accessibilityLabel === 'string')[0].props.accessibilityLabel;
+  await openProfile(root, run, null);
+  assert.equal(headerSia(), 'SIA valid to 30/06/2032');
+  // The backend changes; the compliance section reads it fresh, and Back shows the same reading at once.
+  expired = true;
+  await openSection(root, run, 'compliance');
+  assert.ok(texts(byTestId(root, 'guard-compliance-sia')[0]).includes('Expired 01/01/2020'), 'the section shows the new status');
+  const reads = c.n('getMyGuardComplianceStatus');
+  await backToOverview(root, run);
+  assert.equal(headerSia(), 'SIA expired 01/01/2020', 'the overview agrees with the section');
+  assert.match(headerDeployment(), /Not eligible/, 'deployment comes from the backend assignable flag');
+  assert.equal(c.n('getMyGuardComplianceStatus'), reads, 'without another request');
+  // Companies: the overview and the section share one list; the section's Refresh always reads (invitations).
+  assert.equal(c.n('listMyCompanies'), 1);
+  companies = [{ companyId: 3, companyName: 'Fictional Guarding Ltd', relationshipType: 'EMPLOYEE', acceptedAt: '2030-01-01T09:00:00.000Z', since: '2030-01-01T09:00:00.000Z' }];
+  await openSection(root, run, 'companies');
+  assert.equal(c.n('listMyCompanies'), 1, 'fresh inside the window');
+  const refresh = root.findAll((n) => typeof n.props?.onRefresh === 'function')[0];
+  assert.ok(refresh, 'the companies panel has its refresh');
+  await run(() => refresh.props.onRefresh());
+  assert.equal(c.n('listMyCompanies'), 2, 'an explicit refresh always reads');
+  await backToOverview(root, run);
+  assert.ok(texts(root).some((t) => t.includes('Fictional Guarding Ltd')), 'the overview shows the refreshed list');
+  await run(() => renderer.unmount());
+});
+
 (async () => {
   for (const [name, fn] of pending) {
     await fn();

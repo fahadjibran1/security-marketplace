@@ -593,8 +593,15 @@ test('[STATIC ANALYSIS] guard dashboard has payrollAdminRecords state', () => {
   assert.match(guardDash, /payrollAdminRecords/);
 });
 
-test('[STATIC ANALYSIS] guard dashboard calls loadPayrollAdmin in loadData', () => {
-  assert.match(guardDash, /loadPayrollAdmin/);
+test('[STATIC ANALYSIS] guard dashboard reads pay administration when Employment & pay opens (Phase 2E), not in loadData', () => {
+  const dashboard = guardDash;
+  // Profile Phase 2E: no longer read on every dashboard refresh — read when a Profile view that shows it opens.
+  const loadDataFn = dashboard.split('async function loadData')[1].split('async function loadShiftAmendments')[0];
+  assert.doesNotMatch(loadDataFn, /loadPayrollAdmin\(/, 'not called by loadData');
+  assert.match(dashboard, /payroll: loadPayrollAdmin,/, 'reached through the Profile view reader');
+  const views = require('./load-ts.cjs').loadTs('src/components/guard/profile/profileData.ts').PROFILE_RECORDS_BY_VIEW;
+  for (const view of ["employmentPay"]) assert.ok(views[view].includes('payroll'), view + ' reads payroll');
+  assert.ok(!views.overview.includes('payroll'), 'the overview does not read pay administration');
 });
 
 // Profile Phase 2D: the shared Profile card, title in sentence case.

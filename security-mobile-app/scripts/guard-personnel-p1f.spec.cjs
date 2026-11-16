@@ -660,12 +660,13 @@ test('dashboard has loadEmployments function calling getMyEmployments', () => {
   assert.match(fn, /getMyEmployments/);
 });
 
-test('loadEmployments is called inside loadData', () => {
-  const loadDataFn = dashboard.slice(
-    dashboard.indexOf('async function loadData'),
-    dashboard.indexOf('async function loadData') + 1500,
-  );
-  assert.match(loadDataFn, /loadEmployments/);
+test('loadEmployments is read when a Profile view showing employment opens (Phase 2E), not inside loadData', () => {
+  // Profile Phase 2E: no longer read on every dashboard refresh — read when a Profile view that shows it opens.
+  const loadDataFn = dashboard.split('async function loadData')[1].split('async function loadShiftAmendments')[0];
+  assert.doesNotMatch(loadDataFn, /loadEmployments\(/, 'not called by loadData');
+  assert.match(dashboard, /employments: loadEmployments,/, 'reached through the Profile view reader');
+  const views = require('./load-ts.cjs').loadTs('src/components/guard/profile/profileData.ts').PROFILE_RECORDS_BY_VIEW;
+  for (const view of ["overview","employmentPay"]) assert.ok(views[view].includes('employments'), view + ' reads employments');
 });
 
 test('dashboard renders Employment ProfileCard', () => {

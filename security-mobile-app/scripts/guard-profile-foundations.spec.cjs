@@ -626,7 +626,7 @@ test('NAV-01 the Profile is an overview and seven sections inside the Profile ta
   assert.equal(where('testID="guard-profile-save"'), 'personal');
   assert.equal(where('title="Emergency contact"'), 'personal');
   assert.equal(where('<GuardCompaniesPanel'), 'companies');
-  assert.equal(where('<GuardCompliancePanel />'), 'compliance');
+  assert.equal(where('<GuardCompliancePanel onSummary={rememberComplianceSummary} />'), 'compliance');
   assert.equal(where('<GuardAvailabilityScreen />'), 'availability');
   assert.equal(where('title="Driving & transport"'), 'availability');
   assert.equal(where('title="Tax identifiers"'), 'employmentPay');
@@ -675,7 +675,7 @@ test('COMPLIANCE-01 SIA and right-to-work: the gap is real, and the only update 
   assert.match(panel, /\{onManageCompliance \? \(\s*<Pressable/, 'Manage compliance only when a caller supplies it');
   const { src, start, end } = profileRegion();
   const region = src.slice(start, end);
-  assert.ok(region.includes('<GuardCompliancePanel />'), 'SIA & compliance supplies no Manage compliance');
+  assert.ok(region.includes('<GuardCompliancePanel onSummary={rememberComplianceSummary} />') && !/<GuardCompliancePanel[^>]*onManageCompliance/.test(region), 'SIA & compliance supplies no Manage compliance');
   assert.ok(region.includes("<GuardComplianceUpdateRoute onOpenScreening={() => openScreeningJourney('compliance')} />"));
   assert.ok(!src.includes('onManageCompliance='), 'no screen routes compliance into screening silently');
   const c = copy.COMPLIANCE_COPY;
@@ -817,6 +817,84 @@ test('STYLE-01 every Profile section uses the flat Profile card, sentence case a
   const badge = read('src/components/StatusBadge.tsx');
   assert.match(badge, /casing = 'title'/);
   assert.match(badge, /textTransform: 'capitalize'/);
+});
+
+// Profile Phase 2E: the read tracker on its own (pure; no screen, no network).
+test('DATA-01 each Profile view reads only the records it shows, once per freshness window, never twice at once', () => {
+  const data = loadTs('src/components/guard/profile/profileData.ts');
+  const views = data.PROFILE_RECORDS_BY_VIEW;
+  assert.deepEqual([...views.overview].sort(), ['bank', 'companies', 'driving', 'emergencyContact', 'employments', 'identity']);
+  assert.deepEqual([...views.employmentPay].sort(), ['bank', 'employments', 'identity', 'payroll']);
+  assert.deepEqual([views.personal, views.availability, views.companies], [['emergencyContact'], ['driving'], ['companies']]);
+  for (const view of ['compliance', 'screening', 'privacyAccount']) assert.deepEqual(views[view], [], `${view} reads its own data`);
+  assert.equal(data.PROFILE_FRESH_MS, 60_000);
+  const t = data.createProfileReadTracker();
+  assert.deepEqual(data.recordsToRead(t, 'personal', 0), ['emergencyContact'], 'never read: due');
+  const first = t.begin('emergencyContact');
+  assert.deepEqual(data.recordsToRead(t, 'personal', 1), [], 'in flight: not read again');
+  assert.equal(t.hasLoaded('emergencyContact'), false);
+  assert.equal(t.accept(first, 10), true);
+  assert.equal(t.finish(first), true);
+  assert.equal(t.hasLoaded('emergencyContact'), true);
+  assert.deepEqual(data.recordsToRead(t, 'personal', 10 + 59_999), [], 'fresh inside the window');
+  assert.deepEqual(data.recordsToRead(t, 'personal', 10 + 60_000), ['emergencyContact'], 'due again after it');
+  // A failed read never counts as fresh: the next opening tries again.
+  const failed = t.begin('bank');
+  assert.equal(t.finish(failed), true);
+  assert.equal(t.hasLoaded('bank'), false);
+  assert.equal(t.shouldRead('bank', 0), true);
+});
+
+test('DATA-02 stale responses are dropped: an overtaken read, a read older than a save, a read after unmount', () => {
+  const data = loadTs('src/components/guard/profile/profileData.ts');
+  const t = data.createProfileReadTracker();
+  // Overtaken: only the latest read applies, and only the latest clears the loading indicator.
+  const older = t.begin('identity');
+  const newer = t.begin('identity');
+  assert.equal(t.accept(newer, 5), true);
+  assert.equal(t.finish(newer), true);
+  assert.equal(t.accept(older, 6), false, 'the older answer is dropped');
+  assert.equal(t.finish(older), false);
+  // A save replaces the record: a read begun before it is stale, and the saved value counts as just read.
+  const before = t.begin('bank');
+  t.wrote('bank', 100);
+  assert.equal(t.isCurrent(before), false);
+  assert.equal(t.accept(before, 101), false, 'a read older than the save never overwrites it');
+  assert.equal(t.finish(before), true, 'but its loading indicator is cleared');
+  assert.equal(t.shouldRead('bank', 100 + 59_000), false, 'the saved value is fresh');
+  // Unmounted: nothing applies and nothing new is due.
+  const late = t.begin('driving');
+  t.setActive(false);
+  assert.equal(t.accept(late, 1), false);
+  assert.equal(t.finish(late), false);
+  assert.equal(t.shouldRead('payroll', 0), false);
+  t.setActive(true);
+  assert.equal(t.shouldRead('payroll', 0), true, 'remounted (development double-mount) it works again');
+  // The overview cache: fresh values only, by time.
+  assert.equal(data.freshValue({ value: 'x', at: 0 }, 59_999), 'x');
+  assert.equal(data.freshValue({ value: 'x', at: 0 }, 60_000), undefined);
+  assert.equal(data.freshValue(undefined, 0), undefined);
+});
+
+test('DATA-03 the dashboard no longer reads Profile records on refresh, clears every reveal on background and guards saves', () => {
+  const src = read('src/screens/GuardDashboardScreen.tsx');
+  const loadDataFn = src.slice(src.indexOf('async function loadData('), src.indexOf('async function loadShiftAmendments('));
+  for (const loader of ['loadIdentity', 'loadDriving', 'loadEmergencyContact', 'loadEmployments', 'loadBankDetails', 'loadPayrollAdmin', 'refreshMyCompanies']) {
+    assert.doesNotMatch(loadDataFn, new RegExp(loader + '\\('), loader + ' is not called by loadData');
+  }
+  assert.match(loadDataFn, /readProfileViewRef\.current\(visibleProfileView\)/, 'only the Profile view on screen is revalidated');
+  assert.doesNotMatch(src, /useEffect\(\(\) => \{\s*void refreshMyCompanies\(\);\s*\}/, 'no company read at start-up');
+  const background = src.slice(src.indexOf("if (nextState === 'background' || nextState === 'inactive') {"), src.indexOf("if (nextState === 'active') {"));
+  for (const clear of ['clearBankReveal()', 'clearReveal()', 'clearLicenceReveal()']) assert.ok(background.includes(clear), `background runs ${clear}`);
+  // Every save of a masked record marks it written, so an older read cannot overwrite it.
+  assert.equal((src.match(/profileReads\.wrote\('identity'/g) ?? []).length, 2, 'NINO and UTR saves');
+  assert.equal((src.match(/profileReads\.wrote\('driving'/g) ?? []).length, 2, 'licence number and driving fields');
+  assert.equal((src.match(/profileReads\.wrote\('emergencyContact'/g) ?? []).length, 2, 'save and remove');
+  assert.equal((src.match(/profileReads\.wrote\('bank'/g) ?? []).length, 2, 'save and remove');
+  // First-load flags start true, so a record not yet read never shows a misleading "not added".
+  for (const flag of ['identityLoading', 'drivingLoading', 'emergencyContactLoading', 'employmentsLoading', 'payrollAdminLoading', 'bankLoading']) {
+    assert.match(src, new RegExp(`const \\[${flag}, set\\w+\\] = useState\\(true\\)`), flag);
+  }
 });
 
 (async () => {

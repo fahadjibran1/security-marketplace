@@ -186,9 +186,13 @@ test('dashboard has loadEmergencyContact function calling getMyEmergencyContact'
   assert.match(fn, /getMyEmergencyContact/);
 });
 
-test('loadEmergencyContact is called inside loadData', () => {
-  const loadDataFn = dashboard.split('async function loadData')[1].split('async function handleSaveProfile')[0];
-  assert.match(loadDataFn, /loadEmergencyContact/);
+test('loadEmergencyContact is read when a Profile view showing it opens (Phase 2E), not inside loadData', () => {
+  // Profile Phase 2E: no longer read on every dashboard refresh — read when a Profile view that shows it opens.
+  const loadDataFn = dashboard.split('async function loadData')[1].split('async function loadShiftAmendments')[0];
+  assert.doesNotMatch(loadDataFn, /loadEmergencyContact\(/, 'not called by loadData');
+  assert.match(dashboard, /emergencyContact: loadEmergencyContact,/, 'reached through the Profile view reader');
+  const views = require('./load-ts.cjs').loadTs('src/components/guard/profile/profileData.ts').PROFILE_RECORDS_BY_VIEW;
+  for (const view of ["overview","personal"]) assert.ok(views[view].includes('emergencyContact'), view + ' reads emergencyContact');
 });
 
 test('dashboard has handleSaveEmergencyContact calling upsertMyEmergencyContact', () => {
