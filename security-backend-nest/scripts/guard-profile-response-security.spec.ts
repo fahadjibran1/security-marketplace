@@ -526,6 +526,46 @@ test('Mobile SIA licence field is read-only in Profile UI (no onChangeText)', ()
   assert(/setSiaLicence\(myGuard\.siaLicenseNumber \|\| myGuard\.siaLicenceNumber \|\| ''\)/.test(source), 'the SIA licence number is only ever set from the server record');
 });
 
+test('Mobile SIA licence number is displayed from the authenticated GET /guards/me record', () => {
+  const api = mobile('services/api.ts');
+  assert(/export function getMyGuard\(\) \{\s*return request<GuardProfile>\('\/guards\/me'\);/.test(api), 'getMyGuard reads the authenticated /guards/me record');
+  const source = mobile('screens/GuardDashboardScreen.tsx');
+  // The loaded record named myGuard is the first result of the dashboard load, which is getMyGuard().
+  assert(/const \[myGuard,[^\]]*\] = await Promise\.all\(\[\s*getMyGuard\(\),/.test(source), 'myGuard is the GET /guards/me response');
+});
+
+test('Mobile Guard Profile has no input of any name for the SIA licence number', () => {
+  const source = mobile('screens/GuardDashboardScreen.tsx');
+  // Catches an editable SIA field brought back under a different state name, not only setSiaLicence.
+  const inputs = source.match(/<(TextInput|LabeledInput)\b[\s\S]*?\/>/g) ?? [];
+  assert(inputs.length > 0, 'expected the Profile inputs to be found');
+  const sia = inputs.filter((tag) => /\bSIA\b|siaLicen[cs]e/i.test(tag));
+  assert(sia.length === 0, `an input for the SIA licence number is in the Guard Profile: ${sia[0]?.slice(0, 120)}`);
+});
+
+test('Mobile Profile save payload is limited to fullName, phone and locationSharingEnabled (no SIA, either spelling)', () => {
+  // The mobile payload type: an allow-list, so a SIA field in either spelling (or any new field) fails here.
+  const models = mobile('types/models.ts');
+  const type = models.match(/export interface UpdateGuardPayload \{([\s\S]*?)\}/);
+  assert(type, 'UpdateGuardPayload interface not found');
+  const keys = [...type![1].matchAll(/^\s*(\w+)\??:/gm)].map((m) => m[1]).sort();
+  assert(JSON.stringify(keys) === JSON.stringify(['fullName', 'locationSharingEnabled', 'phone']), `UpdateGuardPayload keys are ${keys.join(', ')}`);
+  // The planner that builds the PATCH /guards/me body assigns only those keys.
+  const planner = mobile('components/guard/profile/guardProfileSave.ts');
+  const plan = planner.slice(planner.indexOf('export function planGuardProfileSave('));
+  assert(plan.length > 0 && /const payload: UpdateGuardPayload = \{\};/.test(plan), 'planGuardProfileSave builds a typed UpdateGuardPayload');
+  const assigned = [...new Set([...plan.matchAll(/payload\.(\w+)\s*=/g)].map((m) => m[1]))].sort();
+  assert(JSON.stringify(assigned) === JSON.stringify(['fullName', 'locationSharingEnabled', 'phone']), `the planner sets ${assigned.join(', ')}`);
+  assert(!/sia/i.test(plan.slice(0, plan.indexOf('\n}\n'))), 'the planner mentions SIA');
+  // The screen sends exactly the planner's payload, nothing added.
+  const screen = mobile('screens/GuardDashboardScreen.tsx');
+  const save = screen.match(/async function handleSaveProfile\(\)[^{]*\{[\s\S]*?^\s{2}\}/m);
+  assert(save, 'handleSaveProfile not found');
+  const sends = save![0].match(/updateMyGuard\(([^)]*)\)/g) ?? [];
+  assert(sends.length === 1 && sends[0] === 'updateMyGuard(plan.payload)', `handleSaveProfile sends ${sends.join(', ') || 'nothing'}`);
+  assert(!/sia/i.test(save![0]), 'handleSaveProfile mentions SIA');
+});
+
 async function main() {
   let passed = 0;
   for (const entry of tests) {
