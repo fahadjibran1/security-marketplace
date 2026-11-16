@@ -23,7 +23,7 @@ import { LICENCE_STATUS_LABELS, TRAVEL_METHOD_LABELS, profileEnumLabel } from '.
  *   - Data that has not loaded is 'loading', data that failed is 'error'; neither is ever shown as "not provided".
  *
  * Pure: no React, no API, no clock (the caller passes `today`). Executed by
- * scripts/guard-profile-foundations.spec.cjs. The UI that renders it is a later phase.
+ * scripts/guard-profile-foundations.spec.cjs. GuardProfileOverview.tsx renders it (Phase 2C).
  */
 
 /** A value that may still be loading or may have failed to load. */
@@ -56,7 +56,7 @@ export const PROFILE_SECTIONS: ReadonlyArray<{
   contains: string;
 }> = [
   { key: 'personal', title: 'Personal details', requirement: 'required', contains: 'Name, phone, emergency contact and live location sharing' },
-  { key: 'companies', title: 'Companies & invitations', requirement: 'optional', contains: 'The companies you work for and joining with an invitation code' },
+  { key: 'companies', title: 'Companies & invitations', requirement: 'invitation', contains: 'The companies you work for and joining with an invitation code' },
   { key: 'compliance', title: 'SIA & compliance', requirement: 'company', contains: 'SIA licence, right to work and your deployment status' },
   { key: 'availability', title: 'Availability & travel', requirement: 'optional', contains: 'Leave, weekly availability, one-off changes, driving and travel' },
   { key: 'employmentPay', title: 'Employment & pay', requirement: 'company', contains: 'Employment and pay records from your company, bank details, NINO and UTR' },
@@ -286,4 +286,61 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
       tone: summaries[section.key].tone,
     })),
   };
+}
+
+// ═══════════════════ Phase 2C: from the Guard dashboard's existing state ═══════════════════
+
+/** One record the dashboard already loads, as it holds it: the value, its loading flag and its error. */
+export interface DashboardRecord<T> {
+  value: T;
+  loading: boolean;
+  error: string | null;
+}
+
+/**
+ * The dashboard's own state, unchanged, as the overview needs it. The personnel records (tax, driving, emergency
+ * contact, employment, bank) are requested only after the Guard's record has loaded, so until then they are still
+ * loading — or, when that first read failed, unavailable — never "not provided".
+ */
+export interface DashboardProfileState {
+  /** The last record loaded from the server (not unsaved edits); null until one has loaded. */
+  profile: { fullName: string; phone: string } | null;
+  profileLoading: boolean;
+  siaLicenceNumber: string;
+  companies: { value: GuardCompanyMembership[]; status: 'loading' | 'ready' | 'error' };
+  emergencyContact: DashboardRecord<GuardEmergencyContact | null>;
+  identity: DashboardRecord<GuardPersonnelIdentity | null>;
+  bank: DashboardRecord<GuardBankDetailsSummary | null>;
+  employments: DashboardRecord<GuardEmploymentRecord[]>;
+  driving: DashboardRecord<GuardDrivingTransport | null>;
+  email?: string | null;
+}
+
+export type ProfileOverviewSource = Omit<ProfileOverviewInput, 'today' | 'compliance' | 'screening'>;
+
+export function overviewSourceFromDashboard(state: DashboardProfileState): ProfileOverviewSource {
+  function personnel<T, R>(record: DashboardRecord<T>, map: (value: T) => R): Loadable<R> {
+    if (!state.profile) return state.profileLoading ? loading() : failed();
+    if (record.loading) return loading();
+    if (record.error) return failed();
+    return ready(map(record.value));
+  }
+  return {
+    guard: state.profile
+      ? ready({ fullName: state.profile.fullName, phone: state.profile.phone, siaLicenseNumber: state.siaLicenceNumber || null })
+      : state.profileLoading ? loading() : failed(),
+    companies: state.companies.status === 'ready' ? ready(state.companies.value) : state.companies.status === 'loading' ? loading() : failed(),
+    emergencyContact: personnel(state.emergencyContact, (v) => v ?? null),
+    identity: personnel(state.identity, (v) => ({ ninoSet: Boolean(v?.ninoSet), utrSet: Boolean(v?.utrSet) })),
+    bank: personnel(state.bank, (v) => ({ bankSet: Boolean(v?.bankSet) })),
+    employments: personnel(state.employments, (v) => v ?? []),
+    driving: personnel(state.driving, (v) => ({ licenceStatus: v?.licenceStatus ?? null, primaryTravelMethod: v?.primaryTravelMethod ?? null }) as Pick<GuardDrivingTransport, 'licenceStatus' | 'primaryTravelMethod'>),
+    email: state.email ?? null,
+  };
+}
+
+/** The device's calendar date as YYYY-MM-DD (the Guard app is used in the UK; the model itself never reads a clock). */
+export function localToday(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

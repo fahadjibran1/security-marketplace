@@ -145,7 +145,13 @@ import {
   planGuardProfileSave,
   type GuardProfileFields,
 } from '../components/guard/profile/guardProfileSave';
-import { COMPLIANCE_COPY, PRIVACY_COPY } from '../components/guard/profile/profileCopy';
+import { PRIVACY_COPY } from '../components/guard/profile/profileCopy';
+import { GuardComplianceUpdateRoute } from '../components/guard/profile/GuardComplianceUpdateRoute';
+import { GuardPrivacySummary } from '../components/guard/profile/GuardPrivacySummary';
+import { GuardProfileOverview } from '../components/guard/profile/GuardProfileOverview';
+import { GuardProfileSection } from '../components/guard/profile/GuardProfileSection';
+import { profileLayout } from '../components/guard/profile/profileLayout';
+import { overviewSourceFromDashboard, type ProfileSectionKey } from '../components/guard/profile/profileOverview';
 import {
   ENGAGEMENT_TYPE_LABELS,
   PAYROLL_STATUS_LABELS,
@@ -174,7 +180,7 @@ interface GuardDashboardScreenProps {
   onAccountDeleted?: (message: string) => void | Promise<void>;
 }
 
-type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'companies' | 'inbox';
+type GuardTab = 'home' | 'offers' | 'jobs' | 'history' | 'profile' | 'screening' | 'inbox';
 /** Minimum age before a foreground return re-reads the inbox. */
 const INBOX_FOREGROUND_MIN_MS = 15_000;
 /** Added to a shift-offer answer when it was saved but the dashboard re-read after it failed. */
@@ -550,17 +556,27 @@ export function guardOffersBadgeOffset(size: number) {
 export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, productLabel = brand.appName, productIsUat = false }: GuardDashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const homeLayout = useGuardHomeLayout();
+  // Profile Phase 2C: the same thresholds as Home, so both turn compact together.
+  const profileLayoutRules = profileLayout(homeLayout);
   const badgeSize = guardBadgeSize(homeLayout.fontScale);
   const [activeTab, setActiveTab] = useState<GuardTab>('home');
+  // Profile Phase 2C: the open Profile section, or null for the overview. Profile stays the active tab throughout.
+  const [profileSection, setProfileSection] = useState<ProfileSectionKey | null>(null);
+  // The section the screening journey was opened from, so its Back returns there.
+  const screeningReturnSectionRef = useRef<ProfileSectionKey>('screening');
   const [myCompanies, setMyCompanies] = useState<GuardCompanyMembership[]>([]);
   const [myCompaniesLoading, setMyCompaniesLoading] = useState(false);
+  // Whether the list has ever loaded, so the Profile overview never reads "no companies" before it knows.
+  const [myCompaniesStatus, setMyCompaniesStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
   const refreshMyCompanies = useCallback(async () => {
     setMyCompaniesLoading(true);
     try {
       setMyCompanies(await listMyCompanies());
+      setMyCompaniesStatus('ready');
     } catch {
       /* the list keeps its previous contents; join/decline report their own outcome */
+      setMyCompaniesStatus((status) => (status === 'ready' ? status : 'error'));
     } finally {
       setMyCompaniesLoading(false);
     }
@@ -706,17 +722,33 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
   // Every tab shares one ScrollView, so without an explicit reset a tab opens at the previous
   // tab's scroll offset — which reads as "the tab did nothing". Screening is a sub-view of
-  // Profile rather than a sixth tab, so it keeps Profile lit in the bar.
+  // Profile rather than a sixth tab, so it keeps Profile lit in the bar; so does every Profile section.
   const navActiveTab: GuardTab =
-    activeTab === 'screening' || activeTab === 'companies' ? 'profile' : activeTab === 'inbox' ? 'home' : activeTab;
-  const selectTab = useCallback((tab: GuardTab) => {
-    setActiveTab(tab);
+    activeTab === 'screening' ? 'profile' : activeTab === 'inbox' ? 'home' : activeTab;
+  const scrollToTop = useCallback(() => {
     try {
       screeningScrollRef.current?.scrollTo({ y: 0, animated: false });
     } catch {
       /* scrolling is a convenience; never let it break navigation */
     }
   }, []);
+  const selectTab = useCallback((tab: GuardTab) => {
+    setActiveTab(tab);
+    // The Profile tab always opens on its overview, including a second tap while a section is open.
+    if (tab === 'profile') setProfileSection(null);
+    scrollToTop();
+  }, [scrollToTop]);
+  // Opens one Profile section (null: the overview) at the top of the page, with Profile still selected.
+  const openProfileSection = useCallback((section: ProfileSectionKey | null) => {
+    setActiveTab('profile');
+    setProfileSection(section);
+    scrollToTop();
+  }, [scrollToTop]);
+  const openScreeningJourney = useCallback((from: ProfileSectionKey) => {
+    screeningReturnSectionRef.current = from;
+    setActiveTab('screening');
+    scrollToTop();
+  }, [scrollToTop]);
 
   // P1A — Tax Identifiers
   const [identity, setIdentity] = useState<GuardPersonnelIdentity | null>(null);
@@ -1167,6 +1199,31 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     setBankReveal(null);
     setBankRevealCountdown(0);
   }
+
+  // Profile Phase 2C: leaving a Profile section — for the overview, another section or another tab — hides every
+  // revealed value straight away (instead of leaving its timer running off screen) and closes any open edit of a masked
+  // value, discarding what was typed. The reveal calls, their timers and the bank confirmation are unchanged.
+  useEffect(() => {
+    clearReveal();
+    clearLicenceReveal();
+    clearBankReveal();
+    setEditingNino(false);
+    setNinoInput('');
+    setNinoInputError('');
+    setEditingUtr(false);
+    setUtrInput('');
+    setUtrInputError('');
+    setEditingLicenceNumber(false);
+    setLicenceNumberInput('');
+    setLicenceNumberInputError('');
+    setEditingBankDetails(false);
+    setBankHolderInput('');
+    setBankSortInput('');
+    setBankAccountInput('');
+    setBankInputError('');
+    // Only navigation triggers this; the clear helpers are recreated on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, profileSection]);
 
   function startBankRevealCountdown() {
     const REVEAL_SECONDS = 15;
@@ -2093,11 +2150,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   ? 'History'
                   : activeTab === 'screening'
                     ? 'Screening'
-                    : activeTab === 'companies'
-                      ? 'My Companies'
-                      : activeTab === 'inbox'
-                        ? 'Notifications'
-                        : 'Profile'
+                    : activeTab === 'inbox'
+                      ? 'Notifications'
+                      : 'Profile'
         }
         notifications={(() => {
           // The inbox entry point. On a server without notifications the badge is hidden; the button still opens a
@@ -2456,1022 +2511,1059 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
 
         {activeTab === 'profile' ? (
           <View style={styles.guardProfileRoot}>
-            <FeatureCard
-              title="Your profile"
-              subtitle="What your company and payroll see. Save when you change anything below."
-              style={styles.guardProfileCard}
-            >
-              <View style={styles.guardProfileBody}>
-                {!loadedProfile ? (
-                  // Nothing can be edited or saved until the Guard's own record has loaded: an empty form must never
-                  // reach the server as "".
-                  <View style={styles.guardProfileUnavailable} testID="guard-profile-unavailable">
-                    {loading ? (
-                      <Text style={styles.helperText}>Loading your profile…</Text>
-                    ) : (
-                      <>
-                        <Text style={styles.guardProfileUnavailableText} accessibilityRole="alert">{PROFILE_UNAVAILABLE_MESSAGE}</Text>
-                        <Pressable
-                          style={styles.guardProfileRetryBtn}
-                          onPress={() => loadData()}
-                          accessibilityRole="button"
-                          accessibilityLabel="Try loading your profile again"
-                        >
-                          <Text style={styles.guardProfileRetryText}>Try again</Text>
-                        </Pressable>
-                      </>
-                    )}
-                  </View>
-                ) : null}
-                <View style={styles.guardProfileSection}>
-                  <Text style={styles.guardSectionLabel}>Contact & identity</Text>
-                  <View style={styles.guardProfileFields}>
-                    <View style={styles.profileField}>
-                      <Text style={styles.profileFieldLabel}>Full name</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        placeholder="Your full legal name"
-                        value={fullName}
-                        onChangeText={(value: string) => editProfileField(() => setFullName(value))}
-                        editable={Boolean(loadedProfile) && !savingProfile}
-                        accessibilityLabel="Full name"
-                        testID="guard-profile-full-name"
-                      />
-                    </View>
-                    <View style={styles.profileField}>
-                      <Text style={styles.profileFieldLabel}>SIA licence number</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={siaLicence}
-                        editable={false}
-                        selectTextOnFocus={false}
-                        accessibilityLabel="SIA licence number, read only"
-                      />
-                      <Text style={styles.profileFieldHint}>{COMPLIANCE_COPY.siaHint}</Text>
-                    </View>
-                    <View style={styles.profileField}>
-                      <Text style={styles.profileFieldLabel}>Phone number</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        placeholder="Your contact number"
-                        value={phone}
-                        onChangeText={(value: string) => editProfileField(() => setPhone(value))}
-                        keyboardType="phone-pad"
-                        editable={Boolean(loadedProfile) && !savingProfile}
-                        accessibilityLabel="Phone number"
-                        testID="guard-profile-phone"
-                      />
-                    </View>
-                  </View>
-                </View>
-                <View style={[styles.guardProfileSection, styles.guardProfileSwitchSection]}>
-                  <Text style={styles.guardSectionLabel}>On shift</Text>
-                  <View style={styles.switchRow}>
-                    <View style={styles.flexGrow}>
-                      <Text style={styles.guardProfileSwitchTitle}>Live location sharing</Text>
-                      <Text style={styles.guardProfileSwitchHint}>Keep on while you are deployed.</Text>
-                    </View>
-                    <Switch
-                      value={locationSharing}
-                      onValueChange={(value: boolean) => editProfileField(() => setLocationSharing(value))}
-                      disabled={!loadedProfile || savingProfile}
-                      accessibilityLabel="Live location sharing"
-                    />
-                  </View>
-                </View>
-                {profileFormMessage ? (
-                  <Text
-                    style={profileFormMessage.tone === 'error' ? styles.guardProfileFormError : styles.helperText}
-                    accessibilityRole={profileFormMessage.tone === 'error' ? 'alert' : 'text'}
-                    testID="guard-profile-form-message"
-                  >
-                    {profileFormMessage.text}
-                  </Text>
-                ) : null}
-                <View style={styles.guardProfileActions}>
-                  <Pressable
-                    style={[
-                      styles.primaryActionButton,
-                      styles.guardHomeCta,
-                      styles.guardProfileSaveCta,
-                      (savingProfile || !loadedProfile) && styles.buttonDisabled,
-                    ]}
-                    onPress={handleSaveProfile}
-                    disabled={savingProfile || !loadedProfile}
-                    accessibilityRole="button"
-                    accessibilityLabel="Save profile"
-                    accessibilityState={{ disabled: savingProfile || !loadedProfile, busy: savingProfile }}
-                    testID="guard-profile-save"
-                  >
-                    <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
-                      {savingProfile ? 'Saving...' : 'Save profile'}
-                    </Text>
-                  </Pressable>
-                  <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Log out">
-                    <Text style={styles.offerRejectBtnText}>Log out</Text>
-                  </Pressable>
-                </View>
-              </View>
-            </FeatureCard>
-            <FeatureCard
-              title="Tax identifiers"
-              subtitle="Encrypted and masked by default. Who can see them is explained below."
-              style={styles.guardProfileCard}
-            >
-              {identityLoading ? (
-                <Text style={styles.helperText}>Loading...</Text>
-              ) : identityError ? (
-                <Text style={[styles.helperText, { color: colors.danger }]}>{identityError}</Text>
-              ) : (
-                <View style={styles.guardProfileBody}>
-
-                  {/* NINO */}
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>National Insurance Number</Text>
-                    {editingNino ? (
-                      <View>
-                        <TextInput
-                          style={[styles.input, styles.guardProfileInput]}
-                          placeholder="Example: AB 12 34 56 C"
-                          value={ninoInput}
-                          // Spacing is presentation only. The Guard can type or paste it compact,
-                          // spaced or in lowercase; this groups it as they go and the value is
-                          // normalised again before it is sent.
-                          onChangeText={(t: string) => { setNinoInput(formatNinoInput(t)); setNinoInputError(''); }}
-                          autoCapitalize="characters"
-                          autoCorrect={false}
-                          // A grouped NINO is 13 characters: "AB 12 34 56 C".
-                          maxLength={13}
-                          autoFocus
-                          accessibilityLabel="National Insurance number"
-                        />
-                        {ninoInputError ? (
-                          <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{ninoInputError}</Text>
+            {profileSection === null ? (
+              <GuardProfileOverview
+                source={overviewSourceFromDashboard({
+                  profile: loadedProfile,
+                  profileLoading: loading,
+                  siaLicenceNumber: siaLicence,
+                  companies: { value: myCompanies, status: myCompaniesStatus },
+                  emergencyContact: { value: emergencyContact, loading: emergencyContactLoading, error: emergencyContactError },
+                  identity: { value: identity, loading: identityLoading, error: identityError },
+                  bank: { value: bankDetails, loading: bankLoading, error: bankError },
+                  employments: { value: employments, loading: employmentsLoading, error: employmentsError },
+                  driving: { value: driving, loading: drivingLoading, error: drivingError },
+                  email: user?.email,
+                })}
+                layout={profileLayoutRules}
+                onOpenSection={openProfileSection}
+                profileUnavailable={!loadedProfile && !loading ? { message: PROFILE_UNAVAILABLE_MESSAGE, onRetry: () => loadData() } : null}
+              />
+            ) : (
+              <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)}>
+                {profileSection === 'personal' ? (
+                  <>
+                    <FeatureCard
+                      title="Your profile"
+                      subtitle="What your company and payroll see. Save when you change anything below."
+                      style={styles.guardProfileCard}
+                    >
+                      <View style={styles.guardProfileBody}>
+                        {!loadedProfile ? (
+                          // Nothing can be edited or saved until the Guard's own record has loaded: an empty form must never
+                          // reach the server as "".
+                          <View style={styles.guardProfileUnavailable} testID="guard-profile-unavailable">
+                            {loading ? (
+                              <Text style={styles.helperText}>Loading your profile…</Text>
+                            ) : (
+                              <>
+                                <Text style={styles.guardProfileUnavailableText} accessibilityRole="alert">{PROFILE_UNAVAILABLE_MESSAGE}</Text>
+                                <Pressable
+                                  style={styles.guardProfileRetryBtn}
+                                  onPress={() => loadData()}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Try loading your profile again"
+                                >
+                                  <Text style={styles.guardProfileRetryText}>Try again</Text>
+                                </Pressable>
+                              </>
+                            )}
+                          </View>
                         ) : null}
-                        <Text style={[styles.profileFieldHint]}>Kept private and encrypted. You can type it with or without spaces.</Text>
-                        <View style={styles.guardSecondaryRow}>
-                          <Pressable
-                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
-                            onPress={handleSaveNino}
-                            disabled={identitySaving}
-                            accessibilityRole="button"
-                            accessibilityLabel="Save National Insurance number"
-                            accessibilityState={{ disabled: identitySaving, busy: identitySaving }}
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
-                          </Pressable>
-                          <Pressable
-                            style={styles.guardSecondaryBtn}
-                            onPress={() => { setEditingNino(false); setNinoInput(''); setNinoInputError(''); }}
-                            accessibilityRole="button"
-                            accessibilityLabel="Cancel editing National Insurance number"
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
-                          </Pressable>
+                        <View style={styles.guardProfileSection}>
+                          <Text style={styles.guardSectionLabel}>Contact & identity</Text>
+                          <View style={styles.guardProfileFields}>
+                            <View style={styles.profileField}>
+                              <Text style={styles.profileFieldLabel}>Full name</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                placeholder="Your full legal name"
+                                value={fullName}
+                                onChangeText={(value: string) => editProfileField(() => setFullName(value))}
+                                editable={Boolean(loadedProfile) && !savingProfile}
+                                accessibilityLabel="Full name"
+                                testID="guard-profile-full-name"
+                              />
+                            </View>
+                            <View style={styles.profileField}>
+                              <Text style={styles.profileFieldLabel}>Phone number</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                placeholder="Your contact number"
+                                value={phone}
+                                onChangeText={(value: string) => editProfileField(() => setPhone(value))}
+                                keyboardType="phone-pad"
+                                editable={Boolean(loadedProfile) && !savingProfile}
+                                accessibilityLabel="Phone number"
+                                testID="guard-profile-phone"
+                              />
+                            </View>
+                          </View>
                         </View>
-                      </View>
-                    ) : (
-                      <View>
-                        <View style={styles.guardSecondaryRow}>
+                        <View style={[styles.guardProfileSection, styles.guardProfileSwitchSection]}>
+                          <Text style={styles.guardSectionLabel}>On shift</Text>
+                          <View style={styles.switchRow}>
+                            <View style={styles.flexGrow}>
+                              <Text style={styles.guardProfileSwitchTitle}>Live location sharing</Text>
+                              <Text style={styles.guardProfileSwitchHint}>Keep on while you are deployed.</Text>
+                            </View>
+                            <Switch
+                              value={locationSharing}
+                              onValueChange={(value: boolean) => editProfileField(() => setLocationSharing(value))}
+                              disabled={!loadedProfile || savingProfile}
+                              accessibilityLabel="Live location sharing"
+                            />
+                          </View>
+                        </View>
+                        {profileFormMessage ? (
                           <Text
-                            style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
-                            accessibilityLabel={revealedField === 'nino' && revealedValue
-                              ? `National Insurance number ${revealedValue}`
-                              : identity?.ninoSet ? 'National Insurance number, hidden' : 'National Insurance number, not yet provided'}
+                            style={profileFormMessage.tone === 'error' ? styles.guardProfileFormError : styles.helperText}
+                            accessibilityRole={profileFormMessage.tone === 'error' ? 'alert' : 'text'}
+                            testID="guard-profile-form-message"
                           >
-                            {revealedField === 'nino' && revealedValue
-                              ? revealedValue
-                              : identity?.ninoMasked ?? (identity?.ninoSet ? '••••••••••' : 'Not yet provided')}
-                          </Text>
-                          {revealedField === 'nino' ? (
-                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal} accessibilityRole="button" accessibilityLabel="Hide National Insurance number">
-                              <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
-                            </Pressable>
-                          ) : (
-                            <Pressable
-                              style={[styles.guardSecondaryBtn, (!identity?.ninoSet || revealing) && styles.buttonDisabled]}
-                              disabled={!identity?.ninoSet || revealing}
-                              onPress={() => handleRevealField('nino')}
-                              accessibilityRole="button"
-                              accessibilityLabel="Show National Insurance number"
-                              accessibilityState={{ disabled: !identity?.ninoSet || revealing, busy: revealing }}
-                            >
-                              <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
-                            </Pressable>
-                          )}
-                          <Pressable
-                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
-                            disabled={identitySaving}
-                            onPress={() => { clearReveal(); setEditingNino(true); setNinoInput(''); }}
-                            accessibilityRole="button"
-                            accessibilityLabel={identity?.ninoSet ? 'Edit National Insurance number' : 'Add National Insurance number'}
-                            accessibilityState={{ disabled: identitySaving }}
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>{identity?.ninoSet ? 'Edit' : 'Add'}</Text>
-                          </Pressable>
-                        </View>
-                        {revealedField === 'nino' ? (
-                          <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
-                            Hiding automatically in {revealCountdown}s
+                            {profileFormMessage.text}
                           </Text>
                         ) : null}
-                      </View>
-                    )}
-                  </View>
-
-                  {/* UTR */}
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Unique Taxpayer Reference (UTR)</Text>
-                    {editingUtr ? (
-                      <View>
-                        <TextInput
-                          style={[styles.input, styles.guardProfileInput]}
-                          placeholder="10 digits"
-                          value={utrInput}
-                          onChangeText={(t: string) => { setUtrInput(t); setUtrInputError(''); }}
-                          keyboardType="number-pad"
-                          maxLength={10}
-                          autoFocus
-                          accessibilityLabel="Unique Taxpayer Reference"
-                        />
-                        {utrInputError ? (
-                          <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{utrInputError}</Text>
-                        ) : null}
-                        <Text style={[styles.profileFieldHint]}>Your 10-digit UTR from HMRC — kept private and encrypted.</Text>
-                        <View style={styles.guardSecondaryRow}>
+                        <View style={styles.guardProfileActions}>
                           <Pressable
-                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
-                            onPress={handleSaveUtr}
-                            disabled={identitySaving}
+                            style={[
+                              styles.primaryActionButton,
+                              styles.guardHomeCta,
+                              styles.guardProfileSaveCta,
+                              (savingProfile || !loadedProfile) && styles.buttonDisabled,
+                            ]}
+                            onPress={handleSaveProfile}
+                            disabled={savingProfile || !loadedProfile}
                             accessibilityRole="button"
-                            accessibilityLabel="Save Unique Taxpayer Reference"
-                            accessibilityState={{ disabled: identitySaving, busy: identitySaving }}
+                            accessibilityLabel="Save profile"
+                            accessibilityState={{ disabled: savingProfile || !loadedProfile, busy: savingProfile }}
+                            testID="guard-profile-save"
                           >
-                            <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
-                          </Pressable>
-                          <Pressable
-                            style={styles.guardSecondaryBtn}
-                            onPress={() => { setEditingUtr(false); setUtrInput(''); setUtrInputError(''); }}
-                            accessibilityRole="button"
-                            accessibilityLabel="Cancel editing Unique Taxpayer Reference"
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                            <Text style={[styles.primaryActionText, styles.guardHomeCtaText]}>
+                              {savingProfile ? 'Saving...' : 'Save profile'}
+                            </Text>
                           </Pressable>
                         </View>
                       </View>
-                    ) : (
-                      <View>
-                        <View style={styles.guardSecondaryRow}>
-                          <Text
-                            style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
-                            accessibilityLabel={revealedField === 'utr' && revealedValue
-                              ? `Unique Taxpayer Reference ${revealedValue}`
-                              : identity?.utrSet ? 'Unique Taxpayer Reference, hidden' : 'Unique Taxpayer Reference, not yet provided'}
-                          >
-                            {revealedField === 'utr' && revealedValue
-                              ? revealedValue
-                              : identity?.utrMasked ?? (identity?.utrSet ? '••••••••••' : 'Not yet provided')}
-                          </Text>
-                          {revealedField === 'utr' ? (
-                            <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal} accessibilityRole="button" accessibilityLabel="Hide Unique Taxpayer Reference">
-                              <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
-                            </Pressable>
-                          ) : (
-                            <Pressable
-                              style={[styles.guardSecondaryBtn, (!identity?.utrSet || revealing) && styles.buttonDisabled]}
-                              disabled={!identity?.utrSet || revealing}
-                              onPress={() => handleRevealField('utr')}
-                              accessibilityRole="button"
-                              accessibilityLabel="Show Unique Taxpayer Reference"
-                              accessibilityState={{ disabled: !identity?.utrSet || revealing, busy: revealing }}
-                            >
-                              <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
-                            </Pressable>
-                          )}
-                          <Pressable
-                            style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
-                            disabled={identitySaving}
-                            onPress={() => { clearReveal(); setEditingUtr(true); setUtrInput(''); }}
-                            accessibilityRole="button"
-                            accessibilityLabel={identity?.utrSet ? 'Edit Unique Taxpayer Reference' : 'Add Unique Taxpayer Reference'}
-                            accessibilityState={{ disabled: identitySaving }}
-                          >
-                            <Text style={styles.guardSecondaryBtnText}>{identity?.utrSet ? 'Edit' : 'Add'}</Text>
-                          </Pressable>
-                        </View>
-                        {revealedField === 'utr' ? (
-                          <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
-                            Hiding automatically in {revealCountdown}s
-                          </Text>
-                        ) : null}
-                      </View>
-                    )}
-                  </View>
+                    </FeatureCard>
 
-                  <Text style={styles.profileFieldHint} testID="guard-profile-privacy-tax">{PRIVACY_COPY.taxIdentifiers.note}</Text>
-                </View>
-              )}
-            </FeatureCard>
+                    {/* P1E — Emergency Contact */}
+                    <FeatureCard
+                      title="Emergency contact"
+                      subtitle="A person we should contact in an emergency. Phone numbers are encrypted at rest."
+                      style={styles.guardProfileCard}
+                    >
+                      {emergencyContactLoading ? (
+                        <Text style={styles.helperText}>Loading...</Text>
+                      ) : emergencyContactError ? (
+                        <Text style={[styles.helperText, { color: colors.danger }]}>{emergencyContactError}</Text>
+                      ) : editingEmergencyContact ? (
+                        <View style={styles.guardProfileBody}>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Contact name</Text>
+                            <TextInput
+                              style={[styles.input, styles.guardProfileInput]}
+                              value={ecNameInput}
+                              onChangeText={setEcNameInput}
+                              placeholder="Full name"
+                              placeholderTextColor={colors.textSecondary}
+                              maxLength={100}
+                              editable={!emergencyContactSaving}
+                              accessibilityLabel="Emergency contact name"
+                            />
+                          </View>
 
-            {/* P1D — Driving & Transport */}
-            <FeatureCard
-              title="Driving & transport"
-              subtitle="Your licence and travel preferences. Licence number is encrypted and masked by default."
-              style={styles.guardProfileCard}
-            >
-              {drivingLoading ? (
-                <Text style={styles.helperText}>Loading...</Text>
-              ) : drivingError ? (
-                <Text style={[styles.helperText, { color: colors.danger }]}>{drivingError}</Text>
-              ) : (
-                <View style={styles.guardProfileBody}>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Relationship</Text>
+                            <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
+                              {(['SPOUSE_PARTNER', 'PARENT', 'SIBLING', 'CHILD', 'RELATIVE', 'FRIEND', 'OTHER'] as EmergencyContactRelationship[]).map((r) => (
+                                <Pressable
+                                  key={r}
+                                  style={[
+                                    styles.guardChoiceChip,
+                                    ecRelationshipInput === r && styles.guardChoiceChipSelected,
+                                    emergencyContactSaving && styles.buttonDisabled,
+                                  ]}
+                                  disabled={emergencyContactSaving}
+                                  onPress={() => setEcRelationshipInput(r)}
+                                  accessibilityRole="radio"
+                                  accessibilityState={{ checked: ecRelationshipInput === r, disabled: emergencyContactSaving }}
+                                >
+                                  <Text style={[
+                                    styles.guardSecondaryBtnText,
+                                    ecRelationshipInput === r && styles.guardChoiceChipTextSelected,
+                                  ]}>
+                                    {r === 'SPOUSE_PARTNER' ? 'Spouse/Partner' : r.charAt(0) + r.slice(1).toLowerCase()}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                            {ecRelationshipInput === 'OTHER' ? (
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput, { marginTop: 8 }]}
+                                value={ecCustomRelationshipInput}
+                                onChangeText={setEcCustomRelationshipInput}
+                                placeholder="Describe relationship (optional)"
+                                placeholderTextColor={colors.textSecondary}
+                                maxLength={100}
+                                editable={!emergencyContactSaving}
+                                accessibilityLabel="Describe the relationship (optional)"
+                              />
+                            ) : null}
+                          </View>
 
-                  {/* Licence status */}
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Driving Licence Status</Text>
-                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
-                      {(['NONE', 'PROVISIONAL', 'FULL', 'OTHER_OR_FOREIGN'] as DrivingLicenceStatus[]).map((s) => (
-                        <Pressable
-                          key={s}
-                          style={[
-                            styles.guardChoiceChip,
-                            driving?.licenceStatus === s && styles.guardChoiceChipSelected,
-                            drivingSaving && styles.buttonDisabled,
-                          ]}
-                          disabled={drivingSaving}
-                          onPress={() => handleLicenceStatusSelect(s)}
-                          accessibilityRole="radio"
-                          accessibilityState={{ checked: driving?.licenceStatus === s, disabled: drivingSaving }}
-                        >
-                          <Text style={[
-                            styles.guardSecondaryBtnText,
-                            driving?.licenceStatus === s && styles.guardChoiceChipTextSelected,
-                          ]}>
-                            {s === 'OTHER_OR_FOREIGN' ? 'Other/Foreign' : s.charAt(0) + s.slice(1).toLowerCase()}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Primary phone number</Text>
+                            <TextInput
+                              style={[styles.input, styles.guardProfileInput]}
+                              value={ecPrimaryPhoneInput}
+                              onChangeText={setEcPrimaryPhoneInput}
+                              placeholder="+44 7700 000000"
+                              placeholderTextColor={colors.textSecondary}
+                              keyboardType="phone-pad"
+                              maxLength={20}
+                              editable={!emergencyContactSaving}
+                              accessibilityLabel="Emergency contact primary phone number"
+                            />
+                          </View>
 
-                  {/* Licence number — only shown when licence is not NONE */}
-                  {driving?.licenceStatus && driving.licenceStatus !== 'NONE' ? (
-                    <View style={styles.guardProfileSection}>
-                      <Text style={styles.guardSectionLabel}>Licence Number</Text>
-                      {editingLicenceNumber ? (
-                        <View>
-                          <TextInput
-                            style={[styles.input, styles.guardProfileInput]}
-                            placeholder="e.g. MORGA657054SM9IJ"
-                            value={licenceNumberInput}
-                            onChangeText={(t: string) => { setLicenceNumberInput(t); setLicenceNumberInputError(''); }}
-                            autoCapitalize="characters"
-                            maxLength={50}
-                            autoFocus
-                            accessibilityLabel="Driving licence number"
-                          />
-                          {licenceNumberInputError ? (
-                            <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{licenceNumberInputError}</Text>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Alternative phone number (optional)</Text>
+                            <TextInput
+                              style={[styles.input, styles.guardProfileInput]}
+                              value={ecAlternatePhoneInput}
+                              onChangeText={setEcAlternatePhoneInput}
+                              placeholder="+44 7700 000001"
+                              placeholderTextColor={colors.textSecondary}
+                              keyboardType="phone-pad"
+                              maxLength={20}
+                              editable={!emergencyContactSaving}
+                              accessibilityLabel="Emergency contact alternative phone number (optional)"
+                            />
+                          </View>
+
+                          {ecInputError ? (
+                            <Text style={[styles.helperText, { color: colors.danger }]}>{ecInputError}</Text>
                           ) : null}
-                          <Text style={styles.profileFieldHint}>Kept private and encrypted. Format varies by country.</Text>
+
                           <View style={styles.guardSecondaryRow}>
                             <Pressable
-                              style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
-                              onPress={handleSaveLicenceNumber}
-                              disabled={drivingSaving}
+                              style={[styles.guardSecondaryBtn, emergencyContactSaving && styles.buttonDisabled]}
+                              onPress={() => setEditingEmergencyContact(false)}
+                              disabled={emergencyContactSaving}
                               accessibilityRole="button"
-                              accessibilityLabel="Save driving licence number"
-                              accessibilityState={{ disabled: drivingSaving, busy: drivingSaving }}
-                            >
-                              <Text style={styles.guardSecondaryBtnText}>{drivingSaving ? 'Saving...' : 'Save'}</Text>
-                            </Pressable>
-                            <Pressable
-                              style={styles.guardSecondaryBtn}
-                              onPress={() => { setEditingLicenceNumber(false); setLicenceNumberInput(''); setLicenceNumberInputError(''); }}
-                              accessibilityRole="button"
-                              accessibilityLabel="Cancel editing driving licence number"
+                              accessibilityLabel="Cancel editing emergency contact"
                             >
                               <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
                             </Pressable>
+                            <Pressable
+                              style={[styles.guardSecondaryBtn, styles.guardProfilePrimarySave, emergencyContactSaving && styles.buttonDisabled]}
+                              onPress={handleSaveEmergencyContact}
+                              disabled={emergencyContactSaving}
+                              accessibilityRole="button"
+                              accessibilityLabel="Save emergency contact"
+                              accessibilityState={{ disabled: emergencyContactSaving, busy: emergencyContactSaving }}
+                            >
+                              <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>
+                                {emergencyContactSaving ? 'Saving…' : 'Save'}
+                              </Text>
+                            </Pressable>
                           </View>
+
+                          {emergencyContact ? (
+                            <Pressable
+                              style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }, emergencyContactSaving && styles.buttonDisabled]}
+                              onPress={handleRemoveEmergencyContact}
+                              disabled={emergencyContactSaving}
+                              accessibilityRole="button"
+                              accessibilityLabel="Remove emergency contact"
+                            >
+                              <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove emergency contact</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ) : emergencyContact ? (
+                        <View style={styles.guardProfileBody}>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Contact name</Text>
+                            <Text style={styles.profileFieldValue}>{emergencyContact.contactName}</Text>
+                          </View>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Relationship</Text>
+                            <Text style={styles.profileFieldValue}>
+                              {emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
+                                ? emergencyContact.customRelationship
+                                : profileEnumLabel(RELATIONSHIP_LABELS, emergencyContact.relationship)}
+                            </Text>
+                          </View>
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Primary phone number</Text>
+                            <Text style={styles.profileFieldValue}>{emergencyContact.primaryPhone}</Text>
+                          </View>
+                          {emergencyContact.alternatePhone ? (
+                            <View style={styles.guardProfileSection}>
+                              <Text style={styles.guardSectionLabel}>Alternative phone number</Text>
+                              <Text style={styles.profileFieldValue}>{emergencyContact.alternatePhone}</Text>
+                            </View>
+                          ) : null}
+                          <Pressable
+                            style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
+                            onPress={openEmergencyContactEditor}
+                            disabled={emergencyContactSaving}
+                            accessibilityRole="button"
+                            accessibilityLabel="Edit emergency contact"
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>Edit</Text>
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <View style={styles.guardProfileBody}>
+                          <Text style={styles.profileFieldHint}>No emergency contact saved.</Text>
+                          <Pressable
+                            style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
+                            onPress={openEmergencyContactEditor}
+                            disabled={emergencyContactSaving}
+                            accessibilityRole="button"
+                            accessibilityLabel="Add emergency contact"
+                          >
+                            <Text style={styles.guardSecondaryBtnText}>Add emergency contact</Text>
+                          </Pressable>
+                        </View>
+                      )}
+
+                      {!editingEmergencyContact ? (
+                        <Text style={styles.profileFieldHint} testID="guard-profile-privacy-emergency">{PRIVACY_COPY.emergencyContact.note}</Text>
+                      ) : null}
+                    </FeatureCard>
+                  </>
+                ) : null}
+                {profileSection === 'companies' ? (
+                  <GuardCompaniesPanel
+                    companies={myCompanies}
+                    loading={myCompaniesLoading}
+                    onRefresh={refreshMyCompanies}
+                    onPreview={previewGuardInvitation}
+                    onAccept={acceptGuardInvitation}
+                    onDecline={declineGuardInvitation}
+                  />
+                ) : null}
+                {profileSection === 'compliance' ? (
+                  <>
+                    <GuardCompliancePanel />
+                    <GuardComplianceUpdateRoute onOpenScreening={() => openScreeningJourney('compliance')} />
+                  </>
+                ) : null}
+                {profileSection === 'availability' ? (
+                  <>
+                    <GuardAvailabilityScreen />
+                    {/* P1D — Driving & Transport */}
+                    <FeatureCard
+                      title="Driving & transport"
+                      subtitle="Your licence and travel preferences. Licence number is encrypted and masked by default."
+                      style={styles.guardProfileCard}
+                    >
+                      {drivingLoading ? (
+                        <Text style={styles.helperText}>Loading...</Text>
+                      ) : drivingError ? (
+                        <Text style={[styles.helperText, { color: colors.danger }]}>{drivingError}</Text>
+                      ) : (
+                        <View style={styles.guardProfileBody}>
+
+                          {/* Licence status */}
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Driving Licence Status</Text>
+                            <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
+                              {(['NONE', 'PROVISIONAL', 'FULL', 'OTHER_OR_FOREIGN'] as DrivingLicenceStatus[]).map((s) => (
+                                <Pressable
+                                  key={s}
+                                  style={[
+                                    styles.guardChoiceChip,
+                                    driving?.licenceStatus === s && styles.guardChoiceChipSelected,
+                                    drivingSaving && styles.buttonDisabled,
+                                  ]}
+                                  disabled={drivingSaving}
+                                  onPress={() => handleLicenceStatusSelect(s)}
+                                  accessibilityRole="radio"
+                                  accessibilityState={{ checked: driving?.licenceStatus === s, disabled: drivingSaving }}
+                                >
+                                  <Text style={[
+                                    styles.guardSecondaryBtnText,
+                                    driving?.licenceStatus === s && styles.guardChoiceChipTextSelected,
+                                  ]}>
+                                    {s === 'OTHER_OR_FOREIGN' ? 'Other/Foreign' : s.charAt(0) + s.slice(1).toLowerCase()}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          </View>
+
+                          {/* Licence number — only shown when licence is not NONE */}
+                          {driving?.licenceStatus && driving.licenceStatus !== 'NONE' ? (
+                            <View style={styles.guardProfileSection}>
+                              <Text style={styles.guardSectionLabel}>Licence Number</Text>
+                              {editingLicenceNumber ? (
+                                <View>
+                                  <TextInput
+                                    style={[styles.input, styles.guardProfileInput]}
+                                    placeholder="e.g. MORGA657054SM9IJ"
+                                    value={licenceNumberInput}
+                                    onChangeText={(t: string) => { setLicenceNumberInput(t); setLicenceNumberInputError(''); }}
+                                    autoCapitalize="characters"
+                                    maxLength={50}
+                                    autoFocus
+                                    accessibilityLabel="Driving licence number"
+                                  />
+                                  {licenceNumberInputError ? (
+                                    <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{licenceNumberInputError}</Text>
+                                  ) : null}
+                                  <Text style={styles.profileFieldHint}>Kept private and encrypted. Format varies by country.</Text>
+                                  <View style={styles.guardSecondaryRow}>
+                                    <Pressable
+                                      style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
+                                      onPress={handleSaveLicenceNumber}
+                                      disabled={drivingSaving}
+                                      accessibilityRole="button"
+                                      accessibilityLabel="Save driving licence number"
+                                      accessibilityState={{ disabled: drivingSaving, busy: drivingSaving }}
+                                    >
+                                      <Text style={styles.guardSecondaryBtnText}>{drivingSaving ? 'Saving...' : 'Save'}</Text>
+                                    </Pressable>
+                                    <Pressable
+                                      style={styles.guardSecondaryBtn}
+                                      onPress={() => { setEditingLicenceNumber(false); setLicenceNumberInput(''); setLicenceNumberInputError(''); }}
+                                      accessibilityRole="button"
+                                      accessibilityLabel="Cancel editing driving licence number"
+                                    >
+                                      <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                                    </Pressable>
+                                  </View>
+                                </View>
+                              ) : (
+                                <View>
+                                  <View style={styles.guardSecondaryRow}>
+                                    <Text
+                                      style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
+                                      accessibilityLabel={revealedLicenceValue
+                                        ? `Driving licence number ${revealedLicenceValue}`
+                                        : driving?.licenceNumberSet ? 'Driving licence number, hidden' : 'Driving licence number, not yet provided'}
+                                    >
+                                      {revealedLicenceValue
+                                        ? revealedLicenceValue
+                                        : driving?.licenceNumberMasked ?? (driving?.licenceNumberSet ? '••••••••••' : 'Not yet provided')}
+                                    </Text>
+                                    {revealedLicenceValue ? (
+                                      <Pressable style={styles.guardSecondaryBtn} onPress={clearLicenceReveal} accessibilityRole="button" accessibilityLabel="Hide driving licence number">
+                                        <Text style={styles.guardSecondaryBtnText}>Hide ({licenceRevealCountdown}s)</Text>
+                                      </Pressable>
+                                    ) : (
+                                      <Pressable
+                                        style={[styles.guardSecondaryBtn, (!driving?.licenceNumberSet || revealingLicence) && styles.buttonDisabled]}
+                                        disabled={!driving?.licenceNumberSet || revealingLicence}
+                                        onPress={handleRevealLicenceNumber}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Show driving licence number"
+                                        accessibilityState={{ disabled: !driving?.licenceNumberSet || revealingLicence, busy: revealingLicence }}
+                                      >
+                                        <Text style={styles.guardSecondaryBtnText}>{revealingLicence ? '...' : 'Show'}</Text>
+                                      </Pressable>
+                                    )}
+                                    <Pressable
+                                      style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
+                                      disabled={drivingSaving}
+                                      onPress={() => { clearLicenceReveal(); setEditingLicenceNumber(true); setLicenceNumberInput(''); }}
+                                      accessibilityRole="button"
+                                      accessibilityLabel={driving?.licenceNumberSet ? 'Edit driving licence number' : 'Add driving licence number'}
+                                      accessibilityState={{ disabled: drivingSaving }}
+                                    >
+                                      <Text style={styles.guardSecondaryBtnText}>{driving?.licenceNumberSet ? 'Edit' : 'Add'}</Text>
+                                    </Pressable>
+                                  </View>
+                                  {revealedLicenceValue ? (
+                                    <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
+                                      Hiding automatically in {licenceRevealCountdown}s
+                                    </Text>
+                                  ) : null}
+                                </View>
+                              )}
+                            </View>
+                          ) : null}
+
+                          {/* Primary travel method */}
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Primary way to get to work</Text>
+                            <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
+                              {(['CAR', 'MOTORCYCLE', 'PUBLIC_TRANSPORT', 'BICYCLE', 'WALK', 'OTHER'] as PrimaryTravelMethod[]).map((m) => (
+                                <Pressable
+                                  key={m}
+                                  style={[
+                                    styles.guardChoiceChip,
+                                    driving?.primaryTravelMethod === m && styles.guardChoiceChipSelected,
+                                    drivingSaving && styles.buttonDisabled,
+                                  ]}
+                                  disabled={drivingSaving}
+                                  onPress={() => handleUpdateDrivingField({ primaryTravelMethod: m })}
+                                  accessibilityRole="radio"
+                                  accessibilityState={{ checked: driving?.primaryTravelMethod === m, disabled: drivingSaving }}
+                                >
+                                  <Text style={[
+                                    styles.guardSecondaryBtnText,
+                                    driving?.primaryTravelMethod === m && styles.guardChoiceChipTextSelected,
+                                  ]}>
+                                    {m === 'PUBLIC_TRANSPORT' ? 'Public transport' : m.charAt(0) + m.slice(1).toLowerCase()}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          </View>
+
+                          {/* Max travel distance */}
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Max travel distance (miles)</Text>
+                            <Text style={[styles.profileFieldHint, { fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
+                              {driving?.maxTravelDistanceMiles != null ? `${driving.maxTravelDistanceMiles} miles` : 'Not set'}
+                            </Text>
+                            <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
+                              {[10, 20, 30, 50, 75, 100].map((d) => (
+                                <Pressable
+                                  key={d}
+                                  style={[
+                                    styles.guardChoiceChip,
+                                    driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipSelected,
+                                    drivingSaving && styles.buttonDisabled,
+                                  ]}
+                                  disabled={drivingSaving}
+                                  onPress={() => handleUpdateDrivingField({ maxTravelDistanceMiles: d })}
+                                  accessibilityRole="radio"
+                                  accessibilityLabel={`${d} miles`}
+                                  accessibilityState={{ checked: driving?.maxTravelDistanceMiles === d, disabled: drivingSaving }}
+                                >
+                                  <Text style={[
+                                    styles.guardSecondaryBtnText,
+                                    driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipTextSelected,
+                                  ]}>
+                                    {d}mi
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          </View>
+
+                          {/* Boolean toggles */}
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Travel preferences</Text>
+                            <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
+                              <Text style={styles.profileFieldHint}>Willing to drive to work</Text>
+                              <Switch
+                                value={!!driving?.willingToDriveToWork}
+                                onValueChange={(v: boolean) => handleUpdateDrivingField({ willingToDriveToWork: v })}
+                                disabled={drivingSaving}
+                                accessibilityLabel="Willing to drive to work"
+                              />
+                            </View>
+                            <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
+                              <Text style={styles.profileFieldHint}>Owns a vehicle</Text>
+                              <Switch
+                                value={!!driving?.ownsVehicle}
+                                onValueChange={(v: boolean) => handleUpdateDrivingField({ ownsVehicle: v })}
+                                disabled={drivingSaving}
+                                accessibilityLabel="Owns a vehicle"
+                              />
+                            </View>
+                            <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
+                              <Text style={styles.profileFieldHint}>Has access to a vehicle</Text>
+                              <Switch
+                                value={!!driving?.hasVehicleAccess}
+                                onValueChange={(v: boolean) => handleUpdateDrivingField({ hasVehicleAccess: v })}
+                                disabled={drivingSaving}
+                                accessibilityLabel="Has access to a vehicle"
+                              />
+                            </View>
+                          </View>
+
+                          <Text style={styles.profileFieldHint} testID="guard-profile-privacy-driving">{PRIVACY_COPY.drivingLicence.note}</Text>
+                        </View>
+                      )}
+                    </FeatureCard>
+                  </>
+                ) : null}
+                {profileSection === 'employmentPay' ? (
+                  <>
+                    {/* P1F — Employment & Engagement Record */}
+                    <FeatureCard
+                      title="Employment"
+                      subtitle="Your employment record with each security company"
+                    >
+                      {employmentsLoading ? (
+                        <Text style={styles.helperText}>Loading…</Text>
+                      ) : employmentsError ? (
+                        <Text style={[styles.helperText, { color: colors.danger }]}>{employmentsError}</Text>
+                      ) : employments.length === 0 ? (
+                        <Text style={styles.helperText}>No employment records on file. Your employing company will add your employment details.</Text>
+                      ) : (
+                        employments.map((emp) => (
+                          <View key={emp.companyGuardId} style={styles.summaryBlock}>
+                            <Text style={styles.profileFieldLabel}>Company</Text>
+                            <Text style={styles.profileFieldValue}>{emp.companyName}</Text>
+                            <Text style={styles.profileFieldLabel}>Role</Text>
+                            <Text style={styles.profileFieldValue}>{jobRoleLabel(emp.jobRole, emp.customRole)}</Text>
+                            <Text style={styles.profileFieldLabel}>Engagement</Text>
+                            <Text style={styles.profileFieldValue}>{profileEnumLabel(ENGAGEMENT_TYPE_LABELS, emp.engagementType)}</Text>
+                            <Text style={styles.profileFieldLabel}>Working arrangement</Text>
+                            <Text style={styles.profileFieldValue}>{profileEnumLabel(WORKING_ARRANGEMENT_LABELS, emp.workingArrangement)}</Text>
+                            <Text style={styles.profileFieldLabel}>Pay basis</Text>
+                            <Text style={styles.profileFieldValue}>{profileEnumLabel(PAY_BASIS_LABELS, emp.payBasis)}</Text>
+                            <Text style={styles.profileFieldLabel}>Start date</Text>
+                            <Text style={styles.profileFieldValue}>{emp.startDate}</Text>
+                            {emp.endDate ? (
+                              <>
+                                <Text style={styles.profileFieldLabel}>End date</Text>
+                                <Text style={styles.profileFieldValue}>{emp.endDate}</Text>
+                              </>
+                            ) : null}
+                            {emp.noticePeriodDays !== null ? (
+                              <>
+                                <Text style={styles.profileFieldLabel}>Notice period</Text>
+                                <Text style={styles.profileFieldValue}>{emp.noticePeriodDays} days</Text>
+                              </>
+                            ) : null}
+                          </View>
+                        ))
+                      )}
+                      <Text style={styles.profileFieldHint}>
+                        Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator.
+                      </Text>
+                    </FeatureCard>
+
+                    {/* P1G-B — Payroll / Payment Administration (read-only) */}
+                    <FeatureCard
+                      title="Pay Administration"
+                      subtitle="Your payment arrangement with each security company"
+                    >
+                      {payrollAdminLoading ? (
+                        <Text style={styles.helperText}>Loading…</Text>
+                      ) : payrollAdminError ? (
+                        <Text style={[styles.helperText, { color: colors.danger }]}>{payrollAdminError}</Text>
+                      ) : payrollAdminRecords.length === 0 ? (
+                        <Text style={styles.helperText}>No payment administration record on file. Your employing company will add your payment details.</Text>
+                      ) : (
+                        payrollAdminRecords.map((rec) => (
+                          <View key={rec.companyGuardId} style={styles.summaryBlock}>
+                            <Text style={styles.profileFieldLabel}>Company</Text>
+                            <Text style={styles.profileFieldValue}>{rec.companyName}</Text>
+                            <Text style={styles.profileFieldLabel}>Pay frequency</Text>
+                            <Text style={styles.profileFieldValue}>{formatPayFrequencyLabel(rec.payFrequency)}</Text>
+                            <Text style={styles.profileFieldLabel}>Payment status</Text>
+                            <Text style={styles.profileFieldValue}>{profileEnumLabel(PAYROLL_STATUS_LABELS, rec.payrollStatus)}</Text>
+                            {rec.payrollStartDate ? (
+                              <>
+                                <Text style={styles.profileFieldLabel}>Arrangement start</Text>
+                                <Text style={styles.profileFieldValue}>{rec.payrollStartDate}</Text>
+                              </>
+                            ) : null}
+                            {rec.payrollEndDate ? (
+                              <>
+                                <Text style={styles.profileFieldLabel}>Arrangement end</Text>
+                                <Text style={styles.profileFieldValue}>{rec.payrollEndDate}</Text>
+                              </>
+                            ) : null}
+                          </View>
+                        ))
+                      )}
+                      <Text style={styles.profileFieldHint}>
+                        Payment details are set by your employing company. Contact your company administrator if you have any questions.
+                      </Text>
+                    </FeatureCard>
+
+                    {/* P1G-A — Bank Details */}
+                    <FeatureCard
+                      title="Bank Details"
+                      subtitle="Your bank account for payroll payments"
+                    >
+                      {bankLoading ? (
+                        <Text style={styles.helperText}>Loading…</Text>
+                      ) : bankError ? (
+                        <Text style={[styles.helperText, { color: colors.danger }]}>{bankError}</Text>
+                      ) : !bankDetails?.bankSet ? (
+                        <View>
+                          <Text style={styles.helperText}>No bank details on file.</Text>
+                          {!editingBankDetails ? (
+                            <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={() => setEditingBankDetails(true)} accessibilityRole="button" accessibilityLabel="Add bank details">
+                              <Text style={styles.guardSecondaryBtnText}>Add bank details</Text>
+                            </Pressable>
+                          ) : (
+                            <View style={{ marginTop: 8 }}>
+                              <Text style={styles.profileFieldLabel}>Account holder name</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                value={bankHolderInput}
+                                onChangeText={setBankHolderInput}
+                                placeholder="e.g. John A Smith"
+                                autoCapitalize="words"
+                                maxLength={100}
+                                accessibilityLabel="Account holder name"
+                              />
+                              <Text style={styles.profileFieldLabel}>Sort code</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                value={bankSortInput}
+                                onChangeText={setBankSortInput}
+                                placeholder="e.g. 12-34-56"
+                                keyboardType="numeric"
+                                maxLength={8}
+                                accessibilityLabel="Sort code"
+                              />
+                              <Text style={styles.profileFieldLabel}>Account number</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                value={bankAccountInput}
+                                onChangeText={setBankAccountInput}
+                                placeholder="e.g. 12345678"
+                                keyboardType="numeric"
+                                maxLength={8}
+                                accessibilityLabel="Account number"
+                              />
+                              {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
+                              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                                <Pressable
+                                  style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
+                                  onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
+                                  disabled={bankSaving}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Cancel editing bank details"
+                                >
+                                  <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                                </Pressable>
+                                <Pressable
+                                  style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
+                                  onPress={handleSaveBankDetails}
+                                  disabled={bankSaving}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Save bank details"
+                                  accessibilityState={{ disabled: bankSaving, busy: bankSaving }}
+                                >
+                                  <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          )}
                         </View>
                       ) : (
                         <View>
-                          <View style={styles.guardSecondaryRow}>
-                            <Text
-                              style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
-                              accessibilityLabel={revealedLicenceValue
-                                ? `Driving licence number ${revealedLicenceValue}`
-                                : driving?.licenceNumberSet ? 'Driving licence number, hidden' : 'Driving licence number, not yet provided'}
-                            >
-                              {revealedLicenceValue
-                                ? revealedLicenceValue
-                                : driving?.licenceNumberMasked ?? (driving?.licenceNumberSet ? '••••••••••' : 'Not yet provided')}
-                            </Text>
-                            {revealedLicenceValue ? (
-                              <Pressable style={styles.guardSecondaryBtn} onPress={clearLicenceReveal} accessibilityRole="button" accessibilityLabel="Hide driving licence number">
-                                <Text style={styles.guardSecondaryBtnText}>Hide ({licenceRevealCountdown}s)</Text>
+                          {bankReveal ? (
+                            <View style={styles.summaryBlock}>
+                              <Text style={styles.profileFieldLabel}>Account holder</Text>
+                              <Text style={styles.profileFieldValue}>{bankReveal.accountHolderName ?? '—'}</Text>
+                              <Text style={styles.profileFieldLabel}>Sort code</Text>
+                              <Text style={styles.profileFieldValue}>{bankReveal.sortCode ?? '—'}</Text>
+                              <Text style={styles.profileFieldLabel}>Account number</Text>
+                              <Text style={styles.profileFieldValue}>{bankReveal.accountNumber ?? '—'}</Text>
+                              <Text style={[styles.helperText, { marginTop: 4 }]}>Hiding in {bankRevealCountdown}s</Text>
+                              <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={clearBankReveal} accessibilityRole="button" accessibilityLabel="Hide bank details now">
+                                <Text style={styles.guardSecondaryBtnText}>Hide now</Text>
                               </Pressable>
-                            ) : (
-                              <Pressable
-                                style={[styles.guardSecondaryBtn, (!driving?.licenceNumberSet || revealingLicence) && styles.buttonDisabled]}
-                                disabled={!driving?.licenceNumberSet || revealingLicence}
-                                onPress={handleRevealLicenceNumber}
-                                accessibilityRole="button"
-                                accessibilityLabel="Show driving licence number"
-                                accessibilityState={{ disabled: !driving?.licenceNumberSet || revealingLicence, busy: revealingLicence }}
-                              >
-                                <Text style={styles.guardSecondaryBtnText}>{revealingLicence ? '...' : 'Show'}</Text>
+                            </View>
+                          ) : (
+                            <View style={styles.summaryBlock}>
+                              <Text style={styles.profileFieldLabel}>Account holder</Text>
+                              <Text style={styles.profileFieldValue}>{bankDetails.accountHolderNameMasked ?? '••••••'}</Text>
+                              <Text style={styles.profileFieldLabel}>Sort code</Text>
+                              <Text style={styles.profileFieldValue}>{bankDetails.sortCodeMasked ?? '——'}</Text>
+                              <Text style={styles.profileFieldLabel}>Account number</Text>
+                              <Text style={styles.profileFieldValue}>{bankDetails.accountNumberMasked ?? '——'}</Text>
+                            </View>
+                          )}
+
+                          {!editingBankDetails ? (
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                              {!bankReveal ? (
+                                <Pressable
+                                  style={[styles.guardSecondaryBtn, bankRevealing && styles.buttonDisabled]}
+                                  onPress={handleRevealBankDetails}
+                                  disabled={bankRevealing}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Show bank details"
+                                  accessibilityState={{ disabled: bankRevealing, busy: bankRevealing }}
+                                >
+                                  <Text style={styles.guardSecondaryBtnText}>{bankRevealing ? 'Loading…' : 'Show details'}</Text>
+                                </Pressable>
+                              ) : null}
+                              <Pressable style={styles.guardSecondaryBtn} onPress={() => { setEditingBankDetails(true); clearBankReveal(); }} accessibilityRole="button" accessibilityLabel="Update bank details">
+                                <Text style={styles.guardSecondaryBtnText}>Update</Text>
                               </Pressable>
-                            )}
-                            <Pressable
-                              style={[styles.guardSecondaryBtn, drivingSaving && styles.buttonDisabled]}
-                              disabled={drivingSaving}
-                              onPress={() => { clearLicenceReveal(); setEditingLicenceNumber(true); setLicenceNumberInput(''); }}
-                              accessibilityRole="button"
-                              accessibilityLabel={driving?.licenceNumberSet ? 'Edit driving licence number' : 'Add driving licence number'}
-                              accessibilityState={{ disabled: drivingSaving }}
-                            >
-                              <Text style={styles.guardSecondaryBtnText}>{driving?.licenceNumberSet ? 'Edit' : 'Add'}</Text>
-                            </Pressable>
-                          </View>
-                          {revealedLicenceValue ? (
-                            <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
-                              Hiding automatically in {licenceRevealCountdown}s
-                            </Text>
-                          ) : null}
+                              <Pressable style={[styles.guardSecondaryBtn, { borderColor: colors.danger }]} onPress={handleDeleteBankDetails} accessibilityRole="button" accessibilityLabel="Remove bank details">
+                                <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove</Text>
+                              </Pressable>
+                            </View>
+                          ) : (
+                            <View style={{ marginTop: 8 }}>
+                              <Text style={styles.profileFieldLabel}>Account holder name</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                value={bankHolderInput}
+                                onChangeText={setBankHolderInput}
+                                accessibilityLabel="New account holder name (leave blank to keep the current one)"
+                                placeholder="Leave blank to keep existing"
+                                autoCapitalize="words"
+                                maxLength={100}
+                              />
+                              <Text style={styles.profileFieldLabel}>Sort code</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                value={bankSortInput}
+                                onChangeText={setBankSortInput}
+                                accessibilityLabel="New sort code (leave blank to keep the current one)"
+                                placeholder="Leave blank to keep existing"
+                                keyboardType="numeric"
+                                maxLength={8}
+                              />
+                              <Text style={styles.profileFieldLabel}>Account number</Text>
+                              <TextInput
+                                style={[styles.input, styles.guardProfileInput]}
+                                value={bankAccountInput}
+                                onChangeText={setBankAccountInput}
+                                accessibilityLabel="New account number (leave blank to keep the current one)"
+                                placeholder="Leave blank to keep existing"
+                                keyboardType="numeric"
+                                maxLength={8}
+                              />
+                              {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
+                              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                                <Pressable
+                                  style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
+                                  onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
+                                  disabled={bankSaving}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Cancel editing bank details"
+                                >
+                                  <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                                </Pressable>
+                                <Pressable
+                                  style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
+                                  onPress={handleSaveBankDetails}
+                                  disabled={bankSaving}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Save bank details"
+                                  accessibilityState={{ disabled: bankSaving, busy: bankSaving }}
+                                >
+                                  <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          )}
                         </View>
                       )}
-                    </View>
-                  ) : null}
+                      <Text style={styles.profileFieldHint} testID="guard-profile-privacy-bank">{PRIVACY_COPY.bankDetails.note}</Text>
+                    </FeatureCard>
 
-                  {/* Primary travel method */}
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Primary way to get to work</Text>
-                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
-                      {(['CAR', 'MOTORCYCLE', 'PUBLIC_TRANSPORT', 'BICYCLE', 'WALK', 'OTHER'] as PrimaryTravelMethod[]).map((m) => (
-                        <Pressable
-                          key={m}
-                          style={[
-                            styles.guardChoiceChip,
-                            driving?.primaryTravelMethod === m && styles.guardChoiceChipSelected,
-                            drivingSaving && styles.buttonDisabled,
-                          ]}
-                          disabled={drivingSaving}
-                          onPress={() => handleUpdateDrivingField({ primaryTravelMethod: m })}
-                          accessibilityRole="radio"
-                          accessibilityState={{ checked: driving?.primaryTravelMethod === m, disabled: drivingSaving }}
-                        >
-                          <Text style={[
-                            styles.guardSecondaryBtnText,
-                            driving?.primaryTravelMethod === m && styles.guardChoiceChipTextSelected,
-                          ]}>
-                            {m === 'PUBLIC_TRANSPORT' ? 'Public transport' : m.charAt(0) + m.slice(1).toLowerCase()}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-
-                  {/* Max travel distance */}
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Max travel distance (miles)</Text>
-                    <Text style={[styles.profileFieldHint, { fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}>
-                      {driving?.maxTravelDistanceMiles != null ? `${driving.maxTravelDistanceMiles} miles` : 'Not set'}
-                    </Text>
-                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
-                      {[10, 20, 30, 50, 75, 100].map((d) => (
-                        <Pressable
-                          key={d}
-                          style={[
-                            styles.guardChoiceChip,
-                            driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipSelected,
-                            drivingSaving && styles.buttonDisabled,
-                          ]}
-                          disabled={drivingSaving}
-                          onPress={() => handleUpdateDrivingField({ maxTravelDistanceMiles: d })}
-                          accessibilityRole="radio"
-                          accessibilityLabel={`${d} miles`}
-                          accessibilityState={{ checked: driving?.maxTravelDistanceMiles === d, disabled: drivingSaving }}
-                        >
-                          <Text style={[
-                            styles.guardSecondaryBtnText,
-                            driving?.maxTravelDistanceMiles === d && styles.guardChoiceChipTextSelected,
-                          ]}>
-                            {d}mi
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-
-                  {/* Boolean toggles */}
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Travel preferences</Text>
-                    <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
-                      <Text style={styles.profileFieldHint}>Willing to drive to work</Text>
-                      <Switch
-                        value={!!driving?.willingToDriveToWork}
-                        onValueChange={(v: boolean) => handleUpdateDrivingField({ willingToDriveToWork: v })}
-                        disabled={drivingSaving}
-                        accessibilityLabel="Willing to drive to work"
-                      />
-                    </View>
-                    <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
-                      <Text style={styles.profileFieldHint}>Owns a vehicle</Text>
-                      <Switch
-                        value={!!driving?.ownsVehicle}
-                        onValueChange={(v: boolean) => handleUpdateDrivingField({ ownsVehicle: v })}
-                        disabled={drivingSaving}
-                        accessibilityLabel="Owns a vehicle"
-                      />
-                    </View>
-                    <View style={[styles.guardSecondaryRow, { marginBottom: 8, justifyContent: 'space-between' }]}>
-                      <Text style={styles.profileFieldHint}>Has access to a vehicle</Text>
-                      <Switch
-                        value={!!driving?.hasVehicleAccess}
-                        onValueChange={(v: boolean) => handleUpdateDrivingField({ hasVehicleAccess: v })}
-                        disabled={drivingSaving}
-                        accessibilityLabel="Has access to a vehicle"
-                      />
-                    </View>
-                  </View>
-
-                  <Text style={styles.profileFieldHint} testID="guard-profile-privacy-driving">{PRIVACY_COPY.drivingLicence.note}</Text>
-                </View>
-              )}
-            </FeatureCard>
-
-            {/* P1E — Emergency Contact */}
-            <FeatureCard
-              title="Emergency contact"
-              subtitle="A person we should contact in an emergency. Phone numbers are encrypted at rest."
-              style={styles.guardProfileCard}
-            >
-              {emergencyContactLoading ? (
-                <Text style={styles.helperText}>Loading...</Text>
-              ) : emergencyContactError ? (
-                <Text style={[styles.helperText, { color: colors.danger }]}>{emergencyContactError}</Text>
-              ) : editingEmergencyContact ? (
-                <View style={styles.guardProfileBody}>
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Contact name</Text>
-                    <TextInput
-                      style={[styles.input, styles.guardProfileInput]}
-                      value={ecNameInput}
-                      onChangeText={setEcNameInput}
-                      placeholder="Full name"
-                      placeholderTextColor={colors.textSecondary}
-                      maxLength={100}
-                      editable={!emergencyContactSaving}
-                      accessibilityLabel="Emergency contact name"
-                    />
-                  </View>
-
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Relationship</Text>
-                    <View style={styles.guardChoiceRow} accessibilityRole="radiogroup">
-                      {(['SPOUSE_PARTNER', 'PARENT', 'SIBLING', 'CHILD', 'RELATIVE', 'FRIEND', 'OTHER'] as EmergencyContactRelationship[]).map((r) => (
-                        <Pressable
-                          key={r}
-                          style={[
-                            styles.guardChoiceChip,
-                            ecRelationshipInput === r && styles.guardChoiceChipSelected,
-                            emergencyContactSaving && styles.buttonDisabled,
-                          ]}
-                          disabled={emergencyContactSaving}
-                          onPress={() => setEcRelationshipInput(r)}
-                          accessibilityRole="radio"
-                          accessibilityState={{ checked: ecRelationshipInput === r, disabled: emergencyContactSaving }}
-                        >
-                          <Text style={[
-                            styles.guardSecondaryBtnText,
-                            ecRelationshipInput === r && styles.guardChoiceChipTextSelected,
-                          ]}>
-                            {r === 'SPOUSE_PARTNER' ? 'Spouse/Partner' : r.charAt(0) + r.slice(1).toLowerCase()}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                    {ecRelationshipInput === 'OTHER' ? (
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput, { marginTop: 8 }]}
-                        value={ecCustomRelationshipInput}
-                        onChangeText={setEcCustomRelationshipInput}
-                        placeholder="Describe relationship (optional)"
-                        placeholderTextColor={colors.textSecondary}
-                        maxLength={100}
-                        editable={!emergencyContactSaving}
-                        accessibilityLabel="Describe the relationship (optional)"
-                      />
-                    ) : null}
-                  </View>
-
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Primary phone number</Text>
-                    <TextInput
-                      style={[styles.input, styles.guardProfileInput]}
-                      value={ecPrimaryPhoneInput}
-                      onChangeText={setEcPrimaryPhoneInput}
-                      placeholder="+44 7700 000000"
-                      placeholderTextColor={colors.textSecondary}
-                      keyboardType="phone-pad"
-                      maxLength={20}
-                      editable={!emergencyContactSaving}
-                      accessibilityLabel="Emergency contact primary phone number"
-                    />
-                  </View>
-
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Alternative phone number (optional)</Text>
-                    <TextInput
-                      style={[styles.input, styles.guardProfileInput]}
-                      value={ecAlternatePhoneInput}
-                      onChangeText={setEcAlternatePhoneInput}
-                      placeholder="+44 7700 000001"
-                      placeholderTextColor={colors.textSecondary}
-                      keyboardType="phone-pad"
-                      maxLength={20}
-                      editable={!emergencyContactSaving}
-                      accessibilityLabel="Emergency contact alternative phone number (optional)"
-                    />
-                  </View>
-
-                  {ecInputError ? (
-                    <Text style={[styles.helperText, { color: colors.danger }]}>{ecInputError}</Text>
-                  ) : null}
-
-                  <View style={styles.guardSecondaryRow}>
-                    <Pressable
-                      style={[styles.guardSecondaryBtn, emergencyContactSaving && styles.buttonDisabled]}
-                      onPress={() => setEditingEmergencyContact(false)}
-                      disabled={emergencyContactSaving}
-                      accessibilityRole="button"
-                      accessibilityLabel="Cancel editing emergency contact"
+                    <FeatureCard
+                      title="Tax identifiers"
+                      subtitle="Encrypted and masked by default. Who can see them is explained below."
+                      style={styles.guardProfileCard}
                     >
-                      <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                      {identityLoading ? (
+                        <Text style={styles.helperText}>Loading...</Text>
+                      ) : identityError ? (
+                        <Text style={[styles.helperText, { color: colors.danger }]}>{identityError}</Text>
+                      ) : (
+                        <View style={styles.guardProfileBody}>
+
+                          {/* NINO */}
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>National Insurance Number</Text>
+                            {editingNino ? (
+                              <View>
+                                <TextInput
+                                  style={[styles.input, styles.guardProfileInput]}
+                                  placeholder="Example: AB 12 34 56 C"
+                                  value={ninoInput}
+                                  // Spacing is presentation only. The Guard can type or paste it compact,
+                                  // spaced or in lowercase; this groups it as they go and the value is
+                                  // normalised again before it is sent.
+                                  onChangeText={(t: string) => { setNinoInput(formatNinoInput(t)); setNinoInputError(''); }}
+                                  autoCapitalize="characters"
+                                  autoCorrect={false}
+                                  // A grouped NINO is 13 characters: "AB 12 34 56 C".
+                                  maxLength={13}
+                                  autoFocus
+                                  accessibilityLabel="National Insurance number"
+                                />
+                                {ninoInputError ? (
+                                  <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{ninoInputError}</Text>
+                                ) : null}
+                                <Text style={[styles.profileFieldHint]}>Kept private and encrypted. You can type it with or without spaces.</Text>
+                                <View style={styles.guardSecondaryRow}>
+                                  <Pressable
+                                    style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                                    onPress={handleSaveNino}
+                                    disabled={identitySaving}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Save National Insurance number"
+                                    accessibilityState={{ disabled: identitySaving, busy: identitySaving }}
+                                  >
+                                    <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
+                                  </Pressable>
+                                  <Pressable
+                                    style={styles.guardSecondaryBtn}
+                                    onPress={() => { setEditingNino(false); setNinoInput(''); setNinoInputError(''); }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Cancel editing National Insurance number"
+                                  >
+                                    <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                                  </Pressable>
+                                </View>
+                              </View>
+                            ) : (
+                              <View>
+                                <View style={styles.guardSecondaryRow}>
+                                  <Text
+                                    style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
+                                    accessibilityLabel={revealedField === 'nino' && revealedValue
+                                      ? `National Insurance number ${revealedValue}`
+                                      : identity?.ninoSet ? 'National Insurance number, hidden' : 'National Insurance number, not yet provided'}
+                                  >
+                                    {revealedField === 'nino' && revealedValue
+                                      ? revealedValue
+                                      : identity?.ninoMasked ?? (identity?.ninoSet ? '••••••••••' : 'Not yet provided')}
+                                  </Text>
+                                  {revealedField === 'nino' ? (
+                                    <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal} accessibilityRole="button" accessibilityLabel="Hide National Insurance number">
+                                      <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
+                                    </Pressable>
+                                  ) : (
+                                    <Pressable
+                                      style={[styles.guardSecondaryBtn, (!identity?.ninoSet || revealing) && styles.buttonDisabled]}
+                                      disabled={!identity?.ninoSet || revealing}
+                                      onPress={() => handleRevealField('nino')}
+                                      accessibilityRole="button"
+                                      accessibilityLabel="Show National Insurance number"
+                                      accessibilityState={{ disabled: !identity?.ninoSet || revealing, busy: revealing }}
+                                    >
+                                      <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
+                                    </Pressable>
+                                  )}
+                                  <Pressable
+                                    style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                                    disabled={identitySaving}
+                                    onPress={() => { clearReveal(); setEditingNino(true); setNinoInput(''); }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={identity?.ninoSet ? 'Edit National Insurance number' : 'Add National Insurance number'}
+                                    accessibilityState={{ disabled: identitySaving }}
+                                  >
+                                    <Text style={styles.guardSecondaryBtnText}>{identity?.ninoSet ? 'Edit' : 'Add'}</Text>
+                                  </Pressable>
+                                </View>
+                                {revealedField === 'nino' ? (
+                                  <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
+                                    Hiding automatically in {revealCountdown}s
+                                  </Text>
+                                ) : null}
+                              </View>
+                            )}
+                          </View>
+
+                          {/* UTR */}
+                          <View style={styles.guardProfileSection}>
+                            <Text style={styles.guardSectionLabel}>Unique Taxpayer Reference (UTR)</Text>
+                            {editingUtr ? (
+                              <View>
+                                <TextInput
+                                  style={[styles.input, styles.guardProfileInput]}
+                                  placeholder="10 digits"
+                                  value={utrInput}
+                                  onChangeText={(t: string) => { setUtrInput(t); setUtrInputError(''); }}
+                                  keyboardType="number-pad"
+                                  maxLength={10}
+                                  autoFocus
+                                  accessibilityLabel="Unique Taxpayer Reference"
+                                />
+                                {utrInputError ? (
+                                  <Text style={[styles.helperText, { color: colors.danger, marginTop: 4 }]}>{utrInputError}</Text>
+                                ) : null}
+                                <Text style={[styles.profileFieldHint]}>Your 10-digit UTR from HMRC — kept private and encrypted.</Text>
+                                <View style={styles.guardSecondaryRow}>
+                                  <Pressable
+                                    style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                                    onPress={handleSaveUtr}
+                                    disabled={identitySaving}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Save Unique Taxpayer Reference"
+                                    accessibilityState={{ disabled: identitySaving, busy: identitySaving }}
+                                  >
+                                    <Text style={styles.guardSecondaryBtnText}>{identitySaving ? 'Saving...' : 'Save'}</Text>
+                                  </Pressable>
+                                  <Pressable
+                                    style={styles.guardSecondaryBtn}
+                                    onPress={() => { setEditingUtr(false); setUtrInput(''); setUtrInputError(''); }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Cancel editing Unique Taxpayer Reference"
+                                  >
+                                    <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
+                                  </Pressable>
+                                </View>
+                              </View>
+                            ) : (
+                              <View>
+                                <View style={styles.guardSecondaryRow}>
+                                  <Text
+                                    style={[styles.profileFieldHint, { flex: 1, fontSize: 15, fontWeight: '600', color: colors.textPrimary }]}
+                                    accessibilityLabel={revealedField === 'utr' && revealedValue
+                                      ? `Unique Taxpayer Reference ${revealedValue}`
+                                      : identity?.utrSet ? 'Unique Taxpayer Reference, hidden' : 'Unique Taxpayer Reference, not yet provided'}
+                                  >
+                                    {revealedField === 'utr' && revealedValue
+                                      ? revealedValue
+                                      : identity?.utrMasked ?? (identity?.utrSet ? '••••••••••' : 'Not yet provided')}
+                                  </Text>
+                                  {revealedField === 'utr' ? (
+                                    <Pressable style={styles.guardSecondaryBtn} onPress={clearReveal} accessibilityRole="button" accessibilityLabel="Hide Unique Taxpayer Reference">
+                                      <Text style={styles.guardSecondaryBtnText}>Hide ({revealCountdown}s)</Text>
+                                    </Pressable>
+                                  ) : (
+                                    <Pressable
+                                      style={[styles.guardSecondaryBtn, (!identity?.utrSet || revealing) && styles.buttonDisabled]}
+                                      disabled={!identity?.utrSet || revealing}
+                                      onPress={() => handleRevealField('utr')}
+                                      accessibilityRole="button"
+                                      accessibilityLabel="Show Unique Taxpayer Reference"
+                                      accessibilityState={{ disabled: !identity?.utrSet || revealing, busy: revealing }}
+                                    >
+                                      <Text style={styles.guardSecondaryBtnText}>{revealing ? '...' : 'Show'}</Text>
+                                    </Pressable>
+                                  )}
+                                  <Pressable
+                                    style={[styles.guardSecondaryBtn, identitySaving && styles.buttonDisabled]}
+                                    disabled={identitySaving}
+                                    onPress={() => { clearReveal(); setEditingUtr(true); setUtrInput(''); }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={identity?.utrSet ? 'Edit Unique Taxpayer Reference' : 'Add Unique Taxpayer Reference'}
+                                    accessibilityState={{ disabled: identitySaving }}
+                                  >
+                                    <Text style={styles.guardSecondaryBtnText}>{identity?.utrSet ? 'Edit' : 'Add'}</Text>
+                                  </Pressable>
+                                </View>
+                                {revealedField === 'utr' ? (
+                                  <Text style={[styles.profileFieldHint, { color: colors.warning }]}>
+                                    Hiding automatically in {revealCountdown}s
+                                  </Text>
+                                ) : null}
+                              </View>
+                            )}
+                          </View>
+
+                          <Text style={styles.profileFieldHint} testID="guard-profile-privacy-tax">{PRIVACY_COPY.taxIdentifiers.note}</Text>
+                        </View>
+                      )}
+                    </FeatureCard>
+                  </>
+                ) : null}
+                {profileSection === 'screening' ? (
+                  <GuardScreeningPanel onContinue={() => openScreeningJourney('screening')} />
+                ) : null}
+                {profileSection === 'privacyAccount' ? (
+                  <>
+                    <GuardPrivacySummary />
+                    <AccountSettingsPanel email={user?.email} onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout())} />
+                    <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Log out">
+                      <Text style={styles.offerRejectBtnText}>Log out</Text>
                     </Pressable>
-                    <Pressable
-                      style={[styles.guardSecondaryBtn, styles.guardProfilePrimarySave, emergencyContactSaving && styles.buttonDisabled]}
-                      onPress={handleSaveEmergencyContact}
-                      disabled={emergencyContactSaving}
-                      accessibilityRole="button"
-                      accessibilityLabel="Save emergency contact"
-                      accessibilityState={{ disabled: emergencyContactSaving, busy: emergencyContactSaving }}
-                    >
-                      <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>
-                        {emergencyContactSaving ? 'Saving…' : 'Save'}
-                      </Text>
-                    </Pressable>
-                  </View>
-
-                  {emergencyContact ? (
-                    <Pressable
-                      style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }, emergencyContactSaving && styles.buttonDisabled]}
-                      onPress={handleRemoveEmergencyContact}
-                      disabled={emergencyContactSaving}
-                      accessibilityRole="button"
-                      accessibilityLabel="Remove emergency contact"
-                    >
-                      <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove emergency contact</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              ) : emergencyContact ? (
-                <View style={styles.guardProfileBody}>
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Contact name</Text>
-                    <Text style={styles.profileFieldValue}>{emergencyContact.contactName}</Text>
-                  </View>
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Relationship</Text>
-                    <Text style={styles.profileFieldValue}>
-                      {emergencyContact.relationship === 'OTHER' && emergencyContact.customRelationship
-                        ? emergencyContact.customRelationship
-                        : profileEnumLabel(RELATIONSHIP_LABELS, emergencyContact.relationship)}
-                    </Text>
-                  </View>
-                  <View style={styles.guardProfileSection}>
-                    <Text style={styles.guardSectionLabel}>Primary phone number</Text>
-                    <Text style={styles.profileFieldValue}>{emergencyContact.primaryPhone}</Text>
-                  </View>
-                  {emergencyContact.alternatePhone ? (
-                    <View style={styles.guardProfileSection}>
-                      <Text style={styles.guardSectionLabel}>Alternative phone number</Text>
-                      <Text style={styles.profileFieldValue}>{emergencyContact.alternatePhone}</Text>
-                    </View>
-                  ) : null}
-                  <Pressable
-                    style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
-                    onPress={openEmergencyContactEditor}
-                    disabled={emergencyContactSaving}
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit emergency contact"
-                  >
-                    <Text style={styles.guardSecondaryBtnText}>Edit</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={styles.guardProfileBody}>
-                  <Text style={styles.profileFieldHint}>No emergency contact saved.</Text>
-                  <Pressable
-                    style={[styles.guardSecondaryBtn, { alignSelf: 'flex-start' }]}
-                    onPress={openEmergencyContactEditor}
-                    disabled={emergencyContactSaving}
-                    accessibilityRole="button"
-                    accessibilityLabel="Add emergency contact"
-                  >
-                    <Text style={styles.guardSecondaryBtnText}>Add emergency contact</Text>
-                  </Pressable>
-                </View>
-              )}
-
-              {!editingEmergencyContact ? (
-                <Text style={styles.profileFieldHint} testID="guard-profile-privacy-emergency">{PRIVACY_COPY.emergencyContact.note}</Text>
-              ) : null}
-            </FeatureCard>
-
-            {/* P1F — Employment & Engagement Record */}
-            <FeatureCard
-              title="Employment"
-              subtitle="Your employment record with each security company"
-            >
-              {employmentsLoading ? (
-                <Text style={styles.helperText}>Loading…</Text>
-              ) : employmentsError ? (
-                <Text style={[styles.helperText, { color: colors.danger }]}>{employmentsError}</Text>
-              ) : employments.length === 0 ? (
-                <Text style={styles.helperText}>No employment records on file. Your employing company will add your employment details.</Text>
-              ) : (
-                employments.map((emp) => (
-                  <View key={emp.companyGuardId} style={styles.summaryBlock}>
-                    <Text style={styles.profileFieldLabel}>Company</Text>
-                    <Text style={styles.profileFieldValue}>{emp.companyName}</Text>
-                    <Text style={styles.profileFieldLabel}>Role</Text>
-                    <Text style={styles.profileFieldValue}>{jobRoleLabel(emp.jobRole, emp.customRole)}</Text>
-                    <Text style={styles.profileFieldLabel}>Engagement</Text>
-                    <Text style={styles.profileFieldValue}>{profileEnumLabel(ENGAGEMENT_TYPE_LABELS, emp.engagementType)}</Text>
-                    <Text style={styles.profileFieldLabel}>Working arrangement</Text>
-                    <Text style={styles.profileFieldValue}>{profileEnumLabel(WORKING_ARRANGEMENT_LABELS, emp.workingArrangement)}</Text>
-                    <Text style={styles.profileFieldLabel}>Pay basis</Text>
-                    <Text style={styles.profileFieldValue}>{profileEnumLabel(PAY_BASIS_LABELS, emp.payBasis)}</Text>
-                    <Text style={styles.profileFieldLabel}>Start date</Text>
-                    <Text style={styles.profileFieldValue}>{emp.startDate}</Text>
-                    {emp.endDate ? (
-                      <>
-                        <Text style={styles.profileFieldLabel}>End date</Text>
-                        <Text style={styles.profileFieldValue}>{emp.endDate}</Text>
-                      </>
-                    ) : null}
-                    {emp.noticePeriodDays !== null ? (
-                      <>
-                        <Text style={styles.profileFieldLabel}>Notice period</Text>
-                        <Text style={styles.profileFieldValue}>{emp.noticePeriodDays} days</Text>
-                      </>
-                    ) : null}
-                  </View>
-                ))
-              )}
-              <Text style={styles.profileFieldHint}>
-                Employment details are set by your employing company. If you believe any information is incorrect, contact your company administrator.
-              </Text>
-            </FeatureCard>
-
-            {/* P1G-A — Bank Details */}
-            <FeatureCard
-              title="Bank Details"
-              subtitle="Your bank account for payroll payments"
-            >
-              {bankLoading ? (
-                <Text style={styles.helperText}>Loading…</Text>
-              ) : bankError ? (
-                <Text style={[styles.helperText, { color: colors.danger }]}>{bankError}</Text>
-              ) : !bankDetails?.bankSet ? (
-                <View>
-                  <Text style={styles.helperText}>No bank details on file.</Text>
-                  {!editingBankDetails ? (
-                    <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={() => setEditingBankDetails(true)} accessibilityRole="button" accessibilityLabel="Add bank details">
-                      <Text style={styles.guardSecondaryBtnText}>Add bank details</Text>
-                    </Pressable>
-                  ) : (
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={styles.profileFieldLabel}>Account holder name</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={bankHolderInput}
-                        onChangeText={setBankHolderInput}
-                        placeholder="e.g. John A Smith"
-                        autoCapitalize="words"
-                        maxLength={100}
-                        accessibilityLabel="Account holder name"
-                      />
-                      <Text style={styles.profileFieldLabel}>Sort code</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={bankSortInput}
-                        onChangeText={setBankSortInput}
-                        placeholder="e.g. 12-34-56"
-                        keyboardType="numeric"
-                        maxLength={8}
-                        accessibilityLabel="Sort code"
-                      />
-                      <Text style={styles.profileFieldLabel}>Account number</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={bankAccountInput}
-                        onChangeText={setBankAccountInput}
-                        placeholder="e.g. 12345678"
-                        keyboardType="numeric"
-                        maxLength={8}
-                        accessibilityLabel="Account number"
-                      />
-                      {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                        <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
-                          onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
-                          disabled={bankSaving}
-                          accessibilityRole="button"
-                          accessibilityLabel="Cancel editing bank details"
-                        >
-                          <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
-                        </Pressable>
-                        <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
-                          onPress={handleSaveBankDetails}
-                          disabled={bankSaving}
-                          accessibilityRole="button"
-                          accessibilityLabel="Save bank details"
-                          accessibilityState={{ disabled: bankSaving, busy: bankSaving }}
-                        >
-                          <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              ) : (
-                <View>
-                  {bankReveal ? (
-                    <View style={styles.summaryBlock}>
-                      <Text style={styles.profileFieldLabel}>Account holder</Text>
-                      <Text style={styles.profileFieldValue}>{bankReveal.accountHolderName ?? '—'}</Text>
-                      <Text style={styles.profileFieldLabel}>Sort code</Text>
-                      <Text style={styles.profileFieldValue}>{bankReveal.sortCode ?? '—'}</Text>
-                      <Text style={styles.profileFieldLabel}>Account number</Text>
-                      <Text style={styles.profileFieldValue}>{bankReveal.accountNumber ?? '—'}</Text>
-                      <Text style={[styles.helperText, { marginTop: 4 }]}>Hiding in {bankRevealCountdown}s</Text>
-                      <Pressable style={[styles.guardSecondaryBtn, { marginTop: 8 }]} onPress={clearBankReveal} accessibilityRole="button" accessibilityLabel="Hide bank details now">
-                        <Text style={styles.guardSecondaryBtnText}>Hide now</Text>
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <View style={styles.summaryBlock}>
-                      <Text style={styles.profileFieldLabel}>Account holder</Text>
-                      <Text style={styles.profileFieldValue}>{bankDetails.accountHolderNameMasked ?? '••••••'}</Text>
-                      <Text style={styles.profileFieldLabel}>Sort code</Text>
-                      <Text style={styles.profileFieldValue}>{bankDetails.sortCodeMasked ?? '——'}</Text>
-                      <Text style={styles.profileFieldLabel}>Account number</Text>
-                      <Text style={styles.profileFieldValue}>{bankDetails.accountNumberMasked ?? '——'}</Text>
-                    </View>
-                  )}
-
-                  {!editingBankDetails ? (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                      {!bankReveal ? (
-                        <Pressable
-                          style={[styles.guardSecondaryBtn, bankRevealing && styles.buttonDisabled]}
-                          onPress={handleRevealBankDetails}
-                          disabled={bankRevealing}
-                          accessibilityRole="button"
-                          accessibilityLabel="Show bank details"
-                          accessibilityState={{ disabled: bankRevealing, busy: bankRevealing }}
-                        >
-                          <Text style={styles.guardSecondaryBtnText}>{bankRevealing ? 'Loading…' : 'Show details'}</Text>
-                        </Pressable>
-                      ) : null}
-                      <Pressable style={styles.guardSecondaryBtn} onPress={() => { setEditingBankDetails(true); clearBankReveal(); }} accessibilityRole="button" accessibilityLabel="Update bank details">
-                        <Text style={styles.guardSecondaryBtnText}>Update</Text>
-                      </Pressable>
-                      <Pressable style={[styles.guardSecondaryBtn, { borderColor: colors.danger }]} onPress={handleDeleteBankDetails} accessibilityRole="button" accessibilityLabel="Remove bank details">
-                        <Text style={[styles.guardSecondaryBtnText, { color: colors.danger }]}>Remove</Text>
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={styles.profileFieldLabel}>Account holder name</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={bankHolderInput}
-                        onChangeText={setBankHolderInput}
-                        accessibilityLabel="New account holder name (leave blank to keep the current one)"
-                        placeholder="Leave blank to keep existing"
-                        autoCapitalize="words"
-                        maxLength={100}
-                      />
-                      <Text style={styles.profileFieldLabel}>Sort code</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={bankSortInput}
-                        onChangeText={setBankSortInput}
-                        accessibilityLabel="New sort code (leave blank to keep the current one)"
-                        placeholder="Leave blank to keep existing"
-                        keyboardType="numeric"
-                        maxLength={8}
-                      />
-                      <Text style={styles.profileFieldLabel}>Account number</Text>
-                      <TextInput
-                        style={[styles.input, styles.guardProfileInput]}
-                        value={bankAccountInput}
-                        onChangeText={setBankAccountInput}
-                        accessibilityLabel="New account number (leave blank to keep the current one)"
-                        placeholder="Leave blank to keep existing"
-                        keyboardType="numeric"
-                        maxLength={8}
-                      />
-                      {bankInputError ? <Text style={[styles.helperText, { color: colors.danger }]}>{bankInputError}</Text> : null}
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                        <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1 }, bankSaving && styles.buttonDisabled]}
-                          onPress={() => { setEditingBankDetails(false); setBankHolderInput(''); setBankSortInput(''); setBankAccountInput(''); setBankInputError(''); }}
-                          disabled={bankSaving}
-                          accessibilityRole="button"
-                          accessibilityLabel="Cancel editing bank details"
-                        >
-                          <Text style={styles.guardSecondaryBtnText}>Cancel</Text>
-                        </Pressable>
-                        <Pressable
-                          style={[styles.guardSecondaryBtn, { flex: 1 }, styles.guardProfilePrimarySave, bankSaving && styles.buttonDisabled]}
-                          onPress={handleSaveBankDetails}
-                          disabled={bankSaving}
-                          accessibilityRole="button"
-                          accessibilityLabel="Save bank details"
-                          accessibilityState={{ disabled: bankSaving, busy: bankSaving }}
-                        >
-                          <Text style={[styles.guardSecondaryBtnText, styles.guardProfilePrimarySaveText]}>{bankSaving ? 'Saving…' : 'Save'}</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              )}
-              <Text style={styles.profileFieldHint} testID="guard-profile-privacy-bank">{PRIVACY_COPY.bankDetails.note}</Text>
-            </FeatureCard>
-
-            {/* P1G-B — Payroll / Payment Administration (read-only) */}
-            <FeatureCard
-              title="Pay Administration"
-              subtitle="Your payment arrangement with each security company"
-            >
-              {payrollAdminLoading ? (
-                <Text style={styles.helperText}>Loading…</Text>
-              ) : payrollAdminError ? (
-                <Text style={[styles.helperText, { color: colors.danger }]}>{payrollAdminError}</Text>
-              ) : payrollAdminRecords.length === 0 ? (
-                <Text style={styles.helperText}>No payment administration record on file. Your employing company will add your payment details.</Text>
-              ) : (
-                payrollAdminRecords.map((rec) => (
-                  <View key={rec.companyGuardId} style={styles.summaryBlock}>
-                    <Text style={styles.profileFieldLabel}>Company</Text>
-                    <Text style={styles.profileFieldValue}>{rec.companyName}</Text>
-                    <Text style={styles.profileFieldLabel}>Pay frequency</Text>
-                    <Text style={styles.profileFieldValue}>{formatPayFrequencyLabel(rec.payFrequency)}</Text>
-                    <Text style={styles.profileFieldLabel}>Payment status</Text>
-                    <Text style={styles.profileFieldValue}>{profileEnumLabel(PAYROLL_STATUS_LABELS, rec.payrollStatus)}</Text>
-                    {rec.payrollStartDate ? (
-                      <>
-                        <Text style={styles.profileFieldLabel}>Arrangement start</Text>
-                        <Text style={styles.profileFieldValue}>{rec.payrollStartDate}</Text>
-                      </>
-                    ) : null}
-                    {rec.payrollEndDate ? (
-                      <>
-                        <Text style={styles.profileFieldLabel}>Arrangement end</Text>
-                        <Text style={styles.profileFieldValue}>{rec.payrollEndDate}</Text>
-                      </>
-                    ) : null}
-                  </View>
-                ))
-              )}
-              <Text style={styles.profileFieldHint}>
-                Payment details are set by your employing company. Contact your company administrator if you have any questions.
-              </Text>
-            </FeatureCard>
-
-            <View style={styles.guardProfileBelowStack}>
-              <GuardCompaniesEntry
-                count={myCompanies.length}
-                onOpen={() => selectTab('companies')}
-              />
-              <GuardCompliancePanel onManageCompliance={() => selectTab('screening')} />
-              <GuardScreeningPanel onContinue={() => selectTab('screening')} />
-              <GuardAvailabilityScreen />
-              <AccountSettingsPanel email={user?.email} onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout())} />
-            </View>
-            <AppBuildFooter appLabel="S4" />
+                    <AppBuildFooter appLabel="S4" />
+                  </>
+                ) : null}
+              </GuardProfileSection>
+            )}
           </View>
         ) : null}
-        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => selectTab('profile')} scrollViewRef={screeningScrollRef} /> : null}
+        {activeTab === 'screening' ? <GuardScreeningJourney onBack={() => openProfileSection(screeningReturnSectionRef.current)} scrollViewRef={screeningScrollRef} /> : null}
         {activeTab === 'inbox' ? (
           <GuardNotificationsInbox
             items={inbox.items}
@@ -3484,21 +3576,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
             onOpen={handleOpenNotification}
             nowMs={Date.now()}
           />
-        ) : null}
-        {activeTab === 'companies' ? (
-          <View style={styles.companiesView}>
-            <Pressable onPress={() => selectTab('profile')} accessibilityRole="button" style={styles.companiesBack}>
-              <Text style={styles.companiesBackText}>‹ Back to Profile</Text>
-            </Pressable>
-            <GuardCompaniesPanel
-              companies={myCompanies}
-              loading={myCompaniesLoading}
-              onRefresh={refreshMyCompanies}
-              onPreview={previewGuardInvitation}
-              onAccept={acceptGuardInvitation}
-              onDecline={declineGuardInvitation}
-            />
-          </View>
         ) : null}
       </ScrollView>
       </View>
@@ -3748,23 +3825,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   );
 }
 
-/** Small entry point on Profile, mirroring how Screening is reached. */
-function GuardCompaniesEntry({ count, onOpen }: { count: number; onOpen: () => void }) {
-  return (
-    <Pressable onPress={onOpen} accessibilityRole="button" style={styles.companiesEntry}>
-      <View style={styles.companiesEntryText}>
-        <Text style={styles.companiesEntryTitle}>My Companies</Text>
-        <Text style={styles.companiesEntrySubtitle}>
-          {count > 0
-            ? `You are part of ${count} workforce${count === 1 ? '' : 's'}.`
-            : 'Join a company with an invitation code.'}
-        </Text>
-      </View>
-      <Text style={styles.companiesEntryChevron}>›</Text>
-    </Pressable>
-  );
-}
-
 /**
  * S4-UX-04B-A11Y: Review Offers keeps its 36dp button but answers touches 4dp above and below it, a 44dp hit area. The
  * offers strip pads the button by 12dp vertically, so the extra area stays inside the strip, clear of any other
@@ -3773,24 +3833,6 @@ function GuardCompaniesEntry({ count, onOpen }: { count: number; onOpen: () => v
 export const HOME_OFFERS_BUTTON_HIT_SLOP = { top: 4, bottom: 4, left: 0, right: 0 } as const;
 
 const styles = StyleSheet.create({
-  companiesView: { gap: 16, paddingBottom: 24 },
-  companiesBack: { paddingVertical: 8 },
-  companiesBackText: { color: '#5B6B7A', fontSize: 15, fontWeight: '600' },
-  companiesEntry: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E3E8EE',
-    backgroundColor: '#FFFFFF',
-  },
-  companiesEntryText: { flexShrink: 1, gap: 2 },
-  companiesEntryTitle: { fontSize: 16, fontWeight: '700', color: '#1B2A38' },
-  companiesEntrySubtitle: { fontSize: 13, color: '#748392' },
-  companiesEntryChevron: { fontSize: 22, color: '#748392' },
   container: { flex: 1, backgroundColor: guardColors.canvas },
   // The Notifications control sits in the navy Guard header (S4-UX-01.6). Stage 1: rectangular like Log out, filled
   // in secondary navy, with the same 3:1 outline.
@@ -4112,7 +4154,6 @@ const styles = StyleSheet.create({
   guardProfileActions: { gap: 10, marginTop: 4 },
   guardProfileSaveCta: { marginTop: 0 },
   guardProfileLogoutBtn: { minHeight: 48 },
-  guardProfileBelowStack: { gap: 12, width: '100%' },
   historyPastRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',

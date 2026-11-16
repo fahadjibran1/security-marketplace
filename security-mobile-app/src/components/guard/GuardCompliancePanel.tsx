@@ -73,9 +73,13 @@ export function GuardCompliancePanel({ onManageCompliance }: { onManageComplianc
         </View>
       ) : null}
 
-      <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.button, pressed && styles.buttonPressed]} onPress={onManageCompliance}>
-        <Text style={styles.buttonText}>Manage compliance</Text>
-      </Pressable>
+      {/* Shown only when the caller supplies a destination. The Profile's SIA & compliance section supplies none: it
+          labels the update route for what it is (the optional S4 screening file) instead of "Manage compliance". */}
+      {onManageCompliance ? (
+        <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.button, pressed && styles.buttonPressed]} onPress={onManageCompliance}>
+          <Text style={styles.buttonText}>Manage compliance</Text>
+        </Pressable>
+      ) : null}
       <Text style={styles.note}>Providing evidence does not verify it. Verification is completed only by an authorised reviewer.</Text>
     </FeatureCard>
   );

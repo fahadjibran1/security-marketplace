@@ -332,7 +332,14 @@ function jsxElements(source, fileName, tags, from = 0, to = Infinity) {
 test('A11Y-01 every Profile TextInput and Switch has an accessibilityLabel', () => {
   const { src, start, end } = profileRegion();
   const controls = jsxElements(src, 'GuardDashboardScreen.tsx', ['TextInput', 'Switch'], start, end);
-  assert.ok(controls.length >= 20, `found ${controls.length} controls`);
+  // Phase 2C removed exactly one control: the read-only "SIA licence number" TextInput in Personal details (the
+  // licence is now shown in the overview header and the SIA & compliance section). Every other control is still here.
+  assert.equal(controls.length, 19, `found ${controls.length} controls`);
+  assert.ok(!controls.some((c) => /SIA licence number, read only/.test(c.text)), 'the read-only SIA field moved out of Personal');
+  for (const label of ['Full name', 'Phone number', 'Live location sharing', 'National Insurance number', 'Unique Taxpayer Reference',
+    'Driving licence number', 'Emergency contact name', 'Sort code', 'Account number']) {
+    assert.ok(controls.some((c) => c.text.includes(`"${label}"`)), `${label} control kept`);
+  }
   const unlabelled = controls.filter((c) => !c.attrs.includes('accessibilityLabel')).map((c) => `${c.tag} @${c.line}`);
   assert.deepEqual(unlabelled, []);
   // Panels rendered inside the Profile: availability fields and the account password.
@@ -453,7 +460,8 @@ test('OVERVIEW-01 seven sections, in order, each with a title, requirement label
     assert.ok(s.summary.length > 0 && s.summary.length <= 60, `${s.key}: a one-line summary (${s.summary})`);
   }
   assert.equal(o.sections.find((s) => s.key === 'screening').requirement, 'optional');
-  assert.deepEqual(Object.values(copy.REQUIREMENT_LABELS).map((r) => r.label), ['Required', 'May be requested by company', 'Optional', 'Set by company']);
+  assert.equal(o.sections.find((s) => s.key === 'companies').requirementLabel, 'By invitation', 'not simply "Optional" (approved decision 2C-4)');
+  assert.deepEqual(Object.values(copy.REQUIREMENT_LABELS).map((r) => r.label), ['Required', 'May be requested by company', 'Optional', 'Set by company', 'By invitation']);
   assert.equal(o.sections.find((s) => s.key === 'employmentPay').summary, 'Bank details added · NINO added');
   assert.equal(o.sections.find((s) => s.key === 'availability').summary, 'Public transport · Full licence');
   assert.equal(o.sections.find((s) => s.key === 'companies').summary, 'Fictional Guarding Ltd');
@@ -562,14 +570,160 @@ test('LAYOUT-02 tokens reuse the Guard Home theme, and requirement tags reach 4.
   for (const [tier, { text, surface }] of Object.entries(theme.REQUIREMENT_TAG_COLORS)) {
     assert.ok(contrast(text, surface) >= 4.5, `${tier}: ${contrast(text, surface).toFixed(2)}:1`);
   }
+  for (const [tone, { text, surface }] of Object.entries(theme.PROFILE_TONE_COLORS)) {
+    assert.ok(contrast(text, surface) >= 4.5, `status ${tone}: ${contrast(text, surface).toFixed(2)}:1`);
+  }
+  // Approved decision 2C-3: requirement tags are neutral; warning and danger colours are kept for real problems.
+  const brand = loadTs('src/theme/brand.ts').colors;
+  const tagColours = Object.values(theme.REQUIREMENT_TAG_COLORS);
+  assert.equal(new Set(tagColours.map((c) => `${c.text}/${c.surface}`)).size, 1, 'one neutral tag style for every requirement level');
+  for (const problem of [brand.danger, brand.dangerSurface, brand.warning, brand.warningSurface, brand.success, brand.successSurface]) {
+    assert.ok(!tagColours.some((c) => c.text === problem || c.surface === problem), `no status colour (${problem}) on a requirement tag`);
+  }
+  assert.equal(theme.PROFILE_TONE_COLORS.danger.text, brand.danger, 'status colours are the brand ones');
   // No new UI library: the foundations import only React Native-free modules and the existing theme.
   for (const file of ['profileCopy.ts', 'profileLabels.ts', 'profileOverview.ts', 'profileLayout.ts', 'profileTheme.ts']) {
     const src = read(`src/components/guard/profile/${file}`);
     const imports = [...src.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
     assert.ok(imports.every((i) => i.startsWith('.')), `${file}: only local imports (${imports.join(', ')})`);
   }
+  // Phase 2C components: React, React Native, the existing API module and types, and each other. Nothing else.
+  for (const file of ['GuardProfileOverview.tsx', 'GuardProfileSection.tsx', 'GuardComplianceUpdateRoute.tsx', 'GuardPrivacySummary.tsx', 'ProfileAvatar.tsx', 'ProfileTags.tsx']) {
+    const src = read(`src/components/guard/profile/${file}`);
+    const imports = [...src.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
+    const allowed = (i) => i === 'react' || i === 'react-native' || i.startsWith('./') || i === '../../../services/api' || i === '../../../types/models';
+    assert.ok(imports.every(allowed), `${file}: no new library (${imports.join(', ')})`);
+  }
   const pkg = JSON.parse(read('package.json'));
-  assert.ok(!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some((d) => /react-native-paper|native-base|tamagui|gluestack|@rneui|react-native-elements|ui-kitten/.test(d)), 'no UI kit dependency');
+  assert.ok(!Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).some((d) => /react-native-paper|native-base|tamagui|gluestack|@rneui|react-native-elements|ui-kitten|@react-navigation\/stack|@react-navigation\/native-stack/.test(d)), 'no UI kit or new navigation library');
+});
+
+// ═══════════════════ Phase 2C: overview, sections and compliance separation ═══════════════════
+
+test('NAV-01 the Profile is an overview and seven sections inside the Profile tab, which stays selected', () => {
+  const src = read(DASHBOARD);
+  assert.match(src, /type GuardTab = 'home' \| 'offers' \| 'jobs' \| 'history' \| 'profile' \| 'screening' \| 'inbox';/, 'no new tabs; My Companies is a section, not a sub-tab');
+  assert.match(src, /const navActiveTab: GuardTab =\s*activeTab === 'screening' \? 'profile' : activeTab === 'inbox' \? 'home' : activeTab;/);
+  assert.match(src, /const \[profileSection, setProfileSection\] = useState<ProfileSectionKey \| null>\(null\);/);
+  const { start, end } = profileRegion();
+  const region = src.slice(start, end);
+  assert.match(region, /\{profileSection === null \? \(\s*<GuardProfileOverview/, 'the overview first');
+  for (const key of overview.PROFILE_SECTIONS.map((s) => s.key)) {
+    assert.equal(region.split(`{profileSection === '${key}' ? (`).length - 1, 1, `${key}: rendered once, only when open`);
+  }
+  // Each existing card is in exactly one section, moved whole.
+  const where = (needle) => {
+    const at = region.indexOf(needle);
+    assert.ok(at > 0 && region.indexOf(needle, at + 1) < 0, `${needle}: once`);
+    const opened = [...region.slice(0, at).matchAll(/\{profileSection === '([a-zA-Z]+)' \? \(/g)].pop();
+    return opened?.[1];
+  };
+  assert.equal(where('testID="guard-profile-save"'), 'personal');
+  assert.equal(where('title="Emergency contact"'), 'personal');
+  assert.equal(where('<GuardCompaniesPanel'), 'companies');
+  assert.equal(where('<GuardCompliancePanel />'), 'compliance');
+  assert.equal(where('<GuardAvailabilityScreen />'), 'availability');
+  assert.equal(where('title="Driving & transport"'), 'availability');
+  assert.equal(where('title="Tax identifiers"'), 'employmentPay');
+  assert.equal(where('title="Bank Details"'), 'employmentPay');
+  assert.equal(where('title="Employment"'), 'employmentPay');
+  assert.equal(where('title="Pay Administration"'), 'employmentPay');
+  assert.equal(where("<GuardScreeningPanel onContinue={() => openScreeningJourney('screening')} />"), 'screening');
+  assert.equal(where('<AccountSettingsPanel'), 'privacyAccount');
+  assert.equal(where('accessibilityLabel="Log out"'), 'privacyAccount');
+  assert.equal(where('<AppBuildFooter appLabel="S4" />'), 'privacyAccount');
+  assert.match(src, /<GuardScreeningJourney onBack=\{\(\) => openProfileSection\(screeningReturnSectionRef\.current\)\}/, 'the screening file returns to the section it was opened from');
+});
+
+test('NAV-02 leaving a section hides revealed values and closes edits of masked values, without calling the server', () => {
+  const src = stripComments(read(DASHBOARD));
+  const start = src.indexOf('useEffect(() => {\n    clearReveal();');
+  assert.ok(start > 0, 'the navigation effect');
+  const endMarker = '}, [activeTab, profileSection]);';
+  const effect = src.slice(start, src.indexOf(endMarker, start) + endMarker.length);
+  for (const call of ['clearReveal();', 'clearLicenceReveal();', 'clearBankReveal();', 'setEditingNino(false);', "setNinoInput('');", 'setEditingUtr(false);', "setUtrInput('');",
+    'setEditingLicenceNumber(false);', "setLicenceNumberInput('');", 'setEditingBankDetails(false);', "setBankHolderInput('');", "setBankSortInput('');", "setBankAccountInput('');"]) {
+    assert.ok(effect.includes(call), call);
+  }
+  assert.ok(effect.endsWith('}, [activeTab, profileSection]);'), 'runs on every tab or section change');
+  assert.doesNotMatch(effect, /await|reveal[A-Z][a-zA-Z]*\(|save[A-Z]|update[A-Z]|delete[A-Z]/, 'no server call');
+});
+
+test('COMPLIANCE-01 SIA and right-to-work: the gap is real, and the only update route is labelled as the optional screening file', () => {
+  // Backend evidence. PATCH /guards/me accepts name, phone and location sharing only.
+  const dto = readRepo('security-backend-nest/src/guard-profile/dto/update-guard-profile.dto.ts');
+  assert.deepEqual([...dto.matchAll(/^\s+([a-zA-Z]+)\?:/gm)].map((m) => m[1]), ['fullName', 'phone', 'locationSharingEnabled']);
+  // The Guard's SIA and right-to-work write is the screening file's, and it needs a started file.
+  const screeningController = readRepo('security-backend-nest/src/screening/screening.controller.ts');
+  assert.match(screeningController, /@Put\('mine\/compliance'\) @Roles\(UserRole\.GUARD\)/);
+  const screeningService = readRepo('security-backend-nest/src/screening/screening.service.ts');
+  const update = screeningService.slice(screeningService.indexOf('async updateCandidateCompliance('));
+  assert.match(update.slice(0, 400), /if\(!screening\)throw new BadRequestException\('Start screening first\.'\)/);
+  assert.match(update.slice(0, 1600), /SIA correction is not currently required\./, 'a file under review accepts a change only when asked');
+  // A screening-independent evidence upload exists (company-scoped), but the app has no screen for it yet.
+  const complianceController = readRepo('security-backend-nest/src/compliance/compliance.controller.ts');
+  assert.match(complianceController, /@Post\('documents\/mine'\)\s*@Roles\(UserRole\.GUARD\)/);
+  assert.ok(!sourceFiles().some((f) => !f.endsWith(path.join('services', 'api.ts')) && fs.readFileSync(f, 'utf8').includes('uploadMyGuardDocument')), 'documented gap: no Guard evidence upload screen (not invented here)');
+  // The app: the Compliance panel no longer offers an unlabelled route, and the update route says what it is.
+  const panel = stripComments(read(COMPLIANCE_PANEL));
+  assert.match(panel, /\{onManageCompliance \? \(\s*<Pressable/, 'Manage compliance only when a caller supplies it');
+  const { src, start, end } = profileRegion();
+  const region = src.slice(start, end);
+  assert.ok(region.includes('<GuardCompliancePanel />'), 'SIA & compliance supplies no Manage compliance');
+  assert.ok(region.includes("<GuardComplianceUpdateRoute onOpenScreening={() => openScreeningJourney('compliance')} />"));
+  assert.ok(!src.includes('onManageCompliance='), 'no screen routes compliance into screening silently');
+  const c = copy.COMPLIANCE_COPY;
+  assert.match(c.updateBody, /only in your optional S4 screening file/);
+  assert.match(c.updateBody, /does not make screening required/);
+  assert.match(c.updateAction, /S4 screening file/);
+  assert.match(c.updateActionAccessibilityLabel, /optional S4 screening file/);
+  for (const text of Object.values(c)) for (const pattern of copy.MANDATORY_SCREENING_PATTERNS) assert.doesNotMatch(text, pattern);
+  // Deployment eligibility is untouched: still the backend's `assignable`.
+  assert.match(stripComments(read(COMPLIANCE_PANEL)), /const eligibility = getGuardWorkEligibilityLabel\(summary\);/);
+});
+
+test('OVERVIEW-05 the dashboard adapter never turns "not loaded yet" or "failed" into "not provided"', () => {
+  const record = (value, patch = {}) => ({ value, loading: false, error: null, ...patch });
+  const state = (patch = {}) => ({
+    profile: { fullName: 'Dana Guard', phone: '07000 000001' },
+    profileLoading: false,
+    siaLicenceNumber: 'SIA-FICTIONAL',
+    companies: { value: [], status: 'ready' },
+    emergencyContact: record(null),
+    identity: record({ ninoSet: true, utrSet: false }),
+    bank: record(null),
+    employments: record([]),
+    driving: record(null),
+    email: 'guard@example.invalid',
+    ...patch,
+  });
+  // Before the Guard's record has loaded, the personnel records have not even been requested.
+  let src = overview.overviewSourceFromDashboard(state({ profile: null, profileLoading: true }));
+  for (const key of ['guard', 'emergencyContact', 'identity', 'bank', 'employments', 'driving']) assert.equal(src[key].status, 'loading', `${key}: loading`);
+  src = overview.overviewSourceFromDashboard(state({ profile: null, profileLoading: false }));
+  for (const key of ['guard', 'emergencyContact', 'identity', 'bank', 'employments', 'driving']) assert.equal(src[key].status, 'error', `${key}: unavailable after a failed load`);
+  src = overview.overviewSourceFromDashboard(state({ bank: record(null, { loading: true }), driving: record(null, { error: 'x' }), companies: { value: [], status: 'loading' } }));
+  assert.deepEqual([src.bank.status, src.driving.status, src.companies.status], ['loading', 'error', 'loading']);
+  src = overview.overviewSourceFromDashboard(state());
+  assert.deepEqual(src.guard.value, { fullName: 'Dana Guard', phone: '07000 000001', siaLicenseNumber: 'SIA-FICTIONAL' });
+  assert.deepEqual([src.bank.value, src.identity.value, src.emergencyContact.value], [{ bankSet: false }, { ninoSet: true, utrSet: false }, null]);
+  // Built into the overview: no false "No emergency contact" or "Join a company" while loading.
+  const o = overview.buildProfileOverview({ ...overview.overviewSourceFromDashboard(state({ profile: null, profileLoading: true, companies: { value: [], status: 'loading' } })),
+    compliance: overview.loading(), screening: overview.loading(), today: '2031-03-01' });
+  assert.deepEqual(o.attention, []);
+  assert.equal(overview.localToday(new Date(2031, 2, 1, 23, 59)), '2031-03-01');
+  // Companies & invitations is "By invitation", never simply "Optional" (approved decision 2C-4).
+  assert.equal(overview.PROFILE_SECTIONS.find((s) => s.key === 'companies').requirement, 'invitation');
+  assert.equal(copy.REQUIREMENT_LABELS.invitation.label, 'By invitation');
+});
+
+test('AVATAR-01 the avatar is initials only: no camera, picker or upload (approved decisions 5 and 6)', () => {
+  const avatar = stripComments(read('src/components/guard/profile/ProfileAvatar.tsx')); // code only: the doc comment says upload is NOT built
+  assert.doesNotMatch(avatar, /expo-image-picker|expo-camera|ImagePicker|launchCamera|upload/i);
+  const overviewSrc = stripComments(read('src/components/guard/profile/GuardProfileOverview.tsx'));
+  assert.match(overviewSrc, /<ProfileAvatar initials=\{header\.initials\} size=\{layout\.compact \? 48 : 56\} \/>/, 'no image is passed');
+  assert.doesNotMatch(overviewSrc, /%`|percent|completion/i, 'no completion percentage (approved decision 7)');
+  assert.equal(overview.initialsOf('Dana Q Guard'), 'DG');
 });
 
 // ═══════════════════ RUN ═══════════════════

@@ -700,7 +700,8 @@ test('dashboard employment UI is read-only (no edit mode state for employment)',
 
 test('dashboard employment UI includes contact-admin hint (no roadmap language)', () => {
   const idx = dashboard.indexOf('emp.companyName');
-  const block = dashboard.slice(idx - 500, idx + 2000);
+  // Profile Phase 2C re-indented the moved Employment card (+8 spaces per line), pushing the unchanged hint past 2000 chars.
+  const block = dashboard.slice(idx - 500, idx + 3000);
   assert.match(block, /contact your company administrator/i);
   assert.doesNotMatch(block, /coming soon|P1F\.1|future workflow/i);
 });

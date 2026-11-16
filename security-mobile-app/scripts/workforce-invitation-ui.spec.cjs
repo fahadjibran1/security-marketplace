@@ -316,10 +316,16 @@ async function main() {
     for (const tab of ['home', 'offers', 'jobs', 'history', 'profile', 'screening']) {
       assert.ok(new RegExp(`'${tab}'`).test(guardScreen), `${tab} tab retained`);
     }
-    assert.ok(/'companies'/.test(guardScreen), 'companies sub-view added');
+    // Profile Phase 2C: My Companies is now the Profile's "Companies & invitations" section (no longer a sub-tab),
+    // rendering the same GuardCompaniesPanel with the same handlers; Profile stays lit for every Profile section.
+    assert.ok(/\{profileSection === 'companies' \? \(\s*<GuardCompaniesPanel/.test(guardScreen), 'companies section renders the panel');
+    for (const handler of ['onPreview={previewGuardInvitation}', 'onAccept={acceptGuardInvitation}', 'onDecline={declineGuardInvitation}']) {
+      assert.ok(guardScreen.includes(handler), `${handler} kept`);
+    }
+    assert.ok(!/activeTab === 'companies'/.test(guardScreen), 'no orphaned companies sub-tab');
     assert.ok(
-      /activeTab === 'screening' \|\| activeTab === 'companies' \? 'profile'/.test(guardScreen),
-      'both sub-views keep Profile lit in the bottom bar',
+      /activeTab === 'screening' \? 'profile'/.test(guardScreen),
+      'the screening sub-view keeps Profile lit in the bottom bar',
     );
   });
 

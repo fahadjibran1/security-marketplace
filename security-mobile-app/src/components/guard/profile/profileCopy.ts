@@ -64,8 +64,19 @@ export const COMPLIANCE_COPY = {
   checksLabel: 'Compliance checks',
   /** Under the compliance status hero. */
   deploymentNote: 'This is your deployment status from compliance checks. It does not depend on S4 screening.',
-  /** The SIA field's hint on Profile (the control it names exists on the same screen). */
-  siaHint: 'To update your SIA licence, scroll down to Compliance summary and tap Manage compliance.',
+  /**
+   * SIA & compliance section: how a Guard updates their SIA licence or right to work today. The only Guard-side write
+   * for those fields is PUT /screening/mine/compliance (ScreeningService.updateCandidateCompliance, which refuses with
+   * "Start screening first."): PATCH /guards/me accepts only name, phone and location sharing. So the action is shown
+   * for what it is — an update made in the optional S4 screening file — never as a plain "Manage compliance".
+   */
+  updateTitle: 'Updating your SIA licence or right to work',
+  updateBody:
+    'S4 does not yet have a separate form for these details. For now you can update them only in your optional S4 screening file. Opening it does not make screening required.',
+  updateUnderReview: 'If your screening file is being reviewed, a change is accepted only when the reviewer asks for it.',
+  companyChecks: 'Each company you work for may also record its own SIA and right-to-work checks.',
+  updateAction: 'Update in S4 screening file',
+  updateActionAccessibilityLabel: 'Update your SIA licence or right to work in your optional S4 screening file',
 } as const;
 
 /**
@@ -81,7 +92,7 @@ export function complianceChecksDisplayLabel(label: string): string {
 
 // ─────────────────────────────── Requirement levels ───────────────────────────────
 
-export type ProfileRequirement = 'required' | 'company' | 'optional' | 'setByCompany';
+export type ProfileRequirement = 'required' | 'company' | 'optional' | 'setByCompany' | 'invitation';
 
 export const REQUIREMENT_LABELS: Record<ProfileRequirement, { label: string; description: string }> = {
   required: { label: 'Required', description: 'Needed for your S4 account.' },
@@ -91,6 +102,7 @@ export const REQUIREMENT_LABELS: Record<ProfileRequirement, { label: string; des
   },
   optional: { label: 'Optional', description: 'Add it only if you want to.' },
   setByCompany: { label: 'Set by company', description: 'Your company keeps this up to date. Contact them if it is wrong.' },
+  invitation: { label: 'By invitation', description: 'A company adds you by sending an invitation. You choose whether to accept it.' },
 };
 
 // ─────────────────────────────── Who can see what ───────────────────────────────
