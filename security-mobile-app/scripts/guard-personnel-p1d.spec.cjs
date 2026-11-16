@@ -310,7 +310,8 @@ test('driving card renders willingToDriveToWork, ownsVehicle, hasVehicleAccess t
 
 test('driving card has privacy notice about encryption at rest', () => {
   const card = dashboard.split('Driving & transport')[1].split('guardProfileBelowStack')[0];
-  assert.match(card, /encrypted at rest/);
+  // Guard Profile 2A copy: the backend encrypts the licence number before storing it.
+  assert.match(card, /Licence number is encrypted and masked by default/);
 });
 
 test('driving card licence autoCapitalize characters', () => {

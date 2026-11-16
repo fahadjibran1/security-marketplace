@@ -218,7 +218,8 @@ test('UTR edit mode has number-pad keyboard', () => {
 
 test('privacy notice appears in tax identifiers card', () => {
   const card = dashboard.split('Tax identifiers')[1].split('guardProfileBelowStack')[0];
-  assert.match(card, /encrypted at rest/);
+  // Guard Profile 2A copy: "Encrypted and masked by default" (the backend encrypts NINO and UTR before storing them).
+  assert.match(card, /Encrypted and masked by default/);
 });
 
 // ── BACKEND — ENTITY ──────────────────────────────────────────────────────────
