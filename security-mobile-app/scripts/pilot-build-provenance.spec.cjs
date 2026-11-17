@@ -344,9 +344,9 @@ test('BUILD-01C-THE-1-1-2-BUILDS-ANDROID-DISTRIBUTED-IOS-UPLOADED-AWAITING-BETA-
   // 15 Nov 2026 (owner-verified in Play Console): 25 was uploaded and is the distributed artefact; 23 is
   // distributed-superseded; 26 is built, not uploaded (BUILD-01I, 01J).
   // 17 Nov 2026 (owner-confirmed): 26 is the distributed artefact, 25 distributed-superseded; 1.2.3 (27) is prepared, not
-  // built (BUILD-01K).
+  // built (BUILD-01K), then built the same day (EAS 5bb7a0c2), not uploaded.
   assert.equal(android.preparedArtefact.versionName, '1.2.3');
-  assert.equal(android.preparedArtefact.status, 'prepared-not-built');
+  assert.equal(android.preparedArtefact.status, 'built-not-uploaded');
   assert.equal(android.retiredArtefacts.filter((entry) => entry.versionCode === 20).length, 1, 'recorded once');
   const pa = android.retiredArtefacts.find((entry) => entry.versionCode === 20);
   const da = android.retiredArtefacts.find((entry) => entry.versionCode === 19);
@@ -966,30 +966,36 @@ test('BUILD-01J-S4-1-2-2-IOS-24-AND-ANDROID-26-ADD-THE-GUARD-LEAVE-COMPANY-SELEC
   assert.equal(ios.appStore, 'NOT SUBMITTED');
 });
 
-test('BUILD-01K-S4-1-2-3-ANDROID-27-ADDS-THE-GUARD-PROFILE-REDESIGN-PREPARED-NOT-BUILT', () => {
+test('BUILD-01K-S4-1-2-3-ANDROID-27-ADDS-THE-GUARD-PROFILE-REDESIGN-BUILT-NOT-UPLOADED', () => {
   // S4 1.2.3 (17 Nov 2026): the distributed 1.2.2 (26) plus the Guard Profile redesign (PR #123, 2A to 2E), at
   // release/s4-pilot-rc1 187e61f, versioned on release-prep/s4-1.2.3-android-27. Android 27, prepared, not built: no
   // EAS build, file, hash or store fact. The owner stated the same day that Android 26 is the last Play Internal Testing
   // release; Play Console is not readable from the build machine, so "nothing at 27 or above" is NOT verified and is
   // recorded as such. iOS: no build while the Apple account restriction is unresolved; the iOS build number stays 24 and
   // the built, never submitted 1.2.2 (24) record is kept exactly. The UAT app moves to 28 for configuration consistency.
+  // Later on 17 Nov 2026 the owner verified in Play Console that 26 was the highest versionCode, PR #124 was merged
+  // (release/s4-pilot-rc1 35b4f31) and Android 27 was built from it (EAS 5bb7a0c2, owner-approved); not uploaded.
   const android = JSON.parse(read('release/android-signing.json'));
   const ios = JSON.parse(read('release/ios-release.json'));
   const pa = android.preparedArtefact;
   const vc26 = android.approvedArtefact;
   const PRODUCTION_API = 'https://security-marketplace-api.onrender.com';
   assert.deepEqual([appJson.expo.version, appJson.expo.android.versionCode, appJson.expo.ios.buildNumber], ['1.2.3', 27, '24']);
-  assert.deepEqual([pa.status, pa.versionName, pa.versionCode], ['prepared-not-built', '1.2.3', 27]);
+  assert.deepEqual([pa.status, pa.versionName, pa.versionCode], ['built-not-uploaded', '1.2.3', 27]);
   assert.deepEqual([android.expectedRelease.versionName, android.expectedRelease.versionCode], ['1.2.3', 27]);
   assert.deepEqual([vc26.status, vc26.versionName, vc26.versionCode], ['distributed', '1.2.2', 26]);
   assert.equal(pa.versionCode, vc26.versionCode + 1, 'one above the distributed 26');
   assert.equal(pa.versionCode, Math.max(vc26.versionCode, ...android.retiredArtefacts.map((entry) => entry.versionCode)) + 1, 'one above every Android build');
   assert.deepEqual([pa.versionName, vc26.versionName].map((v) => v.split('.').map(Number)), [[1, 2, 3], [1, 2, 2]], '1.2.3 is a higher versionName than the distributed 1.2.2');
-  assert.match(pa.storeNumberCheck, /^NOT VERIFIED from Play Console\./, 'the store check is not claimed');
+  assert.match(pa.storeNumberCheck, /^Owner-verified in Google Play Console before this build/, 'the owner checked Play before the build');
+  assert.match(pa.storeNumberCheck, /Not inspected from the build machine\.$/);
   assert.equal(pa.sourceFixCommit, '187e61f6aa67901f5521709d02afc78a10756ef5');
-  for (const key of ['easBuildId', 'gitCommit', 'aabSha256', 'certifiedOn', 'verified']) {
-    assert.ok(!(key in pa), `prepared, not built: no ${key}`);
-  }
+  // Built from the merged release commit and verified from the downloaded AAB.
+  assert.deepEqual([pa.easBuildId, pa.gitCommit, pa.aabSha256, pa.aabSizeBytes, pa.certifiedOn],
+    ['5bb7a0c2-4f4b-4418-91e4-bc2d69a3e03e', '35b4f31c275f5ba850644d81c2164d9819435a35', '0042eaa12a12d740307c6420fe47f4bd2e6034e144c121e58baaf6c042162198', 64957526, '2026-11-17']);
+  assert.deepEqual([pa.verified.package, pa.verified.versionCode, pa.verified.versionName, pa.verified.apiBaseUrl, pa.verified.stagingApiUrls],
+    ['com.sfour.s4', 27, '1.2.3', PRODUCTION_API, 0]);
+  assert.notEqual(pa.aabSha256, vc26.aabSha256, 'a new artefact, not the distributed 26');
   // iOS: build number unchanged; the built 1.2.2 (24) is kept exactly and is not re-labelled 1.2.3.
   assert.deepEqual([ios.marketingVersion, ios.buildNumber], [appJson.expo.version, appJson.expo.ios.buildNumber], 'the iOS record header tracks app.json');
   assert.deepEqual([ios.preparedArtefact.status, ios.preparedArtefact.marketingVersion, ios.preparedArtefact.buildNumber, ios.preparedArtefact.easBuildId],
