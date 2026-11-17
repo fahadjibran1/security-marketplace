@@ -5,11 +5,12 @@
     "",
     "Nothing has been built or submitted for iOS under the permanent identity. The only historical EAS iOS",
     "build (a54b5acd, 2026-06-17) was for the development-era bundle id com.securitymarketplace.mobile and",
-    "is not an S4 release."
+    "is not an S4 release.",
+    "S4 1.2.3 (17 Nov 2026): the shared Expo marketing version moved to 1.2.3 for the Android 1.2.3 (27) update (the Guard Profile redesign, PR #123). The iOS build number stays 24 and no iOS build is made while the Apple account restriction is unresolved. Build 24 was already built once, as 1.2.2 (24) (EAS d7433bed, preparedArtefact, never submitted), so the build number for the next iOS build must be decided before that build; app.json 1.2.3 (24) is configuration only, not a built or submitted artefact."
   ],
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
-  "marketingVersion": "1.2.2",
+  "marketingVersion": "1.2.3",
   "buildNumber": "24",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
