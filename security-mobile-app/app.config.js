@@ -46,6 +46,37 @@ function uatVersionCode(config) {
 }
 
 /**
+ * Every iOS build number S4 has ever built for the store app (com.sfour.s4), from the release record. App Store Connect
+ * rejects a build number it has seen, and a build number already used by a built IPA must never be reused for different
+ * content (1.2.2 (24), EAS d7433bed, was built and never submitted; 1.2.3 must not be built as 24).
+ */
+function builtIosBuildNumbers() {
+  const record = require('./release/ios-release.json');
+  const entries = [record.preparedArtefact, record.submittedArtefact, record.artefact, ...(record.supersededArtefacts || [])];
+  return entries
+    .filter((entry) => entry && entry.easBuildId && entry.buildNumber)
+    .map((entry) => ({ buildNumber: Number(entry.buildNumber), label: `${entry.marketingVersion} (${entry.buildNumber}), EAS ${entry.easBuildId}` }));
+}
+
+/**
+ * An iOS EAS build of the store app refuses to start unless app.json's ios.buildNumber is a whole number above every
+ * build number already built. Android, web exports and the UAT variant are unaffected, and the config is not changed.
+ */
+function assertIosBuildNumberUnused(config) {
+  if (process.env.EAS_BUILD_PLATFORM !== 'ios') return;
+  const value = Number(config.ios && config.ios.buildNumber);
+  const built = builtIosBuildNumbers();
+  const reused = built.find((entry) => entry.buildNumber === value);
+  if (reused) {
+    throw new Error(`iOS buildNumber ${value} is already used by the built S4 ${reused.label}; set a new, higher ios.buildNumber in app.json before building iOS.`);
+  }
+  const highest = Math.max(...built.map((entry) => entry.buildNumber));
+  if (!Number.isInteger(value) || value <= highest) {
+    throw new Error(`iOS buildNumber must be a whole number above every built S4 iOS build (highest ${highest}).`);
+  }
+}
+
+/**
  * Android Welfare Check notifications need the S4 Firebase project's client file (google-services.json), which Expo's
  * push service uses to reach Firebase Cloud Messaging. It is supplied to EAS as the file environment variable
  * GOOGLE_SERVICES_JSON and never committed. Without it the config is exactly as before and the app simply receives no
@@ -61,7 +92,10 @@ module.exports = ({ config: input }) => {
   const isUat = process.env.APP_VARIANT === 'uat';
   assertApiMatchesIdentity(isUat);
   const config = withAndroidPushCredentials(input);
-  if (!isUat) return config;
+  if (!isUat) {
+    assertIosBuildNumberUnused(config);
+    return config;
+  }
 
   return {
     ...config,

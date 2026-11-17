@@ -87,21 +87,30 @@
       "source": "the downloaded AAB (15 Nov 2026): the base module manifest via aapt2, the signer via keytool -printcert -jarfile, and the JS bundle"
     },
     "storeNumberCheck": "Owner-verified from Play Console on 15 Nov 2026 (screenshots): the highest S4 versionCode was 25 (uploaded 11 Nov 2026, available to internal testers) and no versionCode 26 or higher existed before this build.",
-    "note": "S4 1.2.2 (26): the content of the distributed 1.2.2 (25) (Guard Home UX-01 and the Guard Profile release patch, PR #116 6fbd885) plus SEC-001B Stage 2B, the Guard Leave company selector for guards with several ACTIVE employers (4bf731e, live in production). Built by EAS (ea0118ad, production profile, STORE) from 6216b84, owner-approved on 15 Nov 2026 after the owner verified the store numbers, and verified from the downloaded AAB the same day: com.sfour.s4 / 26 / 1.2.2, the permanent S4 upload key, the production API only. S4 could not upload it (the build machine has no Play developer account). Owner-confirmed in the S4 Android 1.2.3 release brief (17 Nov 2026): versionCode 26 is the last Google Play Internal Testing release, so 26 is consumed in Play and is the active internal release. Whether the file the owner uploaded to Play is byte-identical to this artefact is not known: the Play-side hash was not read back from Play Console. It does not contain the Guard Profile redesign (PR #123, 2A to 2E). Same package com.sfour.s4, the same permanent upload key as vc17 to vc25 (credentialsSource local), the same plugins (withOptionalCameraHardware, withPatrolBackupExclusion), the same Expo project and the production API; the originals unchanged; nothing was generated or replaced.",
+    "note": "S4 1.2.2 (26): the content of the distributed 1.2.2 (25) (Guard Home UX-01 and the Guard Profile release patch, PR #116 6fbd885) plus SEC-001B Stage 2B, the Guard Leave company selector for guards with several ACTIVE employers (4bf731e, live in production). Built by EAS (ea0118ad, production profile, STORE) from 6216b84, owner-approved on 15 Nov 2026 after the owner verified the store numbers, and verified from the downloaded AAB the same day: com.sfour.s4 / 26 / 1.2.2, the permanent S4 upload key, the production API only. S4 could not upload it (the build machine has no Play developer account). The verified AAB was handed to the owner on 15 Nov 2026 (SHA-256 re-checked: equal to this artefact). Owner-confirmed on 15 Nov 2026 from a Google Play Console screenshot: versionCode 26 is available to internal testers (restated in the S4 Android 1.2.3 release brief, 17 Nov 2026), so 26 is consumed in Play and is the active internal release. The screenshot image is not held in S4's records. Whether the file the owner uploaded to Play is byte-identical to this artefact is not known: the Play-side hash was not read back from Play Console. It does not contain the Guard Profile redesign (PR #123, 2A to 2E). Same package com.sfour.s4, the same permanent upload key as vc17 to vc25 (credentialsSource local), the same plugins (withOptionalCameraHardware, withPatrolBackupExclusion), the same Expo project and the production API; the originals unchanged; nothing was generated or replaced.",
     "playInternalTesting": {
       "status": "active",
       "confirmedBy": "owner",
-      "confirmedOn": "2026-11-17",
+      "confirmedOn": "2026-11-15",
+      "reconfirmedOn": "2026-11-17",
       "activeRelease": "1.2.2 (26)",
+      "availableTo": "internal testers",
       "uploadedBy": "owner (not S4)",
-      "evidence": "owner statement in the S4 Android 1.2.3 release brief (17 Nov 2026): the last owner-confirmed Google Play Internal Testing release is versionCode 26",
+      "evidence": "owner-reported Google Play Console screenshot (15 Nov 2026): versionCode 26 available to internal testers; restated in the S4 Android 1.2.3 release brief (17 Nov 2026). The screenshot image is not held in S4's records.",
       "unknown": [
-        "whether the uploaded file is byte-identical to the verified EAS artefact (the Play-side hash was not read back from Play Console)",
+        "whether the uploaded file is byte-identical to the verified EAS artefact (the handed-over copy matched it, but the Play-side hash was not read back from Play Console)",
         "rollout",
         "tester count",
         "upload date and time"
       ],
-      "note": "Owner-confirmed (17 Nov 2026 release brief): 1.2.2 (26) is the last Google Play Internal Testing release. S4 did not upload it. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine, and no Play Console screenshot was provided for this statement."
+      "note": "Owner-confirmed from a Google Play Console screenshot on 15 Nov 2026: 1.2.2 (26) is available to internal testers and is the active internal release. S4 did not upload it. The uploaded file's hash was not read back from Play Console, and Play Console was not inspected from the build machine."
+    },
+    "ownerHandover": {
+      "handedOverOn": "2026-11-15",
+      "file": "S4-1.2.2-Android-26.aab (copied to the owner's Downloads folder from the verified EAS artefact)",
+      "sha256": "da2b75c13f485cc1274ff843e75e75c06e9bfa612daf00357b089d5ea6be0d65",
+      "sizeBytes": 64935676,
+      "hashCheck": "SHA-256 and size re-checked after the copy: equal to the verified EAS artefact ea0118ad"
     }
   },
   "retiredArtefacts": [
@@ -547,7 +556,7 @@
         "note": "Owner-verified from Play Console screenshots on 15 Nov 2026: 1.2.2 (25) was uploaded to Google Play Internal Testing on 11 Nov 2026 and is available to internal testers, the active internal release \"1.2.2 (25)\". S4 did not upload it. The uploaded file's hash was not read back from Play Console. Not inspected from the build machine."
       },
       "retiredOn": "2026-11-17",
-      "retiredReason": "Superseded by versionCode 26 (1.2.2), the active Google Play Internal Testing release (owner-confirmed in the S4 Android 1.2.3 release brief, 17 Nov 2026), on the same identity and upload key. versionCode 25 is consumed in Play, so it can never be reused."
+      "retiredReason": "Superseded by versionCode 26 (1.2.2), available to Google Play internal testers and the active Internal Testing release (owner-confirmed from a Play Console screenshot on 15 Nov 2026; restated 17 Nov 2026), on the same identity and upload key. versionCode 25 is consumed in Play, so it can never be reused."
     }
   ],
   "playAppSigning": {
@@ -606,6 +615,6 @@
       "testers": 5,
       "activeRelease": "1.2.2 (26)"
     },
-    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026); active release 1.1.2 (20): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28. Not inspected from the build machine.; active release 1.2.0 (23): published to Internal Testing 2026-10-31, owner-confirmed (S4 did not upload it; rollout, testers and time not recorded).; active release 1.2.2 (25): uploaded 2026-11-11 and available to internal testers, owner-verified from Play Console screenshots 2026-11-15 (no versionCode 26 or higher).; active release 1.2.2 (26): owner-confirmed in the S4 Android 1.2.3 release brief, 17 Nov 2026 (S4 did not upload it; not inspected from the build machine)."
+    "source": "Owner-confirmed 2026-10-20 (account, testers); active release 1.1.0 (18) owner-confirmed 2026-10-25; active release 1.1.1 (19): owner uploaded to Play Internal Testing (approved 26 Oct); production devices report 1.1.1 (production push_devices, 27 Oct 2026); active release 1.1.2 (20): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28. Not inspected from the build machine.; active release 1.2.0 (23): published to Internal Testing 2026-10-31, owner-confirmed (S4 did not upload it; rollout, testers and time not recorded).; active release 1.2.2 (25): uploaded 2026-11-11 and available to internal testers, owner-verified from Play Console screenshots 2026-11-15 (no versionCode 26 or higher).; active release 1.2.2 (26): available to internal testers, owner-confirmed from a Play Console screenshot 2026-11-15 and restated 2026-11-17 (S4 did not upload it; not inspected from the build machine)."
   }
 }

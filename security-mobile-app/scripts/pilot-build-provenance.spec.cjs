@@ -944,12 +944,13 @@ test('BUILD-01J-S4-1-2-2-IOS-24-AND-ANDROID-26-ADD-THE-GUARD-LEAVE-COMPANY-SELEC
   for (const key of ['testFlightUpload', 'testFlightDistribution', 'appStoreSubmission']) {
     assert.ok(!(key in pi), `the built iOS 24 records no ${key}`);
   }
-  // Android 26: only the owner's statement (17 Nov 2026) is recorded as a Play fact; no upload date or hash is claimed.
+  // Android 26: available to internal testers, owner-confirmed from a Play Console screenshot on 15 Nov 2026 (restated
+  // 17 Nov 2026); no upload date or hash is claimed.
   assert.deepEqual(Object.keys(pa).filter((key) => /^play|internalTesting|uploaded/i.test(key)), ['playInternalTesting'], 'the distributed Android 26 records one Play fact');
-  assert.deepEqual([pa.playInternalTesting.status, pa.playInternalTesting.confirmedBy, pa.playInternalTesting.confirmedOn, pa.playInternalTesting.activeRelease], ['active', 'owner', '2026-11-17', '1.2.2 (26)']);
+  assert.deepEqual([pa.playInternalTesting.status, pa.playInternalTesting.confirmedBy, pa.playInternalTesting.confirmedOn, pa.playInternalTesting.activeRelease], ['active', 'owner', '2026-11-15', '1.2.2 (26)']);
   assert.ok(!('uploadedOn' in pa.playInternalTesting) && !('uploadedAabSha256' in pa.playInternalTesting), 'no upload date or uploaded hash is invented');
   assert.match(pi.note, /Built, not submitted: .*App Store Connect did not receive build 24, so it is not in TestFlight/);
-  assert.match(pa.note, /Owner-confirmed in the S4 Android 1\.2\.3 release brief \(17 Nov 2026\): versionCode 26 is the last Google Play Internal Testing release/);
+  assert.match(pa.note, /Owner-confirmed on 15 Nov 2026 from a Google Play Console screenshot: versionCode 26 is available to internal testers/);
   // The same identity, Expo project, signing and API as 23 and 25.
   assert.deepEqual([appJson.expo.ios.bundleIdentifier, appJson.expo.android.package, ios.bundleIdentifier, android.package], ['com.sfour.s4', 'com.sfour.s4', 'com.sfour.s4', 'com.sfour.s4']);
   assert.equal(appJson.expo.extra.eas.projectId, 'c786f15c-7d60-4122-9001-02cabbb7692b');
@@ -1007,6 +1008,47 @@ test('BUILD-01K-S4-1-2-3-ANDROID-27-ADDS-THE-GUARD-PROFILE-REDESIGN-PREPARED-NOT
   assert.equal(easJson.build.uat.env.UAT_ANDROID_VERSION_CODE, '28', 'the UAT app stays above the store app');
   assert.match(read('src/services/session.ts'), /const SESSION_KEY = 'security-app-session';/, 'the session storage key is unchanged');
   assert.equal(android.playConsole.internalTesting.activeRelease, '1.2.2 (26)');
+});
+
+test('BUILD-01L-AN-IOS-BUILD-NEVER-REUSES-A-BUILT-BUILD-NUMBER', () => {
+  // iOS build number 24 is used by the built, never submitted 1.2.2 (24) (EAS d7433bed). app.json carries 1.2.3 with the
+  // unchanged build number 24, so an iOS EAS build of the store app must refuse to start until a new, higher build number
+  // is set. Android, web exports and the UAT variant are unaffected, and the config is returned unchanged.
+  const ios = JSON.parse(read('release/ios-release.json'));
+  const makeConfig = require(path.join(ROOT, 'app.config.js'));
+  const fresh = () => JSON.parse(JSON.stringify(appJson.expo));
+  const keys = ['EAS_BUILD', 'EAS_BUILD_PLATFORM', 'APP_VARIANT', 'EXPO_PUBLIC_API_URL', 'UAT_ANDROID_VERSION_CODE'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  const withEnv = (env, fn) => {
+    for (const k of keys) delete process.env[k];
+    Object.assign(process.env, env);
+    try { return fn(); } finally { for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
+  };
+  const builtNumbers = [ios.preparedArtefact, ios.submittedArtefact, ios.artefact, ...ios.supersededArtefacts]
+    .filter((entry) => entry && entry.easBuildId && entry.buildNumber).map((entry) => Number(entry.buildNumber));
+  assert.ok(builtNumbers.includes(24), 'build 24 is recorded as built (1.2.2 (24), d7433bed)');
+  assert.deepEqual([ios.preparedArtefact.marketingVersion, ios.preparedArtefact.buildNumber, ios.preparedArtefact.easBuildId], ['1.2.2', '24', 'd7433bed-16c7-4d13-8a4e-ad99b84e92ca']);
+  assert.equal(appJson.expo.ios.buildNumber, '24');
+  assert.equal(appJson.expo.version, '1.2.3');
+  assert.match(ios.buildNumberSafeguard, /assertIosBuildNumberUnused/);
+  assert.match(ios.buildNumberSafeguard, /the next iOS build needs build number 25 or higher/);
+  const iosBuild = { EAS_BUILD: 'true', EAS_BUILD_PLATFORM: 'ios', EXPO_PUBLIC_API_URL: 'https://security-marketplace-api.onrender.com' };
+  // The current app.json (1.2.3 with 24) cannot be built for iOS.
+  assert.throws(() => withEnv(iosBuild, () => makeConfig({ config: fresh() })), /iOS buildNumber 24 is already used by the built S4 1\.2\.2 \(24\), EAS d7433bed/);
+  // Every built number, and anything at or below the highest, is refused; one above the highest is allowed.
+  const highest = Math.max(...builtNumbers);
+  for (const n of [...new Set(builtNumbers)]) {
+    assert.throws(() => withEnv(iosBuild, () => makeConfig({ config: { ...fresh(), ios: { ...fresh().ios, buildNumber: String(n) } } })), /already used by the built S4/, `build ${n} refused`);
+  }
+  assert.throws(() => withEnv(iosBuild, () => makeConfig({ config: { ...fresh(), ios: { ...fresh().ios, buildNumber: '1' } } })), /above every built S4 iOS build/);
+  assert.throws(() => withEnv(iosBuild, () => makeConfig({ config: { ...fresh(), ios: { ...fresh().ios, buildNumber: '25a' } } })), /whole number above every built S4 iOS build/);
+  const next = { ...fresh(), ios: { ...fresh().ios, buildNumber: String(highest + 1) } };
+  assert.equal(withEnv(iosBuild, () => makeConfig({ config: next })), next, 'a new, higher build number builds, with the config unchanged');
+  // Android and web are unaffected: the store config is returned untouched.
+  const android = fresh();
+  assert.equal(withEnv({ EAS_BUILD: 'true', EAS_BUILD_PLATFORM: 'android', EXPO_PUBLIC_API_URL: 'https://security-marketplace-api.onrender.com' }, () => makeConfig({ config: android })), android);
+  const web = fresh();
+  assert.equal(withEnv({}, () => makeConfig({ config: web })), web);
 });
 
 test('BUILD-01E-THE-BUILT-1-2-0-VC21-IS-A-SUPERSEDED-NEVER-RELEASED-PLAY-DRAFT', () => {

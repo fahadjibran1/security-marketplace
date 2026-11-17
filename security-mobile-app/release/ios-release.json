@@ -590,5 +590,6 @@
     "unusedApnsKeyId": "DSKX62396R (created manually by the owner, not assigned in EAS)",
     "entitlement": "aps-environment production, from the expo-notifications config plugin",
     "provisioningProfile": "B7539588YY includes aps-environment production (verified 2026-10-24 from EAS and from the IPA). Made with the same distribution certificate."
-  }
+  },
+  "buildNumberSafeguard": "An iOS EAS build of com.sfour.s4 refuses to start unless app.json ios.buildNumber is a whole number above every build number recorded here with an EAS build (app.config.js, assertIosBuildNumberUnused). Build 24 is used by the built, never submitted 1.2.2 (24) (EAS d7433bed), so app.json 1.2.3 (24) cannot be built for iOS; the next iOS build needs build number 25 or higher."
 }
