@@ -95,19 +95,31 @@ export function complianceChecksDisplayLabel(label: string): string {
 export type ProfileRequirement = 'required' | 'company' | 'optional' | 'setByCompany' | 'invitation';
 
 /**
- * label: the full wording (section headings and screen readers). short: the overview row's tag (Phase 2D), short
- * enough to sit beside the section title on a standard phone so every row has the same shape.
+ * label: the full wording (screen readers). short: the overview row's requirement text (UX-02A: plain secondary text
+ * beside the title, no longer a grey pill). caption: the one line under a section's title that replaced the pill and
+ * its separate description (UX-02A), so the same distinction is made once, in words.
  */
-export const REQUIREMENT_LABELS: Record<ProfileRequirement, { label: string; short: string; description: string }> = {
-  required: { label: 'Required', short: 'Required', description: 'Needed for your S4 account.' },
+export const REQUIREMENT_LABELS: Record<ProfileRequirement, { label: string; short: string; description: string; caption: string }> = {
+  required: { label: 'Required', short: 'Required', description: 'Needed for your S4 account.', caption: 'Required for your S4 account.' },
   company: {
     label: 'May be requested by company',
     short: 'Company may ask',
     description: 'A company you work for may ask you for this, for example for payroll or deployment checks.',
+    caption: 'A company you work for may ask you for this.',
   },
-  optional: { label: 'Optional', short: 'Optional', description: 'Add it only if you want to.' },
-  setByCompany: { label: 'Set by company', short: 'Set by company', description: 'Your company keeps this up to date. Contact them if it is wrong.' },
-  invitation: { label: 'By invitation', short: 'By invitation', description: 'A company adds you by sending an invitation. You choose whether to accept it.' },
+  optional: { label: 'Optional', short: 'Optional', description: 'Add it only if you want to.', caption: 'Optional. Add it only if you want to.' },
+  setByCompany: {
+    label: 'Set by company',
+    short: 'Set by company',
+    description: 'Your company keeps this up to date. Contact them if it is wrong.',
+    caption: 'Set by your company. Contact them if it is wrong.',
+  },
+  invitation: {
+    label: 'By invitation',
+    short: 'By invitation',
+    description: 'A company adds you by sending an invitation. You choose whether to accept it.',
+    caption: 'Companies add you by invitation. You choose whether to accept.',
+  },
 };
 
 // ─────────────────────────────── Who can see what ───────────────────────────────

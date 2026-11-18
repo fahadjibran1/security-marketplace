@@ -139,6 +139,7 @@ import { guardColors, guardFontFamily, guardShape, guardType } from '../theme/gu
 import { formatHoursHM } from '../services/timesheetHours';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
 import { GuardHeader } from '../components/guard/home/GuardHeader';
+import { GuardBellIcon, GuardCloseIcon } from '../components/guard/home/GuardHeaderIcons';
 import {
   PROFILE_UNAVAILABLE_MESSAGE,
   guardProfileFieldsFrom,
@@ -2216,7 +2217,6 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
       <GuardHeader
         productLabel={productLabel}
         productIsUat={productIsUat}
-        onLogout={onLogout}
         sos={emergencyEligible && emergencyPresentation === 'header'
           ? { accessibilityLabel: guardActionForm('emergency').launchAccessibilityLabel, onPress: openEmergency }
           : null}
@@ -2237,7 +2237,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
         }
         notifications={(() => {
           // The inbox entry point. On a server without notifications the badge is hidden; the button still opens a
-          // calm explanation rather than disappearing.
+          // calm explanation rather than disappearing. UX-02A: a 48dp bell (a cross while the inbox is open) in place of
+          // the word "Notifications"; the handler, badge and accessible names are unchanged.
           const badge = inboxAvailability === 'unavailable' ? null : unreadBadge(unreadCount(inbox.items));
           const open = activeTab === 'inbox';
           return (
@@ -2248,7 +2249,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               accessibilityLabel={open ? 'Close notifications' : badge ? `Notifications, ${badge} unread` : 'Notifications'}
               accessibilityState={{ selected: open }}
             >
-              <Text style={[styles.inboxButtonText, open && styles.inboxButtonTextActive]}>{open ? 'Close' : 'Notifications'}</Text>
+              {open ? <GuardCloseIcon color={colors.textOnBrand} /> : <GuardBellIcon color={colors.textOnBrand} />}
               {badge && !open ? (
                 <View style={[styles.navBadge, guardBadgeBox(badgeSize), styles.navBadgeOnHeader, guardHeaderBadgeOffset(badgeSize)]} testID="guard-header-unread-badge">
                   <Text style={styles.navBadgeText}>{badge}</Text>
@@ -2606,14 +2607,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                   driving: { value: driving, loading: drivingLoading, error: drivingError },
                   email: user?.email,
                 })}
-                layout={profileLayoutRules}
                 onOpenSection={openProfileSection}
                 profileUnavailable={!loadedProfile && !loading ? { message: PROFILE_UNAVAILABLE_MESSAGE, onRetry: () => loadData() } : null}
                 cache={overviewCacheRef.current}
                 refreshKey={overviewRefreshKey}
               />
             ) : (
-              <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)} compact={profileLayoutRules.compact}>
+              <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)}>
                 {profileSection === 'personal' ? (
                   <>
                     <ProfileCard
@@ -3878,20 +3878,19 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: guardColors.canvas },
   // The Notifications control sits in the navy Guard header (S4-UX-01.6). Stage 1: rectangular like Log out, filled
   // in secondary navy, with the same 3:1 outline.
+  // UX-02A: a 48dp square icon control (the Android minimum) in place of the 44dp "Notifications" text button.
   inboxButton: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    minHeight: 44,
-    paddingHorizontal: 12,
+    justifyContent: 'center',
+    minHeight: 48,
+    minWidth: 48,
     borderRadius: guardShape.controlRadius,
     borderWidth: 1,
     borderColor: guardColors.headerControlBorder,
     backgroundColor: guardColors.navySecondary,
   },
-  inboxButtonActive: { borderColor: guardColors.teal },
-  inboxButtonText: { color: colors.textOnBrand, ...guardType.headerButton },
-  inboxButtonTextActive: { fontFamily: guardFontFamily.bold },
+  // Open: a 2dp teal outline marks the selected state (the bold "Close" label used to).
+  inboxButtonActive: { borderColor: guardColors.teal, borderWidth: 2 },
   mainArea: { flex: 1, paddingTop: 12 },
   contentArea: { flex: 1 },
   scrollView: { flex: 1 },

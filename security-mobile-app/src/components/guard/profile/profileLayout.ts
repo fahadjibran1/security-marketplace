@@ -42,8 +42,6 @@ export interface ProfileLayout {
   detailRowStacks: boolean;
   /** Cancel and Save each take a full-width row, Save first. */
   footerStacks: boolean;
-  /** The overview's section rows put the requirement tag under the title instead of beside it. */
-  sectionRowStacksTag: boolean;
   /** Minimum touch target for every control. */
   minTouchTarget: number;
 }
@@ -70,7 +68,6 @@ export function profileLayout({ width, height, fontScale }: ProfileLayoutInput):
     // A compact layout always stacks; a wide one stacks only when the columns would not fit their text.
     detailRowStacks: compact || textWidth < MIN_LABEL_TEXT_WIDTH + MIN_VALUE_TEXT_WIDTH,
     footerStacks: compact || textWidth < MIN_FOOTER_BUTTON_TEXT_WIDTH * 2 + 12,
-    sectionRowStacksTag: narrow || largeText,
     minTouchTarget: PROFILE_MIN_TOUCH_TARGET,
   };
 }

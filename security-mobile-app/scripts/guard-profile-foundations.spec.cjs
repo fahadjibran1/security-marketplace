@@ -473,13 +473,30 @@ test('OVERVIEW-02 header: name, initials, SIA status by date, deployment from `a
   let o = overview.buildProfileOverview(baseInput());
   assert.deepEqual([o.header.name, o.header.initials, o.header.phone], ['Dana Q Guard', 'DG', '07000 000001']);
   // Phase 2D: each fact also has the short value its header cell shows (detail / short) under a fixed caption.
-  assert.deepEqual(o.header.sia, { label: 'SIA valid to 30/06/2032', detail: 'Valid to 30/06/2032', tone: 'success' });
+  // UX-02A (D4): a valid licence's cell puts "valid to" in the caption so the value is the date alone; other states keep
+  // the plain caption and the section's own words.
+  assert.deepEqual(o.header.sia, { label: 'SIA valid to 30/06/2032', detail: 'Valid to 30/06/2032', caption: 'SIA licence valid to', value: '30/06/2032', tone: 'success' });
   assert.deepEqual(o.header.deployment, { label: 'Eligible for deployment', short: 'Eligible', tone: 'success' });
   o = overview.buildProfileOverview(baseInput({ compliance: ready({ assignable: false, blockingReasons: ['a', 'b'], siaExpiryDate: '2031-03-20' }) }));
-  assert.deepEqual(o.header.sia, { label: 'SIA expires 20/03/2031', detail: 'Expires 20/03/2031', tone: 'warning' });
+  assert.deepEqual(o.header.sia, { label: 'SIA expires 20/03/2031', detail: 'Expires 20/03/2031', caption: 'SIA licence', value: 'Expires 20/03/2031', tone: 'warning' });
+  // UX-02A: the SIA & compliance row says what the section adds (the header already shows SIA and deployment).
+  assert.deepEqual([o.sections.find((s) => s.key === 'compliance').summary, o.sections.find((s) => s.key === 'compliance').tone], ['2 compliance items to review', 'warning']);
   assert.deepEqual(o.header.deployment, { label: 'Not eligible for deployment', short: 'Not eligible', tone: 'warning' });
   o = overview.buildProfileOverview(baseInput({ compliance: ready({ assignable: true, blockingReasons: [], siaExpiryDate: '2031-02-28' }) }));
-  assert.deepEqual(o.header.sia, { label: 'SIA expired 28/02/2031', detail: 'Expired 28/02/2031', tone: 'danger' });
+  assert.deepEqual(o.header.sia, { label: 'SIA expired 28/02/2031', detail: 'Expired 28/02/2031', caption: 'SIA licence', value: 'Expired 28/02/2031', tone: 'danger' });
+  assert.deepEqual([o.sections.find((s) => s.key === 'compliance').summary, o.sections.find((s) => s.key === 'compliance').tone], ['No compliance blockers', 'danger'], 'the expired licence keeps the row red');
+  o = overview.buildProfileOverview(baseInput({ compliance: ready({ assignable: false, blockingReasons: ['a'] }) }));
+  assert.equal(o.sections.find((s) => s.key === 'compliance').summary, '1 compliance item to review');
+  o = overview.buildProfileOverview(baseInput({ compliance: ready({ assignable: false, blockingReasons: [] }) }));
+  assert.equal(o.sections.find((s) => s.key === 'compliance').summary, 'Compliance needs review', 'not assignable, no reason given: nothing invented');
+  o = overview.buildProfileOverview(baseInput());
+  assert.deepEqual([o.sections.find((s) => s.key === 'compliance').summary, o.sections.find((s) => s.key === 'compliance').tone], ['No compliance blockers', 'neutral']);
+  assert.doesNotMatch(o.sections.find((s) => s.key === 'compliance').summary, /SIA|eligible/i, 'UX-02A: no repeat of the header facts');
+  for (const [state, text] of [[loading(), 'Loading…'], [failed(), null]]) {
+    const x = overview.buildProfileOverview(baseInput({ compliance: state }));
+    const summary = x.sections.find((s) => s.key === 'compliance').summary;
+    if (text) assert.equal(summary, text); else assert.doesNotMatch(summary, /blocker|review/, 'a failed read is never shown as a result');
+  }
   o = overview.buildProfileOverview(baseInput({ guard: ready({ fullName: 'Dana', phone: '' }), compliance: ready({ assignable: false, blockingReasons: [] }) }));
   assert.deepEqual([o.header.initials, o.header.phone, o.header.sia.label], ['D', null, 'SIA licence not added']);
   // Screening never changes deployment: a VETTED file with assignable=false is still not eligible, and the reverse.
@@ -491,6 +508,7 @@ test('OVERVIEW-02 header: name, initials, SIA status by date, deployment from `a
       const row = x.sections.find((s) => s.key === 'screening');
       assert.deepEqual([row.requirement, row.requirementLabel], ['optional', 'Optional'], `${status}: always optional`);
       assert.doesNotMatch(row.summary, /Optional/, `${status}: not repeated in the summary`);
+      assert.equal(row.requirementText, null, `${status}: UX-02A no separate Optional beside "Optional S4 screening"`);
     }
   }
 });
@@ -548,8 +566,9 @@ test('LAYOUT-01 compact on small phones or large text, with the Guard Home thres
   assert.deepEqual([at(412, 1).detailRowStacks, at(412, 1).footerStacks], [false, false], 'large phone, normal text: side by side');
   assert.deepEqual([at(320, 1).detailRowStacks, at(320, 1).footerStacks], [true, true], 'small phone: stacks');
   assert.deepEqual([at(412, 2).detailRowStacks, at(412, 2).footerStacks], [true, true], 'large text: stacks');
-  assert.equal(at(360, 1.3).sectionRowStacksTag, true);
-  assert.equal(at(412, 1).sectionRowStacksTag, false);
+  // UX-02A: no width/text-size rule for the overview's requirement text any more; it wraps by content (see the overview).
+  assert.equal(at(360, 1.3).sectionRowStacksTag, undefined);
+  assert.equal(at(412, 1).sectionRowStacksTag, undefined);
   for (const bad of [{ width: 0, height: 0, fontScale: 0 }, { width: NaN, height: NaN, fontScale: NaN }]) {
     const l = layoutRules.profileLayout(bad);
     assert.equal(l.fontScale, 1);
@@ -561,7 +580,7 @@ test('LAYOUT-01 compact on small phones or large text, with the Guard Home thres
   assert.equal(layoutRules.choicePresentation(7, at(412, 1)), 'chips');
 });
 
-test('LAYOUT-02 tokens reuse the Guard Home theme, and requirement tags reach 4.5:1', () => {
+test('LAYOUT-02 tokens reuse the Guard Home theme, and requirement text reaches 4.5:1', () => {
   const guard = loadTs('src/theme/guard.ts');
   const t = theme.profileTokens;
   assert.equal(t.colors.accent, guard.guardColors.teal);
@@ -572,19 +591,21 @@ test('LAYOUT-02 tokens reuse the Guard Home theme, and requirement tags reach 4.
   const hex = (c) => { const n = c.replace('#', ''); return [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255); };
   const lum = (c) => hex(c).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
   const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
-  for (const [tier, { text, surface }] of Object.entries(theme.REQUIREMENT_TAG_COLORS)) {
-    assert.ok(contrast(text, surface) >= 4.5, `${tier}: ${contrast(text, surface).toFixed(2)}:1`);
-  }
+  // UX-02A: requirement levels are plain secondary text on the card surface (no pill), so that pairing is the one checked.
+  assert.equal(theme.REQUIREMENT_TAG_COLORS, undefined, 'UX-02A: no requirement pill colours');
+  assert.deepEqual(t.type.requirement, { fontFamily: guard.guardFontFamily.regular, fontSize: 13, lineHeight: 18 });
+  assert.ok(contrast(t.colors.textSecondary, t.colors.surface) >= 4.5, `requirement text: ${contrast(t.colors.textSecondary, t.colors.surface).toFixed(2)}:1`);
   for (const [tone, { text, surface }] of Object.entries(theme.PROFILE_TONE_COLORS)) {
     assert.ok(contrast(text, surface) >= 4.5, `status ${tone}: ${contrast(text, surface).toFixed(2)}:1`);
   }
-  // Approved decision 2C-3: requirement tags are neutral; warning and danger colours are kept for real problems.
+  // Approved decision 2C-3: requirement levels are neutral; warning and danger colours are kept for real problems.
   const brand = loadTs('src/theme/brand.ts').colors;
-  const tagColours = Object.values(theme.REQUIREMENT_TAG_COLORS);
-  assert.equal(new Set(tagColours.map((c) => `${c.text}/${c.surface}`)).size, 1, 'one neutral tag style for every requirement level');
+  const tagSrc = stripComments(read('src/components/guard/profile/ProfileTags.tsx'));
+  assert.match(tagSrc, /requirement: \{ \.\.\.profileTokens\.type\.requirement, color: profileTokens\.colors\.textSecondary,/, 'one neutral style for every requirement level');
   for (const problem of [brand.danger, brand.dangerSurface, brand.warning, brand.warningSurface, brand.success, brand.successSurface]) {
-    assert.ok(!tagColours.some((c) => c.text === problem || c.surface === problem), `no status colour (${problem}) on a requirement tag`);
+    assert.notEqual(t.colors.textSecondary, problem, `no status colour (${problem}) on requirement text`);
   }
+  assert.doesNotMatch(tagSrc, /RequirementTag|backgroundColor: c\.surface \}\]\} testID=\{`guard-profile-requirement/, 'UX-02A: no requirement pill');
   assert.equal(theme.PROFILE_TONE_COLORS.danger.text, brand.danger, 'status colours are the brand ones');
   // No new UI library: the foundations import only React Native-free modules and the existing theme.
   for (const file of ['profileCopy.ts', 'profileLabels.ts', 'profileOverview.ts', 'profileLayout.ts', 'profileTheme.ts']) {

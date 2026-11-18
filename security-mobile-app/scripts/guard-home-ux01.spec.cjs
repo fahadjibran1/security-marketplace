@@ -347,18 +347,30 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
   assert.equal(fit(true, 1, 361), false, '393dp: 353 fits in 361, so they come back beside the title (CP-A shot 3)');
   assert.equal(fit(true, 2, 1000), true, 'a title that needs two lines even alone keeps the actions on their own row');
   assert.equal(fit(true, 1, 0), true, 'nothing moves before the row is measured');
+  // UX-02A: with Log out gone the actions are the 48dp bell alone: 26+12+114+12+48 = 212, so the title keeps them beside
+  // it on every phone at normal text (the rule itself is unchanged).
+  assert.equal(nextHeaderWrapped({ wrapped: true, lines: 1, textWidth: 114, rowWidth: 328, markWidth: 26, actionsWidth: 48 }), false, 'UX-02A: the bell fits beside the title at 360dp');
   for (const title of ['Current Shift', 'A deliberately long screen title that cannot share a row']) {
     let r;
     await act(async () => {
-      r = TestRenderer.create(h(GuardHeader, { title, productLabel: 'S4', productIsUat: false, onLogout: noop, notifications: h(RNW.Text, null, 'N') }));
+      r = TestRenderer.create(h(GuardHeader, { title, productLabel: 'S4', productIsUat: false, notifications: h(RNW.Text, null, 'N') }));
     });
-    const controls = pressables(r.root, () => true);
-    assert.equal(controls.length, 1, 'Log out is the header\'s own control (Notifications is passed in)');
+    // UX-02A: the header draws no control of its own (Log out moved to Profile > Privacy & account; Notifications is
+    // passed in). The review-only SOS, when present, is the header's one control and keeps its labelled 48pt target.
+    assert.equal(pressables(r.root, () => true).length, 0, 'UX-02A: no Log out in the header');
+    assert.ok(!texts(r.root).includes('Log out'), 'UX-02A: no Log out text in the header');
+    let withSos;
+    await act(async () => {
+      withSos = TestRenderer.create(h(GuardHeader, { title, productLabel: 'S4', productIsUat: false, sos: { accessibilityLabel: 'Emergency', onPress: noop }, notifications: h(RNW.Text, null, 'N') }));
+    });
+    const controls = pressables(withSos.root, () => true);
+    assert.equal(controls.length, 1, 'the SOS is the header\'s own control (Notifications is passed in)');
     for (const c of controls) {
       assert.equal(c.props.accessibilityRole, 'button');
       assert.ok(c.props.accessibilityLabel, 'labelled');
       assert.ok(flat(c.props.style).minHeight >= 44, 'at least 44pt');
     }
+    await act(async () => withSos.unmount());
     assert.ok(r.root.findAll((n) => n.props?.accessibilityRole === 'header').length >= 1, 'the title is announced as a heading');
     // Before any measurement the actions sit beside the title, in the header's first row.
     const parts = () => {
@@ -369,7 +381,7 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
       return { header, row, identity, actions };
     };
     let p = parts();
-    assert.ok(texts(p.identity).includes(title) && texts(p.actions).includes('Log out'));
+    assert.ok(texts(p.identity).includes(title) && texts(p.actions).includes('N'));
     assert.ok(isInside(p.actions, p.row) && !isInside(p.actions, p.identity), 'actions beside the title');
     // Drive the real handlers with device measurements: the title needs two lines at 360dp, so the actions move to
     // their own row; at 430dp the one-line title fits beside them again, so they come back.
@@ -414,8 +426,8 @@ test('UX-T9-HEADER-AND-BAR-CONTROLS-ARE-LABELLED-44PT-AND-NEVER-CLIPPED', async 
     assert.doesNotMatch(src, /numberOfLines|ellipsizeMode|adjustsFontSizeToFit|allowFontScaling=\{false\}/, `${rel} never truncates or blocks text scaling`);
     assert.doesNotMatch(src, /\bheight: \d/, `${rel} has no fixed heights that large text would overflow`);
   }
-  // The Notifications control the dashboard passes in keeps its 44pt target.
-  assert.match(read(SCREEN), /inboxButton: \{[^}]*minHeight: 44,/);
+  // The Notifications control the dashboard passes in: UX-02A a 48dp square bell (was a 44pt text button).
+  assert.match(read(SCREEN), /inboxButton: \{[^}]*minHeight: 48,\s*minWidth: 48,/);
 });
 
 // ═══════════════════ UX-T21 Stage 4A badges ═══════════════════
@@ -427,7 +439,7 @@ test('UX-T21-BADGES-SCALE-WITH-TEXT-AND-NEVER-MOVE-THE-HEADER-OR-THE-OFFERS-LABE
   assert.deepEqual([1, 1.3, 2].map(screen.guardBadgeSize), [18, 23, 32]);
   for (const bad of [0, -1, NaN, Infinity]) assert.equal(screen.guardBadgeSize(bad), 18, `${bad} falls back to 1.0x`);
   assert.deepEqual(screen.guardBadgeBox(23), { minWidth: 23, minHeight: 23, borderRadius: 11.5 });
-  // The header badge overhangs the control by 4dp (the actions keep a 12dp gap, so Log out stays 8dp clear) and at
+  // The header badge overhangs the control by 4dp (the actions keep a 12dp gap, so the SOS stays 8dp clear) and at
   // 1.0x rises no further than the header's 8dp top padding.
   assert.deepEqual([18, 23, 32].map((s) => screen.guardHeaderBadgeOffset(s)), [{ top: -8, right: -4 }, { top: -11, right: -4 }, { top: -17, right: -4 }]);
   assert.deepEqual(screen.guardOffersBadgeOffset(32), { bottom: '100%', right: -8 });
@@ -586,14 +598,21 @@ test('UX-T6-ONE-GUARD-HEADER-LOG-OUT-SIGNS-OUT-THROUGH-APP', async () => {
   const root = renderer.root;
   const headers = byTestId(root, 'guard-header');
   assert.equal(headers.length, 1, 'one Guard header');
-  const logOuts = pressables(root, (p) => p.accessibilityRole === 'button').filter((n) => n.findAll((c) => c.props?.children === 'Log out').length);
-  assert.equal(logOuts.length, 1, 'App does not draw a second top bar for a Guard');
-  assert.ok(isInside(logOuts[0], headers[0]), 'the one Log out is in the Guard header');
+  const logOutsIn = (node) => pressables(node, (p) => p.accessibilityRole === 'button').filter((n) => n.findAll((c) => c.props?.children === 'Log out').length);
+  // UX-02A: no Log out on Home at all (App draws no second top bar, the Guard header has none).
+  assert.equal(logOutsIn(root).length, 0, 'App does not draw a second top bar for a Guard, and the header has no Log out');
   assert.ok(!texts(root).includes('Guard'), 'App\'s "Guard" surface label is not drawn');
   assert.ok(texts(headers[0]).includes('Current Shift'), 'the Home title is in the header');
   assert.ok(!texts(root).includes('S4 UAT · STAGING'), 'the store app shows no UAT label');
   assert.ok(byLabel(headers[0], 'Notifications').length === 1, 'Notifications is in the header');
-  const [logOut] = byLabel(headers[0], 'Log out');
+  assert.ok(byTestId(headers[0], 'guard-header-bell-icon')[0], 'UX-02A: shown as a bell');
+  // The Guard's one Log out is in Profile > Privacy & account, and signs out through App exactly as before.
+  await openProfile(root, run, 'privacyAccount');
+  const privacy = byTestId(root, 'guard-profile-section-view-privacyAccount')[0];
+  const logOuts = logOutsIn(root);
+  assert.equal(logOuts.length, 1, 'one Log out');
+  assert.ok(isInside(logOuts[0], privacy) && !isInside(logOuts[0], byTestId(root, 'guard-header')[0]), 'the one Log out is in Privacy & account');
+  const [logOut] = byLabel(privacy, 'Log out');
   await run(() => logOut.props.onPress());
   assert.equal(calls.logout, 1, 'App\'s handleLogout ran: the session is signed out');
   assert.ok(texts(root).includes('Sign in'), 'back to the sign-in screen');
@@ -1612,7 +1631,7 @@ test('UX-T33-PROFILE-OVERVIEW-HEADER-AVATAR-FACTS-ATTENTION-AND-SEVEN-SECTIONS',
   const attention = pressables(byTestId(root, 'guard-profile-attention')[0], () => true);
   assert.deepEqual(attention.map((a) => a.props.testID), ['guard-profile-attention-sia-expired', 'guard-profile-attention-deployment-blocked', 'guard-profile-attention-no-company']);
   for (const item of attention) assert.ok(flat(item.props.style({ pressed: false })).minHeight >= 44, `${item.props.testID}: 44pt`);
-  // Seven sections in order, each a labelled button with a neutral requirement tag; Companies is not just "Optional".
+  // Seven sections in order, each a labelled button with its requirement in plain words; Companies is not just "Optional".
   const rows = PROFILE_SECTION_KEYS.map((key) => byTestId(root, `guard-profile-section-${key}`)[0]);
   assert.ok(rows.every(Boolean), 'all seven sections');
   assert.deepEqual(rows.map((r) => texts(r)[0]), PROFILE_SECTION_TITLES);
@@ -1622,14 +1641,19 @@ test('UX-T33-PROFILE-OVERVIEW-HEADER-AVATAR-FACTS-ATTENTION-AND-SEVEN-SECTIONS',
     assert.ok(flat(row.props.style({ pressed: false })).minHeight >= 44);
   }
   assert.ok(texts(rows[1]).includes('By invitation') && !texts(rows[1]).includes('Optional'), 'Companies & invitations: By invitation');
-  assert.ok(texts(rows[5]).includes('Optional'), 'S4 screening: Optional');
-  const tagColours = new Set(root.findAll((n) => /^guard-profile-requirement-/.test(n.props?.testID ?? '') && n.props.style).map((n) => flat(n.props.style).backgroundColor));
-  assert.equal(tagColours.size, 1, 'requirement tags are all one neutral colour');
-  assert.ok(!['#FEE2E2', '#FEF3C7', '#DCFCE7'].includes(String([...tagColours][0]).toUpperCase()), 'not a danger, warning or success surface');
+  // UX-02A: the screening title already says Optional, so its row shows no separate requirement text (still announced).
+  assert.ok(texts(rows[5])[0].startsWith('Optional') && rows[5].props.accessibilityLabel.includes(', Optional. '), 'S4 screening: Optional');
+  assert.equal(byTestId(rows[5], 'guard-profile-requirement-optional').length, 0, 'UX-02A: no repeated Optional on the screening row');
+  // UX-02A: requirement levels are plain secondary text, never a pill: no surface, one neutral colour.
+  const requirementTexts = root.findAll((n) => /^guard-profile-requirement-/.test(n.props?.testID ?? '') && n.props.style);
+  assert.equal(requirementTexts.length, 6, 'six requirement texts (every row but screening)');
+  assert.ok(requirementTexts.every((n) => n.type === RNW.Text && flat(n.props.style).backgroundColor === undefined), 'UX-02A: plain text, no grey pill');
+  const requirementColours = new Set(requirementTexts.map((n) => flat(n.props.style).color));
+  assert.equal(requirementColours.size, 1, 'requirement texts are all one neutral colour');
+  assert.ok(!['#B42318', '#A15C07', '#15803D'].includes(String([...requirementColours][0]).toUpperCase()), 'not a danger, warning or success colour');
   // No invented completion figure, and no forms on the overview itself.
-  // The only percentage allowed is the screening file's own progress, inside its row's summary.
-  const screeningSummary = texts(rows[5]).slice(-1)[0];
-  assert.ok(!texts(overview).some((t) => /%/.test(t) && t !== screeningSummary), 'no profile completion percentage');
+  // UX-02A (decision R1): no percentage at all on the overview, not even the screening file's progress.
+  assert.ok(!texts(overview).some((t) => /%/.test(t)), 'no percentage on the overview');
   assert.equal(overview.findAll((n) => n.type === 'test-text-input' || n.type === RNW.Switch).length, 0, 'the overview has no form controls');
   // The attention item opens the right section.
   await run(() => attention[2].props.onPress());
@@ -1787,10 +1811,18 @@ test('UX-T37-PROFILE-OVERVIEW-ADAPTS-TO-SMALL-PHONES-AND-LARGE-TEXT', async () =
     assert.deepEqual([avatar.width, avatar.height, avatar.minWidth, avatar.maxWidth, avatar.minHeight, avatar.maxHeight, avatar.borderRadius], [48, 48, 48, 48, 48, 48, 24], `${at}: avatar circle`);
     for (const key of PROFILE_SECTION_KEYS) {
       const row = byTestId(root, `guard-profile-section-${key}`)[0];
-      const titleBox = row.findAll((n) => n.type === RNW.View && n.props.style && flat(n.props.style).flexDirection && n.findAll((c) => /^guard-profile-requirement-/.test(c.props?.testID ?? '')).length > 0 && !/^guard-profile-requirement-/.test(n.props.testID ?? ''))
-        .filter((n, _i, all) => !all.some((o) => o !== n && isInside(o, n)))[0];
-      assert.ok(titleBox, `${at} ${key}: the title and its tag`);
-      assert.equal(flat(titleBox.props.style).flexDirection, compact ? 'column' : 'row', `${at} ${key}: the tag ${compact ? 'goes under' : 'sits beside'} the title`);
+      // UX-02A: one content-driven rule at every width and text size: the requirement text follows the title on the same
+      // line and wraps under it only when the pair does not fit (no breakpoint, no forced stack).
+      const requirement = row.findAll((n) => /^guard-profile-requirement-/.test(n.props?.testID ?? '') && n.props.style)[0];
+      if (key === 'screening') {
+        assert.equal(requirement, undefined, `${at} ${key}: the title says Optional itself`);
+      } else {
+        assert.ok(requirement, `${at} ${key}: the title and its requirement`);
+        let titleBox = requirement.parent;
+        while (titleBox && !(titleBox.type === RNW.View && titleBox.props.style && flat(titleBox.props.style).flexDirection)) titleBox = titleBox.parent;
+        assert.ok(texts(titleBox).length >= 2, `${at} ${key}: the requirement shares the title's box`);
+        assert.deepEqual([flat(titleBox.props.style).flexDirection, flat(titleBox.props.style).flexWrap], ['row', 'wrap'], `${at} ${key}: beside the title, wrapping by content (compact: ${compact})`);
+      }
       for (const text of row.findAll((n) => n.type === RNW.Text)) assert.equal(text.props.numberOfLines, undefined, `${at} ${key}: never truncated`);
     }
     // Phase 2D: the header's two facts are equal cells side by side, never wrapping pills.
@@ -1900,9 +1932,14 @@ test('UX-T39-PROFILE-2D-COMPACT-RECORDS-UK-DATES-ONE-SIA-READING-AND-A-COMPACT-S
     const headRow = section.findAll((n) => n.type === RNW.View && n.props.style && flat(n.props.style).flexDirection === 'row'
       && n.findAll((c) => c.props?.testID === 'guard-profile-back').length > 0)[0];
     assert.ok(headRow && texts(headRow).includes('Employment & pay'), `${at}: Back and title on one row`);
-    // A long requirement ("May be requested by company" and its explanation) goes under the tag, never squeezed beside it.
+    // UX-02A: the requirement is one line of plain text under the title (no pill beside a separate explanation), and the
+    // full level is still announced.
+    const reqCopy = loadTs('src/components/guard/profile/profileCopy.ts').REQUIREMENT_LABELS.company;
     const requirement = root.findAll((n) => n.props?.testID === 'guard-profile-section-requirement' && n.props.style)[0];
-    assert.equal(flat(requirement.props.style).flexDirection, 'column', `${at}: long requirement stacks`);
+    assert.equal(requirement.type, RNW.Text, `${at}: one caption line`);
+    assert.deepEqual([...new Set(texts(requirement))], [reqCopy.caption], `${at}: the caption`);
+    assert.equal(requirement.props.accessibilityLabel, `May be requested by company. ${reqCopy.caption}`, `${at}: announced in full`);
+    assert.equal(flat(requirement.props.style).backgroundColor, undefined, `${at}: no pill`);
     // Read-only records: label beside value on a standard phone, above it when compact; dates as DD/MM/YYYY.
     const employment = byTestId(root, 'guard-profile-employment-record')[0];
     const payroll = byTestId(root, 'guard-profile-payroll-record')[0];
@@ -1934,7 +1971,10 @@ test('UX-T40-PROFILE-2D-SIA-IS-READ-THE-SAME-ON-THE-OVERVIEW-AND-IN-SIA-AND-COMP
   const root = renderer.root;
   await openProfile(root, run, null);
   const headerSia = root.findAll((n) => n.props?.testID === 'guard-profile-sia-status' && typeof n.props.accessibilityLabel === 'string')[0];
-  assert.deepEqual([...new Set(texts(headerSia))], ['SIA licence', 'Valid to 30/06/2032']);
+  // UX-02A (D4): "valid to" moves into the caption so the date fits the half-width cell on one line; the sentence read
+  // out is unchanged.
+  assert.deepEqual([...new Set(texts(headerSia))], ['SIA licence valid to', '30/06/2032']);
+  assert.equal(headerSia.props.accessibilityLabel, 'SIA valid to 30/06/2032');
   await openSection(root, run, 'compliance');
   const row = byTestId(root, 'guard-compliance-sia')[0];
   assert.ok(texts(row).includes('SIA-FICTIONAL') && texts(row).includes('Valid to 30/06/2032'), 'the same number, date and wording');

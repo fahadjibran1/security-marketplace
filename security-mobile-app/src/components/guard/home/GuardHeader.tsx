@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { brand, colors, control, spacing } from '../../../theme';
+import { brand, colors, spacing } from '../../../theme';
 import { guardColors, guardFontFamily, guardShape, guardType } from '../../../theme/guard';
 
 // The project's react-native type shim (src/types/react-shims.d.ts) does not export event types; these are the only
@@ -15,8 +15,11 @@ type TextLayoutEvent = { nativeEvent: { lines?: Array<{ width: number }> } };
  * It keeps everything both of them did:
  *  - the S4 mark, and the product label whenever it says more than the mark (the UAT app's "S4 UAT · STAGING");
  *  - the screen title;
- *  - the Notifications control, passed in unchanged by the dashboard (same handler, badge and labels);
- *  - Log out, calling the same `onLogout` App passes down (unregister push, sign out, clear the session).
+ *  - the Notifications control, passed in unchanged by the dashboard (same handler, badge and labels).
+ *
+ * UX-02A: Log out is no longer in the header. The Guard's one Log out is in Profile > Privacy & account, which calls
+ * the same `onLogout` App passes down (unregister push, sign out, clear the session). The mark is 18pt and the title
+ * 17/22, so at normal text the header is one compact row; at large text it still wraps by content (below), never clips.
  *
  * Navy, continuing the navy status-bar backdrop App draws above it for Guards, so the light status-bar content stays
  * readable.
@@ -31,7 +34,6 @@ export interface GuardHeaderProps {
   productLabel: string;
   productIsUat: boolean;
   notifications: ReactNode;
-  onLogout: () => void;
   /**
    * S4-UX-01.3 Variant B (review only, see guardEmergencyPresentation.ts): a compact SOS control that opens the
    * existing Emergency form. Null (the default) renders nothing, which is Variant A.
@@ -67,7 +69,7 @@ export function nextHeaderWrapped({ wrapped, lines, textWidth, rowWidth, markWid
   return markWidth + ROW_GAP + Math.ceil(textWidth) + ROW_GAP + actionsWidth > rowWidth;
 }
 
-export function GuardHeader({ title, productLabel, productIsUat, notifications, onLogout, sos = null }: GuardHeaderProps) {
+export function GuardHeader({ title, productLabel, productIsUat, notifications, sos = null }: GuardHeaderProps) {
   const showProductLabel = productIsUat || productLabel !== brand.shortBrand;
   const [wrapped, setWrapped] = useState(false);
   const sizes = useRef({ row: 0, mark: 0, actions: 0, text: { title: { lines: 0, width: 0 }, label: { lines: 0, width: 0 } } });
@@ -106,14 +108,6 @@ export function GuardHeader({ title, productLabel, productIsUat, notifications, 
         </Pressable>
       ) : null}
       {notifications}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Log out"
-        onPress={onLogout}
-        style={({ pressed }: { pressed: boolean }) => [styles.logoutButton, pressed && styles.pressed]}
-      >
-        <Text style={styles.logoutText}>Log out</Text>
-      </Pressable>
     </View>
   );
 
@@ -151,25 +145,14 @@ const styles = StyleSheet.create({
   title: { color: colors.textOnBrand, ...guardType.title, letterSpacing: -0.2 },
   productLabel: { color: colors.border, fontFamily: guardFontFamily.regular, fontSize: 13, lineHeight: 18 },
   uatLabel: { color: '#FBBF24', fontFamily: guardFontFamily.bold },
-  // Stage 4A: 12dp between the controls, whether or not a badge is showing. The Notifications unread badge overhangs
-  // its control's right edge by 4dp (see guardHeaderBadgeOffset in GuardDashboardScreen), so Log out stays 8dp clear,
-  // and because the badge is outside the control's layout the actions are the same width with and without it.
+  // Stage 4A: 12dp between the controls (the review-only SOS and Notifications), whether or not a badge is showing.
+  // The Notifications unread badge overhangs its control's right edge by 4dp (see guardHeaderBadgeOffset in
+  // GuardDashboardScreen); because the badge is outside the control's layout the actions are the same width with and
+  // without it.
   actions: { flexDirection: 'row', alignItems: 'center', columnGap: spacing.md, rowGap: spacing.sm, flexShrink: 0 },
-  // On its own row: right-aligned. With the badge out of the layout, Notifications and Log out stay side by side at
-  // 2.0x text on a 360dp screen (Android 16: 187 + 12 + 121 = 320 of 328dp); wrapping onto a further row remains only
-  // as the fallback for a still narrower screen or larger text, so neither control is ever clipped.
+  // On its own row: right-aligned. UX-02A: with Log out gone the actions are one 48dp icon control, so they rarely
+  // wrap; the content-driven rule stays as the fallback for a title that needs two lines, so nothing is ever clipped.
   actionsWrapped: { alignSelf: 'flex-end', flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 1, maxWidth: '100%' },
-  // Stage 1: a compact rectangular control whose outline is 3:1 against the navy header (the Notifications control,
-  // passed in by the dashboard, matches it).
-  logoutButton: {
-    minHeight: control.minTouchTarget,
-    justifyContent: 'center',
-    borderRadius: guardShape.controlRadius,
-    borderWidth: 1,
-    borderColor: guardColors.headerControlBorder,
-    paddingHorizontal: spacing.md,
-  },
-  logoutText: { color: colors.textOnBrand, ...guardType.headerButton },
   sosButton: {
     minHeight: HEADER_SOS_MIN_SIZE,
     minWidth: HEADER_SOS_MIN_SIZE + spacing.lg,

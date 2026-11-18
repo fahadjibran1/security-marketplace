@@ -1,17 +1,14 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { REQUIREMENT_LABELS, type ProfileRequirement } from './profileCopy';
 import type { Tone } from './profileOverview';
-import { PROFILE_TONE_COLORS, REQUIREMENT_TAG_COLORS, profileTokens } from './profileTheme';
+import { PROFILE_TONE_COLORS, profileTokens } from './profileTheme';
 
-/** A requirement level ("Required", "By invitation"…). Always neutral: a requirement is not a problem. */
-export function RequirementTag({ requirement, short = false }: { requirement: ProfileRequirement; short?: boolean }) {
-  const c = REQUIREMENT_TAG_COLORS[requirement];
-  const words = REQUIREMENT_LABELS[requirement];
-  return (
-    <View style={[styles.tag, { backgroundColor: c.surface }]} testID={`guard-profile-requirement-${requirement}`}>
-      <Text style={[styles.tagText, { color: c.text }]}>{short ? words.short : words.label}</Text>
-    </View>
-  );
+/**
+ * A requirement level ("Required", "By invitation"…) as plain secondary text (UX-02A). It replaced a neutral grey pill:
+ * the seven identical pills carried no meaning in their colour, only in their words, so the words stay and the pill
+ * goes. Never coloured: a requirement is not a problem.
+ */
+export function RequirementText({ text, testID }: { text: string; testID?: string }) {
+  return <Text style={styles.requirement} testID={testID}>{text}</Text>;
 }
 
 /** A status fact (SIA validity, deployment). Coloured only when it is good news or a real problem. */
@@ -25,15 +22,7 @@ export function StatusPill({ label, tone, testID }: { label: string; tone: Tone;
 }
 
 const styles = StyleSheet.create({
-  tag: {
-    alignSelf: 'flex-start',
-    flexShrink: 0,
-    maxWidth: '100%',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: profileTokens.shape.tagRadius,
-  },
-  tagText: { ...profileTokens.type.sectionLabel },
+  requirement: { ...profileTokens.type.requirement, color: profileTokens.colors.textSecondary, flexShrink: 1 },
   pill: {
     alignSelf: 'flex-start',
     maxWidth: '100%',

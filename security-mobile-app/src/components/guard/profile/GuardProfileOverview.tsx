@@ -4,8 +4,7 @@ import { getMyGuardComplianceStatus, getMyScreening } from '../../../services/ap
 import type { GuardComplianceSummary, GuardScreening } from '../../../types/models';
 import { ProfileAvatar } from './ProfileAvatar';
 import { freshValue, type TimedValue } from './profileData';
-import { RequirementTag } from './ProfileTags';
-import type { ProfileLayout } from './profileLayout';
+import { RequirementText } from './ProfileTags';
 import {
   buildProfileOverview,
   failed,
@@ -34,7 +33,6 @@ import { PROFILE_TONE_COLORS, profileTokens } from './profileTheme';
  */
 export interface GuardProfileOverviewProps {
   source: ProfileOverviewSource;
-  layout: ProfileLayout;
   onOpenSection: (section: ProfileSectionKey) => void;
   /** Shown when the Guard's own record could not load, so the overview offers the same recovery as before. */
   profileUnavailable?: { message: string; onRetry: () => void } | null;
@@ -57,7 +55,7 @@ export function complianceFactsFrom(summary: GuardComplianceSummary | null | und
   return { assignable: Boolean(summary?.assignable), blockingReasons: summary?.blockingReasons ?? [], siaExpiryDate: summary?.siaExpiryDate ?? null, siaLicenceNumber: summary?.siaLicenceNumber ?? null };
 }
 
-export function GuardProfileOverview({ source, layout, onOpenSection, profileUnavailable, cache, refreshKey = 0 }: GuardProfileOverviewProps) {
+export function GuardProfileOverview({ source, onOpenSection, profileUnavailable, cache, refreshKey = 0 }: GuardProfileOverviewProps) {
   // A fresh cached read is shown at once (no loading flash on Back); otherwise the status loads as before.
   const [compliance, setCompliance] = useState<Loadable<ComplianceFacts>>(() => {
     const cached = freshValue(cache?.compliance, Date.now());
@@ -132,32 +130,34 @@ export function GuardProfileOverview({ source, layout, onOpenSection, profileUna
           </View>
         </View>
         {/* Phase 2D: two equal cells with a fixed caption and a short value, so the header is the same height loading
-            and loaded and never wraps into stacked pills. The full sentence is what a screen reader hears. */}
+            and loaded and never wraps into stacked pills. The full sentence is what a screen reader hears. UX-02A: the
+            SIA cell's verb moved into its caption, so the value is the date alone and fits one line. */}
         <View style={styles.facts}>
-          <FactCell caption="SIA licence" value={header.sia.detail} spoken={header.sia.label} tone={header.sia.tone} testID="guard-profile-sia-status" />
+          <FactCell caption={header.sia.caption} value={header.sia.value} spoken={header.sia.label} tone={header.sia.tone} testID="guard-profile-sia-status" />
           <FactCell caption="Deployment" value={header.deployment.short} spoken={header.deployment.label} tone={header.deployment.tone} testID="guard-profile-deployment-status" />
         </View>
-      </View>
 
-      {attention.length ? (
-        <View style={[styles.card, styles.attentionCard]} testID="guard-profile-attention">
-          <Text style={styles.eyebrow} accessibilityRole="header">Needs attention</Text>
-          {attention.map((item) => (
-            <Pressable
-              key={item.key}
-              style={({ pressed }: { pressed: boolean }) => [styles.attentionRow, pressed && styles.pressed]}
-              onPress={() => onOpenSection(item.section)}
-              accessibilityRole="button"
-              accessibilityLabel={`${item.text}. Opens ${titleOf(item.section)}`}
-              testID={`guard-profile-attention-${item.key}`}
-            >
-              <View style={[styles.attentionMark, { backgroundColor: PROFILE_TONE_COLORS[item.tone].text }]} />
-              <Text style={styles.attentionText}>{item.text}</Text>
-              <Text style={styles.chevron}>›</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+        {/* UX-02A: Needs attention is part of the same card (identity, facts, attention), divided from the facts above. */}
+        {attention.length ? (
+          <View style={styles.attention} testID="guard-profile-attention">
+            <Text style={styles.eyebrow} accessibilityRole="header">Needs attention</Text>
+            {attention.map((item) => (
+              <Pressable
+                key={item.key}
+                style={({ pressed }: { pressed: boolean }) => [styles.attentionRow, pressed && styles.pressed]}
+                onPress={() => onOpenSection(item.section)}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.text}. Opens ${titleOf(item.section)}`}
+                testID={`guard-profile-attention-${item.key}`}
+              >
+                <View style={[styles.attentionMark, { backgroundColor: PROFILE_TONE_COLORS[item.tone].text }]} />
+                <Text style={styles.attentionText}>{item.text}</Text>
+                <Text style={styles.chevron}>›</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
 
       <View style={[styles.card, styles.sectionList]} testID="guard-profile-sections">
         {sections.map((section, index) => {
@@ -173,9 +173,11 @@ export function GuardProfileOverview({ source, layout, onOpenSection, profileUna
               testID={`guard-profile-section-${section.key}`}
             >
               <View style={styles.sectionText}>
-                <View style={layout.sectionRowStacksTag ? styles.titleStack : styles.titleRow}>
+                {/* UX-02A: the requirement is plain secondary text beside the title, wrapping under it only when the
+                    pair does not fit (never a grey pill, never forced onto its own line). */}
+                <View style={styles.titleRow}>
                   <Text style={styles.sectionTitle}>{section.title}</Text>
-                  <RequirementTag requirement={section.requirement} short />
+                  {section.requirementText ? <RequirementText text={section.requirementText} testID={`guard-profile-requirement-${section.requirement}`} /> : null}
                 </View>
                 <Text style={[styles.sectionSummary, { color: toneColour }]}>{section.summary}</Text>
               </View>
@@ -223,17 +225,17 @@ const styles = StyleSheet.create({
   factCaption: { ...t.type.sectionLabel, color: t.colors.textSecondary },
   factValue: { ...t.type.value, fontFamily: t.type.button.fontFamily },
   eyebrow: { ...t.type.sectionLabel, color: t.colors.textSecondary },
-  attentionCard: { gap: 0, paddingVertical: 8 },
-  attentionRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  attention: { borderTopWidth: 1, borderTopColor: t.colors.border, paddingTop: 8, gap: 0 },
+  attentionRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10 },
   attentionMark: { width: 4, alignSelf: 'stretch', borderRadius: 2 },
   attentionText: { ...t.type.value, flex: 1, color: t.colors.textPrimary },
   sectionList: { paddingVertical: 0, gap: 0 },
   sectionRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   sectionDivider: { borderTopWidth: 1, borderTopColor: t.colors.border },
   sectionText: { flex: 1, minWidth: 0, gap: 2 },
-  // Phase 2D: one deterministic rule — beside the title on a standard phone (no wrapping), under it when compact.
-  titleRow: { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', gap: 8 },
-  titleStack: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 },
+  // UX-02A: content-driven — the requirement text follows the title on the same line and wraps under it only when the
+  // pair does not fit, at any width or text size (no width breakpoint, no pill).
+  titleRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 8, rowGap: 0 },
   sectionTitle: { ...t.type.value, fontFamily: t.type.button.fontFamily, color: t.colors.textPrimary, flexShrink: 1 },
   sectionSummary: { ...t.type.body },
   chevron: { fontSize: 22, color: t.colors.textSecondary },

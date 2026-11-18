@@ -67,10 +67,10 @@ export const guardFontFamily = {
 } as const;
 
 export const guardType = {
-  /** Screen title in the Guard header: 20/26, 700. */
-  title: { fontFamily: guardFontFamily.bold, fontSize: 20, lineHeight: 26 },
-  /** The "S4" mark: 22, 700. */
-  mark: { fontFamily: guardFontFamily.bold, fontSize: 22 },
+  /** Screen title in the Guard header: 17/22, 600 (UX-02A: was 20/26, 700). */
+  title: { fontFamily: guardFontFamily.semibold, fontSize: 17, lineHeight: 22 },
+  /** The "S4" mark: 18, 700 (UX-02A: was 22). */
+  mark: { fontFamily: guardFontFamily.bold, fontSize: 18 },
   /** Site name and shift time: 18/24, 700. */
   siteTime: { fontFamily: guardFontFamily.bold, fontSize: 18, lineHeight: 24 },
   /** Shift date: 14/20, 500. */

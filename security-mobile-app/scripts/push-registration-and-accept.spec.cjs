@@ -460,7 +460,16 @@ test('PUSH-08-THE-REAL-APP-REGISTERS-ONCE-ACROSS-RENDERS-NAVIGATION-AND-APPSTATE
 test('PUSH-09-THE-REAL-APP-SIGN-OUT-UNREGISTERS-AND-ANOTHER-GUARD-REGISTERS', async () => {
   const { renderer, calls, run, signIn } = await mountApp();
   assert.equal(calls.pushDevices.length, 1);
-  const logOut = pressables(renderer, (p) => p.accessibilityRole === 'button').find((n) => n.findAll((c) => c.props?.children === 'Log out').length);
+  // UX-02A: the Guard's Log out is in Profile > Privacy & account (no longer in the header); same App sign-out.
+  const findLogOut = () => pressables(renderer, (p) => p.accessibilityRole === 'button').find((n) => n.findAll((c) => c.props?.children === 'Log out').length);
+  assert.equal(findLogOut(), undefined, 'UX-02A: no Log out on Home');
+  const [profileTab] = byLabel(renderer, 'Profile');
+  await run(() => profileTab.props.onPress());
+  await settle(50);
+  const privacyRow = pressables(renderer, (p) => p.testID === 'guard-profile-section-privacyAccount')[0];
+  assert.ok(privacyRow, 'the Privacy & account row');
+  await run(() => privacyRow.props.onPress());
+  const logOut = findLogOut();
   assert.ok(logOut, 'the Log out control');
   await run(() => logOut.props.onPress());
   assert.deepEqual(calls.unregister, ['ExponentPushToken[device-1]'], 'the phone is unregistered at sign-out');

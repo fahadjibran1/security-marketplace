@@ -118,7 +118,13 @@ export interface ProfileSectionSummary {
   key: ProfileSectionKey;
   title: string;
   requirement: ProfileRequirement;
+  /** The full requirement wording, read out with the row. */
   requirementLabel: string;
+  /**
+   * UX-02A: the short requirement text shown beside the title (plain secondary text, not a pill), or null when the
+   * title already says it ("Optional S4 screening").
+   */
+  requirementText: string | null;
   summary: string;
   tone: Tone;
 }
@@ -128,8 +134,12 @@ export interface ProfileOverview {
     name: string;
     initials: string;
     phone: string | null;
-    /** label: the full sentence (read out); detail: the shorter value shown under the cell's 'SIA licence' caption. */
-    sia: { label: string; detail: string; tone: Tone };
+    /**
+     * label: the full sentence (read out). detail: the shorter value the SIA & compliance section shows. caption and
+     * value: what the overview cell shows (UX-02A): the date sits on its own line under "SIA licence valid to", so the
+     * cell no longer wraps "Valid to dd/mm/yyyy" onto two lines on a standard phone.
+     */
+    sia: { label: string; detail: string; caption: string; value: string; tone: Tone };
     /** label: the full sentence (read out); short: the value shown under the cell's 'Deployment' caption. */
     deployment: { label: string; short: string; tone: Tone };
   };
@@ -207,12 +217,42 @@ export function siaLicenceStatus(sources: SiaLicenceSources, today: string): Sia
   return { ...base, label: `SIA valid to ${date}`, detail: `Valid to ${date}`, tone: 'success', days };
 }
 
-function siaStatus(input: ProfileOverviewInput): { label: string; detail: string; tone: Tone; days: number | null } {
+function siaStatus(input: ProfileOverviewInput): { label: string; detail: string; caption: string; value: string; tone: Tone; days: number | null } {
   const g = input.guard.status === 'ready' ? input.guard.value : null;
   const c = input.compliance.status === 'ready' ? input.compliance.value : null;
-  if (!g && input.guard.status === 'loading') return { label: LOADING_TEXT, detail: LOADING_TEXT, tone: 'neutral', days: null };
-  const { label, detail, tone, days } = siaLicenceStatus({ guard: g, compliance: c }, input.today);
-  return { label, detail, tone, days };
+  if (!g && input.guard.status === 'loading') return { label: LOADING_TEXT, detail: LOADING_TEXT, caption: 'SIA licence', value: LOADING_TEXT, tone: 'neutral', days: null };
+  const status = siaLicenceStatus({ guard: g, compliance: c }, input.today);
+  const { label, detail, tone, days } = status;
+  return { label, detail, ...siaCell(status), tone, days };
+}
+
+/**
+ * UX-02A (decision D4) — the overview cell's caption and value. A valid licence puts "valid to" in the caption and the
+ * date alone in the value ("SIA licence valid to" / "30/06/2028"), because "Valid to 30/06/2028" wrapped onto two lines
+ * in a half-width cell on a standard phone. Every other state (expired, expiring, not added, no expiry) keeps the plain
+ * caption and the section's own words, so a problem still leads with what is wrong. The tone and the full sentence a
+ * screen reader hears are unchanged.
+ */
+function siaCell(status: SiaLicenceStatus): { caption: string; value: string } {
+  if (status.number && status.expiry && status.days !== null && status.days > SIA_EXPIRY_WARNING_DAYS) {
+    return { caption: 'SIA licence valid to', value: ukDate(String(status.expiry)) };
+  }
+  return { caption: 'SIA licence', value: status.detail };
+}
+
+/**
+ * UX-02A — the SIA & compliance row's summary. The SIA and deployment facts are already in the overview's header
+ * cells, so the row says what the section adds: whether anything is blocking deployment. Only facts the compliance
+ * status reports; nothing is inferred.
+ */
+function complianceRowSummary(input: ProfileOverviewInput, sia: { tone: Tone }): { summary: string; tone: Tone } {
+  if (input.compliance.status === 'loading') return { summary: LOADING_TEXT, tone: 'neutral' };
+  if (input.compliance.status === 'error') return { summary: ERROR_TEXT, tone: 'neutral' };
+  const { assignable, blockingReasons } = input.compliance.value;
+  const reasons = blockingReasons?.length ?? 0;
+  if (reasons) return { summary: `${reasons} compliance item${reasons === 1 ? '' : 's'} to review`, tone: sia.tone === 'danger' ? 'danger' : 'warning' };
+  if (!assignable) return { summary: 'Compliance needs review', tone: sia.tone === 'danger' ? 'danger' : 'warning' };
+  return { summary: 'No compliance blockers', tone: sia.tone === 'danger' ? 'danger' : 'neutral' };
 }
 
 function deploymentStatus(input: ProfileOverviewInput): { label: string; short: string; tone: Tone } {
@@ -276,9 +316,7 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
       list.length === 0
         ? { summary: 'Join with an invitation code', tone: 'neutral' }
         : { summary: list.length === 1 ? list[0].companyName : `${list.length} companies`, tone: 'success' }),
-    compliance: input.compliance.status === 'ready' || input.guard.status === 'ready'
-      ? { summary: [deployment.label, sia.label].filter((s) => s !== LOADING_TEXT).join(' · ') || LOADING_TEXT, tone: sia.tone === 'danger' ? 'danger' : deployment.tone }
-      : summaryOf(input.compliance, () => ({ summary: deployment.label, tone: deployment.tone })),
+    compliance: complianceRowSummary(input, sia),
     availability: summaryOf(input.driving, (d) => {
       const travel = d.primaryTravelMethod ? profileEnumLabel(TRAVEL_METHOD_LABELS, d.primaryTravelMethod) : null;
       const licence = d.licenceStatus && d.licenceStatus !== 'NONE' ? `${profileEnumLabel(LICENCE_STATUS_LABELS, d.licenceStatus)} licence` : null;
@@ -298,10 +336,9 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
     })(),
     screening: summaryOf(input.screening, (s) => {
       const status = (s?.status ?? 'NOT_STARTED') as ScreeningStatus;
-      const text = SCREENING_STATUS_TEXT[status] ?? 'Not started';
-      const progress = status === 'IN_PROGRESS' && typeof s?.progress === 'number' ? ` ${Math.max(0, Math.min(100, Math.round(s.progress)))}%` : '';
-      // Phase 2D: no "Optional ·" prefix — the row's own tag already says Optional.
-      return { summary: `${text}${progress}`, tone: status === 'VETTED' ? 'success' : 'neutral' };
+      // UX-02A: the status only. A percentage on the Profile overview reads as a task to finish, and screening is
+      // optional; the section keeps its own checklist.
+      return { summary: SCREENING_STATUS_TEXT[status] ?? 'Not started', tone: status === 'VETTED' ? 'success' : 'neutral' };
     }),
     privacyAccount: { summary: input.email ? `Signed in as ${input.email}` : 'Who can see your information', tone: 'neutral' },
   };
@@ -311,7 +348,7 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
       name,
       initials: initialsOf(g?.fullName),
       phone: (g?.phone ?? '').trim() || null,
-      sia: { label: sia.label, detail: sia.detail, tone: sia.tone },
+      sia: { label: sia.label, detail: sia.detail, caption: sia.caption, value: sia.value, tone: sia.tone },
       deployment,
     },
     attention: attention.slice(0, MAX_ATTENTION),
@@ -320,6 +357,7 @@ export function buildProfileOverview(input: ProfileOverviewInput): ProfileOvervi
       title: section.title,
       requirement: section.requirement,
       requirementLabel: REQUIREMENT_LABELS[section.requirement].label,
+      requirementText: section.key === 'screening' ? null : REQUIREMENT_LABELS[section.requirement].short,
       summary: summaries[section.key].summary,
       tone: summaries[section.key].tone,
     })),
