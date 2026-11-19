@@ -3593,11 +3593,13 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 ) : null}
                 {profileSection === 'privacyAccount' ? (
                   <>
-                    <GuardPrivacySummary />
-                    <AccountSettingsPanel email={user?.email} onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout())} />
-                    <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Log out">
+                    {/* UX-02A: the Guard's one Log out (no longer in the header) comes first in Privacy & account, so it is
+                        found without scrolling. Same handler: unregister push, sign out, clear the session. */}
+                    <Pressable style={[styles.offerRejectBtn, styles.guardProfileLogoutBtn]} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Log out" testID="guard-profile-logout">
                       <Text style={styles.offerRejectBtnText}>Log out</Text>
                     </Pressable>
+                    <GuardPrivacySummary />
+                    <AccountSettingsPanel email={user?.email} onDeleted={(message) => (onAccountDeleted ? onAccountDeleted(message) : onLogout())} />
                     <AppBuildFooter appLabel="S4" />
                   </>
                 ) : null}

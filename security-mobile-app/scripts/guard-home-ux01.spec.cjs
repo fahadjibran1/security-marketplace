@@ -1861,6 +1861,11 @@ test('UX-T38-PROFILE-SECTIONS-KEEP-SAVE-SAFETY-AND-THE-LEAVE-COMPANY-SELECTOR', 
   await openProfile(root, run, 'privacyAccount');
   const privacy = byTestId(root, 'guard-profile-section-view-privacyAccount')[0];
   assert.equal(byLabel(privacy, 'Log out').length, 1, 'Log out in Privacy & account');
+  // UX-02A: it is the section's first control, ahead of who-can-see-what and the account settings (delete account).
+  const order = privacy.findAll((n) => n.props?.testID === 'guard-profile-logout' || n.props?.testID === 'guard-privacy-summary' || n.props?.testID === 'account-settings-panel').map((n) => n.props.testID);
+  assert.equal(order[0], 'guard-profile-logout', 'UX-02A: Log out comes first in Privacy & account');
+  assert.ok(order.indexOf('guard-privacy-summary') > 0 && order.indexOf('account-settings-panel') > 0, 'summary and account settings follow it');
+  assert.ok(flat(byLabel(privacy, 'Log out')[0].props.style).minHeight >= 48, 'a 48dp Log out');
   assert.ok(byTestId(privacy, 'account-settings-panel')[0], 'account settings');
   assert.ok(byTestId(privacy, 'guard-privacy-summary')[0], 'who can see what');
   // Availability & travel: the leave company selector is the existing one, unchanged.
