@@ -201,7 +201,7 @@ export const PRIVACY_COPY: Record<PrivacyTopic, PrivacyAccess> = {
     platformAdminAudited: false,
     guardRevealAudited: true,
     note:
-      'Bank details are encrypted at rest and only you can see them in full. The owner, administrators and finance staff of a company you currently work for, which holds your employment record, see only a masked sort code and account number (the last digits). Companies never see the account holder name. S4 platform administrators see masked details only.',
+      'Bank details are encrypted at rest; only you can see them in full. The owner, administrators and finance staff of a company you currently work for that holds your employment record see only a masked sort code and account number (the last digits). Companies never see the account holder name. S4 platform administrators see masked details only.',
   },
 };
 

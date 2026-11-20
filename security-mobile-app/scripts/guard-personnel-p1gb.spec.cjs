@@ -609,9 +609,16 @@ test('[STATIC ANALYSIS] guard dashboard has Pay administration Profile card', ()
   assert.match(guardDash, /<ProfileCard\s+title="Pay administration"/);
 });
 
+// UX-02 Package B: one compact summary per arrangement, built by payrollSummaryLines (profileEmployment.ts).
 test('[STATIC ANALYSIS] guard dashboard payroll card shows payFrequency and payrollStatus', () => {
-  assert.match(guardDash, /payFrequency/);
-  assert.match(guardDash, /payrollStatus/);
+  const summary = mobile('src/components/guard/profile/profileEmployment.ts');
+  assert.match(guardDash, /payrollAdminRecords\.map\(\(rec, index\) => \(\s*<ProfileSummaryRow[^>]*lines=\{payrollSummaryLines\(rec\)\}/);
+  assert.match(summary, /rec\.payFrequency/);
+  assert.match(summary, /rec\.payrollStatus/);
+  assert.match(summary, /rec\.payrollStartDate/);
+  assert.match(summary, /rec\.payrollEndDate/);
+  // Pay administration is read-only and never carries a bank value or the company's internal payroll fields.
+  assert.doesNotMatch(summary, /payrollReference|payrollPaymentMethod|payrollNote|sortCode|accountNumber/);
 });
 
 test('[STATIC ANALYSIS] guard dashboard payroll card is read-only (no edit inputs or save buttons)', () => {

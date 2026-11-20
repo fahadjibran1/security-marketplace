@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   AccountDeletionStatus,
@@ -16,6 +16,11 @@ interface AccountSettingsPanelProps {
   email?: string | null;
   /** Called once the server has deleted the account; the app then signs out locally. */
   onDeleted: (message: string) => void | Promise<void>;
+  /**
+   * Account actions shown above Delete account, separated from it by a divider (UX-02 Package B: the Guard's account
+   * access and Log out). Omitted by the Company dashboard, which is unchanged.
+   */
+  leading?: ReactNode;
 }
 
 /**
@@ -25,7 +30,7 @@ interface AccountSettingsPanelProps {
  * password confirmation completes it. An account that cannot delete itself (a company owner, a Platform
  * Admin) is told why after Continue — the request is still recorded so support can act on it.
  */
-export function AccountSettingsPanel({ email, onDeleted }: AccountSettingsPanelProps) {
+export function AccountSettingsPanel({ email, onDeleted, leading }: AccountSettingsPanelProps) {
   const [step, setStep] = useState<Step>('idle');
   const [status, setStatus] = useState<AccountDeletionStatus | null>(null);
   const [password, setPassword] = useState('');
@@ -86,6 +91,8 @@ export function AccountSettingsPanel({ email, onDeleted }: AccountSettingsPanelP
     <View style={styles.card} testID="account-settings-panel">
       <Text style={styles.title}>Account</Text>
       {email ? <Text style={styles.caption}>Signed in as {email}</Text> : null}
+      {leading ? <View style={styles.leading}>{leading}</View> : null}
+      {leading ? <View style={styles.divider} /> : null}
 
       {error ? (
         <View style={styles.errorBanner}>
@@ -178,6 +185,8 @@ const styles = StyleSheet.create({
   caption: { ...typography.caption, color: colors.textSecondary },
   point: { ...typography.caption, color: colors.textPrimary },
   section: { gap: spacing.sm },
+  leading: { gap: spacing.sm },
+  divider: { height: 1, backgroundColor: colors.border },
   entryRow: {
     minHeight: control.minTouchTarget,
     flexDirection: 'row',

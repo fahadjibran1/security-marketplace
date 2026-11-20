@@ -42,7 +42,7 @@ const styles = StyleSheet.create({
   title: { ...t.type.value, fontFamily: t.type.button.fontFamily, color: t.colors.textPrimary },
   body: { ...t.type.body, color: t.colors.textSecondary },
   button: {
-    minHeight: 44,
+    minHeight: 48,
     marginTop: 4,
     alignSelf: 'flex-start',
     maxWidth: '100%',

@@ -3,7 +3,11 @@ const read=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
 const panel=read('src/components/guard/GuardScreeningPanel.tsx'),formatSource=read('src/components/guard/screening-format.ts'),guard=read('src/screens/GuardDashboardScreen.tsx'),jobs=read('src/screens/JobsScreen.tsx'),admin=read('src/screens/AdminDashboardScreen.tsx'),company=read('src/components/company/CompanyComplianceWorkspace.tsx'),api=read('src/services/api.ts'),models=read('src/types/models.ts'),service=read('../security-backend-nest/src/screening/screening.service.ts'),controller=read('../security-backend-nest/src/screening/screening.controller.ts'),eligibility=read('../security-backend-nest/src/compliance/compliance.service.ts');
 const compiled=require('typescript').transpileModule(formatSource,{compilerOptions:{module:require('typescript').ModuleKind.CommonJS,target:require('typescript').ScriptTarget.ES2022}}).outputText,dateExports={};new Function('exports',compiled)(dateExports);
 function test(name,fn){fn();passed++;console.log(`PASS ${name}`)}
-test('ACTIVE unvetted Guard sees screening progress, and screening is never presented as work eligibility (Profile 2A)',()=>{assert.match(panel,/SCREENING_COPY\.marketplaceAccess[\s\S]*SCREENING_COPY\.deploymentLine/);assert.match(panel,/data\?\.progress/);assert.doesNotMatch(panel,/Work eligibility|Not yet eligible|become eligible/)});
+// UX-02 Package B (owner decision R1): the Profile summary (GuardScreeningPanel) shows the status and the checklist, not
+// the overall percentage or a bar; the journey (GuardScreeningJourney) still shows the backend's progress.
+const summary=panel.slice(panel.indexOf('export function GuardScreeningPanel('),panel.indexOf('export function GuardScreeningJourney('));
+const journey=panel.slice(panel.indexOf('export function GuardScreeningJourney('));
+test('ACTIVE unvetted Guard sees screening progress, and screening is never presented as work eligibility (Profile 2A)',()=>{assert.match(panel,/SCREENING_COPY\.marketplaceAccess[\s\S]*SCREENING_COPY\.deploymentLine/);assert.match(summary,/checks\.map\(/);assert.doesNotMatch(summary,/\.progress|trackFill/);assert.match(journey,/\{data\.progress\}%/);assert.doesNotMatch(panel,/Work eligibility|Not yet eligible|become eligible/)});
 test('ACTIVE unvetted Guard still sees Jobs',()=>assert.match(guard,/\['jobs', 'Jobs'\]/));
 test('ACTIVE unvetted Guard can still apply',()=>{assert.doesNotMatch(jobs,/VETTED|screening/i);assert.match(jobs,/appl/i)});
 test('dedicated screening navigation works',()=>{assert.match(guard,/activeTab === 'screening'/);assert.match(panel,/STEPS\.map/)});
@@ -29,7 +33,7 @@ test('Admin reviewer does not render private storage values',()=>assert.doesNotM
 test('suspended and inactive account eligibility remains fail-closed',()=>assert.match(eligibility,/UserStatus\.ACTIVE/));
 test('unvetted hiring remains server-blocked',()=>assert.match(eligibility,/isGuardVetted|screening/i));
 test('vetted compliant ACTIVE eligibility path remains server-derived',()=>{assert.match(eligibility,/UserStatus\.ACTIVE/);assert.match(eligibility,/compliance/i);assert.match(eligibility,/screening|VETTED/i)});
-test('profile contains compact summary, not workflow form',()=>{assert.match(panel,/<Text style=\{s\.eyebrow\}>\{SCREENING_COPY\.eyebrow\}<\/Text>/);assert.match(guard,/GuardScreeningPanel onContinue/)});
+test('profile contains compact summary, not workflow form',()=>{assert.match(summary,/testID="guard-screening-summary"/);assert.doesNotMatch(summary,/SCREENING_COPY\.eyebrow/);assert.match(journey,/<Text style=\{s\.eyebrow\}>\{SCREENING_COPY\.eyebrow\}<\/Text>/);assert.match(guard,/GuardScreeningPanel onContinue/)});
 test('SIA and Right to Work are distinct checks',()=>{assert.match(panel,/SIA register verification/);assert.match(panel,/Right to Work verification/)});
 test('verification language separates upload and review',()=>assert.match(panel,/Upload never means verified/));
 test('explicit labels and controlled feedback are present',()=>{assert.match(panel,/accessibilityLabel=\{label\}/);assert.match(panel,/Personal details saved/);assert.match(panel,/accessibilityRole=["']alert["']/)});

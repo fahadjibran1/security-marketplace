@@ -188,7 +188,8 @@ async function main() {
   });
 
   await test('C-14 Join Company submits the entered code', () => {
-    assert.ok(/label="Join Company"/.test(guardPanel));
+    // UX-02 Package B: the shared full-width primary button, in sentence case.
+    assert.ok(/<ProfilePrimaryButton label="Join a company" onPress=\{\(\) => setJoinOpen\(true\)\}/.test(guardPanel));
     assert.ok(/onPreview\(trimmed\)/.test(guardPanel), 'preview uses the entered code');
     assert.ok(/onAccept\(trimmed\)/.test(guardPanel));
   });

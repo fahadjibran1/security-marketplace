@@ -280,6 +280,11 @@ const SCREENING_STATUS_TEXT: Record<ScreeningStatus, string> = {
   EXPIRED: 'Expired',
 };
 
+/** The Guard-facing word for an S4 screening status (the overview row and the SIA & compliance section use the same). */
+export function screeningStatusText(status: ScreeningStatus | string | null | undefined): string {
+  return SCREENING_STATUS_TEXT[(status ?? 'NOT_STARTED') as ScreeningStatus] ?? 'Not started';
+}
+
 export function buildProfileOverview(input: ProfileOverviewInput): ProfileOverview {
   const g = input.guard.status === 'ready' ? input.guard.value : null;
   const name = (g?.fullName ?? '').trim() || (input.guard.status === 'loading' ? LOADING_TEXT : 'Your profile');

@@ -36,14 +36,15 @@ const t = profileTokens;
 const styles = StyleSheet.create({
   card: {
     gap: 10,
-    padding: t.spacing.sectionPadding,
+    padding: 12,
     borderRadius: t.shape.cardRadius,
     borderWidth: t.shape.cardBorderWidth,
     borderColor: t.colors.border,
     backgroundColor: t.colors.surface,
   },
   title: { ...t.type.value, fontFamily: t.type.button.fontFamily, color: t.colors.textPrimary },
-  row: { gap: 2 },
+  // UX-02 Package B: divided rows (topic, then who can see it), the same compact hierarchy as the other sections.
+  row: { gap: 2, borderTopWidth: 1, borderTopColor: t.colors.border, paddingTop: 8 },
   label: { ...t.type.value, color: t.colors.textPrimary },
   body: { ...t.type.body, color: t.colors.textSecondary },
 });

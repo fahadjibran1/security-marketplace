@@ -1487,8 +1487,23 @@ test('UX-T31-PROFILE-CHIPS-WRAP-AT-44PT-GUARD-TEAL-AND-AN-HONEST-SIA-UPDATE-ROUT
   // Source: every Profile Save on teal now has white text, and the old low-contrast teal is gone from the screen.
   const src = codeOf(SCREEN);
   assert.doesNotMatch(src, /colors\.accentTeal/, 'no #16A6A1 fills left on the Guard screen');
-  assert.equal(src.split('styles.guardProfilePrimarySave,').length - 1, 3, 'emergency contact Save and both bank Saves');
-  assert.equal(src.split('styles.guardProfilePrimarySaveText]').length - 1, 3, 'each with white text');
+  // UX-02 Package B: every Profile Save (emergency contact, bank details, NINO, UTR, licence number, Save profile) is the
+  // one shared ProfilePrimaryButton: Guard teal fill, white text, full width, at least 48dp, no shadow.
+  assert.equal(src.split('styles.guardProfilePrimarySave,').length - 1, 0, 'no Save keeps the old one-off teal style');
+  for (const [label, n] of [['Save emergency contact', 1], ['Save bank details', 1], ['Save National Insurance number', 1], ['Save Unique Taxpayer Reference', 1], ['Save driving licence number', 1], ['Save profile', 1]]) {
+    assert.equal(src.split(`spokenLabel="${label}"`).length - 1, n, `${label} is a ProfilePrimaryButton`);
+  }
+  const cardSrc = read('src/components/guard/profile/ProfileCard.tsx');
+  const primaryStyle = cardSrc.split('  primary: {')[1].split('},')[0];
+  assert.match(primaryStyle, /backgroundColor: t\.colors\.accent,/);
+  assert.match(primaryStyle, /minHeight: PROFILE_BUTTON_MIN_HEIGHT,/);
+  assert.match(primaryStyle, /alignSelf: 'stretch',/);
+  assert.doesNotMatch(primaryStyle, /shadow|elevation/);
+  assert.match(cardSrc, /export const PROFILE_BUTTON_MIN_HEIGHT = 48;/);
+  assert.match(cardSrc, /primaryText: \{ \.\.\.t\.type\.button, color: t\.colors\.onAccent,/, 'white text');
+  const tokens = loadTs('src/components/guard/profile/profileTheme.ts').profileTokens;
+  assert.equal(tokens.colors.accent, '#087F8C');
+  assert.equal(tokens.colors.onAccent, '#FFFFFF');
   assert.ok(contrast('#FFFFFF', '#087F8C') >= 4.5);
   // SIA: no "Compliance tab" wording, and no plain "Manage compliance" on the Profile. SIA & compliance names the only
   // update route there is — the optional S4 screening file — for what it is (Profile Phase 2C).
@@ -1881,9 +1896,19 @@ test('UX-T38-PROFILE-SECTIONS-KEEP-SAVE-SAFETY-AND-THE-LEAVE-COMPANY-SELECTOR', 
   const privacy = byTestId(root, 'guard-profile-section-view-privacyAccount')[0];
   assert.equal(byLabel(privacy, 'Log out').length, 1, 'Log out in Privacy & account');
   // UX-02A: it is the section's first control, ahead of who-can-see-what and the account settings (delete account).
-  const order = privacy.findAll((n) => n.props?.testID === 'guard-profile-logout' || n.props?.testID === 'guard-privacy-summary' || n.props?.testID === 'account-settings-panel').map((n) => n.props.testID);
-  assert.equal(order[0], 'guard-profile-logout', 'UX-02A: Log out comes first in Privacy & account');
-  assert.ok(order.indexOf('guard-privacy-summary') > 0 && order.indexOf('account-settings-panel') > 0, 'summary and account settings follow it');
+  // UX-02 Package B: Log out is the first action inside the account card (signed-in email, account access, Log out,
+  // then Delete account), and the who-can-see-what summary follows the card. So, in render order: Log out is the
+  // section's first pressable control, Delete account comes after it, and the privacy summary after both.
+
+  const marks = privacy.findAll((n) => n.props?.testID === 'guard-profile-logout' || n.props?.testID === 'guard-privacy-summary'
+    || (typeof n.props?.onPress === 'function' && n.props?.accessibilityRole === 'button')).map((n) => n.props.testID || (texts(n).join(' ')))
+    // The section's Back button is navigation chrome, not a section action; host and native nodes share a testID.
+    .filter((m, i, all) => m !== 'guard-profile-back' && m !== all[i - 1]);
+  assert.equal(marks[0], 'guard-profile-logout', 'UX-02A: Log out comes first in Privacy & account');
+  const deleteAt = marks.findIndex((m) => typeof m === 'string' && m.includes('Delete account'));
+  assert.ok(deleteAt > 0, 'Delete account follows Log out');
+  assert.ok(marks.indexOf('guard-privacy-summary') > deleteAt, 'the privacy summary follows the account actions');
+
   assert.ok(flat(byLabel(privacy, 'Log out')[0].props.style).minHeight >= 48, 'a 48dp Log out');
   assert.ok(byTestId(privacy, 'account-settings-panel')[0], 'account settings');
   assert.ok(byTestId(privacy, 'guard-privacy-summary')[0], 'who can see what');
@@ -1964,16 +1989,22 @@ test('UX-T39-PROFILE-2D-COMPACT-RECORDS-UK-DATES-ONE-SIA-READING-AND-A-COMPACT-S
     assert.deepEqual([...new Set(texts(requirement))], [reqCopy.caption], `${at}: the caption`);
     assert.equal(requirement.props.accessibilityLabel, `May be requested by company. ${reqCopy.caption}`, `${at}: announced in full`);
     assert.equal(flat(requirement.props.style).backgroundColor, undefined, `${at}: no pill`);
-    // Read-only records: label beside value on a standard phone, above it when compact; dates as DD/MM/YYYY.
-    const employment = byTestId(root, 'guard-profile-employment-record')[0];
-    const payroll = byTestId(root, 'guard-profile-payroll-record')[0];
+    // UX-02 Package B: each company's read-only record is one compact summary (company name, then "a · b · c" fact
+    // lines that wrap between facts, never inside a word), read as one item; dates as DD/MM/YYYY at every width.
+    void stacked;
+    const hostRecord = (id) => root.findAll((n) => n.props?.testID === id && n.type === RNW.View)[0];
+    const employment = hostRecord('guard-profile-employment-record');
+    const payroll = hostRecord('guard-profile-payroll-record');
     assert.ok(employment && payroll, `${at}: both records`);
     const shown = [...texts(employment), ...texts(payroll)];
-    for (const date of ['02/03/2026', '09/03/2026']) assert.ok(shown.includes(date), `${at}: ${date}`);
+    for (const fact of ['Fictional Guarding Ltd', 'Security officer', 'Employee', 'Part time', 'Hourly', 'Started 02/03/2026', 'Notice 7 days', 'Weekly', 'Active', 'Since 09/03/2026']) {
+      assert.ok(shown.includes(fact), `${at}: ${fact}`);
+    }
     assert.ok(!shown.some((t) => /\d{4}-\d{2}-\d{2}/.test(t)), `${at}: no ISO dates`);
-    const rows = employment.findAll((n) => typeof n.props?.accessibilityLabel === 'string' && /^Start date: /.test(n.props.accessibilityLabel) && n.props.style);
-    assert.equal(rows[0].props.accessibilityLabel, 'Start date: 02/03/2026', `${at}: the row is read as one`);
-    assert.equal(flat(rows[0].props.style).flexDirection === 'row', !stacked, `${at}: ${stacked ? 'stacked' : 'side by side'}`);
+    assert.equal(employment.props.accessible, true, `${at}: the record is read as one`);
+    assert.equal(employment.props.accessibilityLabel, 'Fictional Guarding Ltd. Security officer, Employee, Part time, Hourly. Started 02/03/2026, Notice 7 days', `${at}: spoken in full`);
+    assert.equal(payroll.props.accessibilityLabel, 'Fictional Guarding Ltd. Pay: Weekly, Active. Since 09/03/2026', `${at}: pay spoken in full`);
+    assert.equal(employment.findAll((n) => n.props?.onPress).length, 0, `${at}: no nested expansion`);
     // Masked bank details use the same rows; nothing is revealed by restyling.
     assert.ok(texts(root).includes('••••0000') && !texts(root).some((t) => /^\d{8}$/.test(t)), `${at}: bank stays masked`);
     // Flat Profile cards with sentence-case titles.
@@ -2005,7 +2036,14 @@ test('UX-T40-PROFILE-2D-SIA-IS-READ-THE-SAME-ON-THE-OVERVIEW-AND-IN-SIA-AND-COMP
   // Statuses in sentence case: StatusBadge does not capitalise each word here.
   const panel = byTestId(root, 'guard-compliance-summary')[0];
   const badges = panel.findAll((n) => typeof n.props?.label === 'string' && 'casing' in n.props);
-  assert.ok(badges.length >= 5 && badges.every((b) => b.props.casing === 'sentence'), 'every status chip in the panel is sentence case');
+  // UX-02 Package B: one chip per status fact — SIA evidence, right-to-work evidence and Deployment. Account access moved
+  // to Privacy & account, the green banner repeating Deployment is gone, and optional screening is plain text.
+  assert.equal(badges.length, 3, 'three status chips');
+  assert.ok(badges.every((b) => b.props.casing === 'sentence'), 'every status chip in the panel is sentence case');
+  for (const id of ['guard-compliance-sia-evidence', 'guard-compliance-rtw', 'guard-compliance-deployment']) {
+    const host = root.findAll((n) => n.props?.testID === id && n.type === RNW.View)[0];
+    assert.equal(host.findAll((n) => typeof n.props?.label === 'string' && 'casing' in n.props).length, 1, id + ' has its chip');
+  }
   // The licence number is an identifier, shown as text, not as a status chip.
   assert.ok(!badges.some((b) => b.props.label === 'SIA-FICTIONAL'), 'the SIA number is not a chip');
   await run(() => renderer.unmount());
@@ -2349,6 +2387,130 @@ test('UX-T47-PROFILE-2E-SIA-AND-COMPANY-STATUS-STAY-CONSISTENT-ACROSS-OVERVIEW-A
   assert.equal(c.n('listMyCompanies'), 2, 'an explicit refresh always reads');
   await backToOverview(root, run);
   assert.ok(texts(root).some((t) => t.includes('Fictional Guarding Ltd')), 'the overview shows the refreshed list');
+  await run(() => renderer.unmount());
+});
+
+// ═══════════════════ UX-02 Package B ═══════════════════
+
+test('UX-T50-PKGB-RIGHT-TO-WORK-STATUS-IS-DESCRIBED-NEVER-SHOWN-RAW-AND-MATCHES-THE-BACKEND', () => {
+  const rtw = loadTs('src/components/guard/profile/profileCompliance.ts');
+  // The two lists are copies of what the backend does with the free-text status; they must never drift.
+  const backend = fs.readFileSync(path.join(ROOT, '../security-backend-nest/src/compliance/guard-compliance.service.ts'), 'utf8');
+  const listAfter = (marker) => {
+    const at = backend.indexOf(marker);
+    assert.ok(at >= 0, `backend marker ${marker}`);
+    const open = backend.lastIndexOf('[', backend.indexOf('].includes(', at));
+    return backend.slice(open + 1, backend.indexOf(']', open)).split(',').map((v) => v.trim().replace(/^'|'$/g, ''));
+  };
+  assert.deepEqual([...rtw.RTW_NOT_VALID_STATUSES], listAfter("} else if (['invalid'"), 'not-valid list matches assessGuardDeclarations');
+  assert.deepEqual([...rtw.RTW_NO_EXPIRY_STATUSES], listAfter('private requiresRightToWorkExpiry('), 'no-expiry list matches requiresRightToWorkExpiry');
+  assert.match(backend, /const rightToWorkStatus = \(guard\.rightToWorkStatus \|\| ''\)\.trim\(\)\.toLowerCase\(\);/, 'the backend compares trimmed lower case, as the app does');
+
+  const d = rtw.rightToWorkStatusDescription;
+  // R4: a code with no agreed meaning ("Psw") is never shown; it is described by what the backend does with it.
+  assert.deepEqual(d('Psw', '2027-09-30'), { text: 'Time-limited status recorded · expiry 30/09/2027', tone: 'neutral' });
+  assert.deepEqual(d('Psw', null), { text: 'Time-limited status recorded · expiry date not added', tone: 'warning' });
+  assert.deepEqual(d(' Settled ', null), { text: 'Status recorded · no expiry date needed', tone: 'neutral' });
+  assert.deepEqual(d('EXPIRED', '2027-01-01'), { text: 'Status recorded as not valid', tone: 'danger' });
+  for (const empty of [null, undefined, '', '   ']) assert.deepEqual(d(empty, null), { text: 'Status not added yet', tone: 'warning' });
+  for (const value of ['Psw', 'psw', 'Skilled worker', 'british', 'revoked']) {
+    assert.ok(!d(value, '2027-09-30').text.toLowerCase().includes(value.toLowerCase()), `the raw status "${value}" is never echoed`);
+  }
+});
+
+test('UX-T51-PKGB-SIA-AND-COMPLIANCE-SHOWS-FIVE-SEPARATE-FACTS-AND-NO-RAW-CODE', async () => {
+  const { api } = overviewServer({
+    getMyGuard: async () => ({ id: 107, userId: 7, fullName: 'Dana Guard', siaLicenseNumber: 'SIA-FICTIONAL', rightToWorkStatus: 'Psw', rightToWorkExpiryDate: '2027-09-30', siaExpiryDate: '2032-06-30' }),
+    getMyGuardComplianceStatus: async () => ({ guardId: 107, fullName: 'Dana Guard', siaLicenceNumber: 'SIA-FICTIONAL', assignable: false, blockingReasons: ['Right-to-work document not verified'], expiringReasons: [], missingDocuments: [], documents: [], complianceStatus: 'pending', siaExpiryDate: '2032-06-30', rightToWorkStatus: 'Psw', rightToWorkExpiryDate: '2027-09-30' }),
+    getMyScreening: async () => ({ id: 9, status: 'IN_PROGRESS', progress: 89, requirements: { remediation: [] }, evidence: [] }),
+  });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: api });
+  const root = renderer.root;
+  await openProfile(root, run, null);
+  await openSection(root, run, 'compliance');
+  const panel = byTestId(root, 'guard-compliance-summary')[0];
+  const shown = texts(panel);
+  // One row per fact, in the specified order.
+  const order = panel.findAll((n) => n.type === RNW.View && /^guard-compliance-(sia|sia-evidence|rtw|deployment|screening)$/.test(n.props?.testID || '')).map((n) => n.props.testID);
+  assert.deepEqual(order, ['guard-compliance-sia', 'guard-compliance-sia-evidence', 'guard-compliance-rtw', 'guard-compliance-deployment', 'guard-compliance-screening']);
+  for (const label of ['SIA licence', 'SIA evidence', 'Right-to-work evidence', 'Deployment', 'Optional S4 screening']) assert.ok(shown.includes(label), label);
+  // R4: no raw code, the neutral description instead.
+  assert.ok(!shown.some((t) => /\bPsw\b/.test(t)), 'the raw code is never shown');
+  assert.ok(shown.includes('Time-limited status recorded · expiry 30/09/2027'));
+  // Deployment keeps the backend's own result and every genuine blocking reason; it is not merged with screening.
+  assert.ok(shown.includes('Not eligible') && shown.includes('Right-to-work document not verified'), 'the blocker is kept');
+  assert.ok(byTestId(panel, 'guard-compliance-blockers')[0], 'blockers listed under Deployment');
+  const screeningRow = root.findAll((n) => n.props?.testID === 'guard-compliance-screening' && n.type === RNW.View)[0];
+  assert.ok(!texts(screeningRow).includes('Not eligible') && !texts(screeningRow).some((t) => /%/.test(t)), 'screening is its own fact, with no percentage');
+  // The duplicates are gone: no "Work eligibility" wording, no Account access row here, no green banner.
+  assert.ok(!shown.some((t) => /Work eligibility|Account access/.test(t)), 'no duplicate rows');
+  await run(() => renderer.unmount());
+});
+
+test('UX-T52-PKGB-WEEKDAYS-ARE-SEVEN-EQUAL-COLUMNS-ONLY-WHEN-THEY-FIT-OTHERWISE-4-PLUS-3', () => {
+  const a = loadTs('src/components/guard/profile/profileAvailability.ts');
+  assert.equal(a.WEEKDAY_MIN_TARGET, 48);
+  // Phones: 360dp and 411dp at 1.0×, and any phone at 1.3× / 2.0×, use the balanced 4 + 3 grid.
+  for (const [w, s] of [[360, 1], [411, 1], [411, 1.3], [360, 2], [411, 2]]) assert.equal(a.weekdayColumns(w, s), 4, `${w}dp @ ${s}x`);
+  // Seven equal columns only when every cell is at least 48dp and fits its label.
+  assert.equal(a.weekdayColumns(500, 1), 7);
+  assert.equal(a.weekdayColumns(768, 2), 7);
+  assert.equal(a.weekdayColumns(500, 2), 4, 'large text falls back to 4 + 3');
+  for (const [w, s] of [[300, 1], [360, 1], [411, 1], [500, 1], [600, 1.3], [768, 2], [1024, 1]]) {
+    if (a.weekdayColumns(w, s) !== 7) continue;
+    const cell = (w - 58 - 6 * a.WEEKDAY_GAP) / 7;
+    assert.ok(cell >= 48, `${w}dp @ ${s}x: seven cells of at least 48dp`);
+  }
+  assert.deepEqual(a.weekdayRows(7), [[0, 1, 2, 3, 4, 5, 6]]);
+  assert.deepEqual(a.weekdayRows(4), [[0, 1, 2, 3], [4, 5, 6]], 'never one day alone on a row');
+  assert.equal(a.weekdayRows(4).flat().length, 7);
+  // The screen uses it, and each day is a 48dp control with its full name and selected state.
+  const screen = read('src/screens/GuardAvailabilityScreen.tsx');
+  assert.match(screen, /weekdayRows\(weekdayColumns\(width, fontScale\)\)/);
+  assert.match(screen, /dayChip:\{flex:1,flexBasis:0,minWidth:WEEKDAY_MIN_TARGET,minHeight:WEEKDAY_MIN_TARGET,/);
+  // The Available / Unavailable choice and Try again are 48dp too (found at 44dp on the emulator).
+  assert.match(screen, /choice:\{minHeight:WEEKDAY_MIN_TARGET,/);
+  assert.match(screen, /retry:\{minHeight:WEEKDAY_MIN_TARGET,/);
+  assert.doesNotMatch(screen, /minHeight:control\.minTouchTarget/, 'no 44dp control left on the screen');
+  assert.match(screen, /accessibilityRole="button" accessibilityLabel=\{WEEKDAY_NAMES\[i\]\} accessibilityState=\{\{ selected \}\}/, 'full day name and selected state');
+});
+
+test('UX-T53-PKGB-EMPLOYMENT-AND-PAY-SUMMARIES-ARE-COMPACT-AND-CARRY-NO-SENSITIVE-VALUES', () => {
+  const e = loadTs('src/components/guard/profile/profileEmployment.ts');
+  const emp = { companyGuardId: 1, companyId: 3, companyName: 'Fictional Guarding Ltd', guardId: 107, engagementType: 'SELF_EMPLOYED_CONTRACTOR', jobRole: 'OTHER', customRole: 'Event lead',
+    workingArrangement: 'ZERO_HOURS', startDate: '2026-03-02', endDate: '2026-10-31', payBasis: 'DAILY', noticePeriodDays: 1, updatedAt: '2026-03-02' };
+  const lines = e.employmentSummaryLines(emp).map(e.summaryLineText);
+  assert.equal(lines.length, 2, 'two fact lines');
+  assert.equal(lines[1], 'Started 02/03/2026, Ended 31/10/2026, Notice 1 day');
+  assert.ok(lines[0].startsWith('Event lead, Self-employed contractor, Zero hours'), lines[0]);
+  const rec = { companyGuardId: 1, guardId: 107, companyId: 3, companyName: 'Fictional Guarding Ltd', payFrequency: 'MONTHLY', payrollStatus: 'NOT_STARTED', payrollStartDate: null, payrollEndDate: null, updatedAt: '2026-03-02' };
+  assert.deepEqual(e.payrollSummaryLines(rec).map(e.summaryLineText).length, 1, 'no empty date line');
+  // Nothing sensitive can reach a summary: the helpers never read bank, NINO, UTR, licence or internal fields.
+  const src = read('src/components/guard/profile/profileEmployment.ts');
+  assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, ''), /sortCode|accountNumber|accountHolder|nino|utr|licen[cs]eNumber|internalNote|payrollReference|payrollPaymentMethod|payrollNote/i);
+  // Employment & pay order: bank details, then tax identifiers, then the company summaries.
+  const screen = codeOf(SCREEN);
+  const at = (id) => screen.indexOf(`testID="guard-profile-card-${id}"`);
+  assert.ok(at('bank') > 0 && at('bank') < at('tax') && at('tax') < at('employment') && at('employment') < at('payroll'), 'bank, tax, employment, pay');
+});
+
+test('UX-T54-PKGB-SCREENING-SUMMARY-HAS-STATUS-AND-CHECKLIST-BUT-NO-PERCENTAGE-OR-BAR', async () => {
+  const { api } = overviewServer({ getMyScreening: async () => ({ id: 9, status: 'IN_PROGRESS', progress: 89, requirements: { remediation: [] }, evidence: [] }) });
+  const { renderer, run } = await mountApp({ shifts: [liveShift()], apiOverrides: api });
+  const root = renderer.root;
+  await openProfile(root, run, null);
+  await openSection(root, run, 'screening');
+  const summary = root.findAll((n) => n.props?.testID === 'guard-screening-summary' && n.type === RNW.View)[0];
+  assert.ok(summary, 'the summary card');
+  const shown = texts(summary);
+  const copy = loadTs('src/components/guard/profile/profileCopy.ts').SCREENING_COPY;
+  assert.ok(shown.includes('Screening status') && shown.includes(copy.optionalStatement) && shown.includes(copy.separateFromCompanyChecks), 'status and optional wording');
+  assert.ok(!shown.some((t) => /\d+%/.test(t)) && !shown.includes(copy.eyebrow), 'no percentage and no eyebrow');
+  assert.ok(!/required|mandatory|must complete/i.test(shown.join(' ')), 'no mandatory language');
+  const items = summary.findAll((n) => n.type === RNW.Text && Array.isArray(n.props.children) && /^[✓○]$/.test(String(n.props.children[0])));
+  assert.ok(items.length >= 4, 'the checklist is kept');
+  const cont = byLabel(summary, 'Continue screening')[0] || pressables(summary, (p) => p.testID === 'guard-screening-continue')[0];
+  assert.ok(cont && flat(cont.props.style).minHeight >= 48, 'Continue screening, at least 48dp');
   await run(() => renderer.unmount());
 });
 

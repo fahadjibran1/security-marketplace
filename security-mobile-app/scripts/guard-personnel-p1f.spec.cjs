@@ -680,12 +680,19 @@ test('dashboard renders companyName in employment card', () => {
   assert.ok(idx !== -1, 'emp.companyName not rendered in employment card');
 });
 
+// UX-02 Package B: each company's employment is one compact summary built by employmentSummaryLines
+// (profileEmployment.ts), rendered for every record, so every field must still reach the screen through that helper.
 test('dashboard renders engagementType jobRole workingArrangement payBasis startDate', () => {
-  assert.match(dashboard, /emp\.engagementType/);
-  assert.match(dashboard, /emp\.jobRole/);
-  assert.match(dashboard, /emp\.workingArrangement/);
-  assert.match(dashboard, /emp\.payBasis/);
-  assert.match(dashboard, /emp\.startDate/);
+  const summary = mobile('src/components/guard/profile/profileEmployment.ts');
+  assert.match(dashboard, /employments\.map\(\(emp, index\) => \(\s*<ProfileSummaryRow[^>]*lines=\{employmentSummaryLines\(emp\)\}/);
+  assert.match(summary, /emp\.engagementType/);
+  assert.match(summary, /emp\.jobRole/);
+  assert.match(summary, /emp\.workingArrangement/);
+  assert.match(summary, /emp\.payBasis/);
+  assert.match(summary, /emp\.startDate/);
+  assert.match(summary, /emp\.endDate/);
+  assert.match(summary, /emp\.noticePeriodDays/);
+  assert.doesNotMatch(summary, /internalNote/);
 });
 
 test('dashboard does NOT render internalNote in employment card', () => {

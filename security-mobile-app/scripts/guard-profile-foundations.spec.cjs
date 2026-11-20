@@ -115,10 +115,11 @@ test('SCREENING-03 the screening panel and journey render the optional copy and 
 
 test('SCREENING-04 the Compliance panel keeps the real backend deployment status and no longer calls company checks "Vetting"', () => {
   const panel = stripComments(read(COMPLIANCE_PANEL));
-  assert.match(panel, /const eligibility = getGuardWorkEligibilityLabel\(summary\);/, 'eligibility still from the backend summary');
-  // Phase 2D: each row also takes the compact-layout flag; the values are unchanged.
-  assert.match(panel, /<Summary label="Work eligibility" value=\{eligibility\} stacked=\{stacked\} \/>/);
-  assert.match(panel, /<Summary label=\{COMPLIANCE_COPY\.checksLabel\} value=\{complianceChecks\} stacked=\{stacked\} \/>/);
+  assert.match(panel, /const deployment = getGuardWorkEligibilityLabel\(summary\);/, 'eligibility still from the backend summary');
+  // UX-02 Package B: the row is called "Deployment" (one word for it across the Profile) and the company compliance
+  // checks are its detail line; the values are unchanged and the row still takes the compact-layout flag.
+  assert.match(panel, /<Summary label="Deployment" value=\{deployment\} detail=\{<><Text>\{COMPLIANCE_COPY\.checksLabel\}<\/Text><Text>\{": "\}<\/Text><Text>\{complianceChecks\}<\/Text><\/>\} stacked=\{stacked\}/);
+  assert.doesNotMatch(panel, /label="Work eligibility"/);
   assert.doesNotMatch(panel, /label="Vetting"/);
   assert.match(panel, /COMPLIANCE_COPY\.deploymentNote/);
   // getGuardWorkEligibilityLabel is unchanged: assignable and only assignable.
@@ -293,7 +294,13 @@ test('PRIVACY-05 company access needs an ACTIVE relationship in every company re
 
 test('PRIVACY-06 the Profile renders every note from the table and the inaccurate sentences are gone', () => {
   const { src, start, end } = profileRegion();
-  const profile = src.slice(start, end);
+  // UX-02 Package B: the emergency contact card is rendered by renderEmergencyContactCard() (so it can sit first when no
+  // contact is saved); the Profile region calls it, so its body is part of what the Profile renders.
+  const region = src.slice(start, end);
+  assert.match(region, /renderEmergencyContactCard\(\)/, 'the Profile renders the emergency contact card');
+  const helperAt = src.indexOf('  function renderEmergencyContactCard() {');
+  assert.ok(helperAt > 0, 'the emergency contact card helper');
+  const profile = region + src.slice(helperAt, src.indexOf('\n  }\n', helperAt));
   for (const [topic, id] of [['taxIdentifiers', 'tax'], ['drivingLicence', 'driving'], ['emergencyContact', 'emergency'], ['bankDetails', 'bank']]) {
     assert.ok(profile.includes(`testID="guard-profile-privacy-${id}">{PRIVACY_COPY.${topic}.note}</Text>`), `${topic} note rendered from PRIVACY_COPY`);
   }
@@ -332,13 +339,30 @@ function jsxElements(source, fileName, tags, from = 0, to = Infinity) {
 
 test('A11Y-01 every Profile TextInput and Switch has an accessibilityLabel', () => {
   const { src, start, end } = profileRegion();
-  const controls = jsxElements(src, 'GuardDashboardScreen.tsx', ['TextInput', 'Switch'], start, end);
+  // UX-02 Package B: the emergency contact card and the bank form are rendered by helpers the Profile region calls, so
+  // their controls are counted with it.
+  const helper = (name) => {
+    assert.match(src.slice(start, end), new RegExp(`${name}\\(`), `the Profile calls ${name}`);
+    const at = src.indexOf(`  function ${name}(`);
+    assert.ok(at > 0, `${name} is defined`);
+    return [at, src.indexOf('\n  }\n', at)];
+  };
+  const controls = [[start, end], helper('renderEmergencyContactCard'), helper('renderBankForm')]
+    .flatMap(([from, to]) => jsxElements(src, 'GuardDashboardScreen.tsx', ['TextInput', 'Switch'], from, to));
   // Phase 2C removed exactly one control: the read-only "SIA licence number" TextInput in Personal details (the
   // licence is now shown in the overview header and the SIA & compliance section). Every other control is still here.
-  assert.equal(controls.length, 19, `found ${controls.length} controls`);
+  // UX-02 Package B: the add and update bank forms (three inputs each) are one renderBankForm(updating) helper called
+  // for both, its labels choosing the add or update wording; so the source has 16 controls for the same 19 rendered.
+  assert.equal(controls.length, 16, `found ${controls.length} controls`);
+  assert.equal(src.split('renderBankForm(false)').length - 1, 1, 'the add bank form');
+  assert.equal(src.split('renderBankForm(true)').length - 1, 1, 'the update bank form');
+  for (const field of ['account holder name', 'sort code', 'account number']) {
+    const cap = field[0].toUpperCase() + field.slice(1);
+    assert.ok(controls.some((c) => c.text.includes(`'New ${field} (leave blank to keep the current one)' : '${cap}'`)), `${cap}: both labels kept`);
+  }
   assert.ok(!controls.some((c) => /SIA licence number, read only/.test(c.text)), 'the read-only SIA field moved out of Personal');
   for (const label of ['Full name', 'Phone number', 'Live location sharing', 'National Insurance number', 'Unique Taxpayer Reference',
-    'Driving licence number', 'Emergency contact name', 'Sort code', 'Account number']) {
+    'Driving licence number', 'Emergency contact name']) {
     assert.ok(controls.some((c) => c.text.includes(`"${label}"`)), `${label} control kept`);
   }
   const unlabelled = controls.filter((c) => !c.attrs.includes('accessibilityLabel')).map((c) => `${c.tag} @${c.line}`);
@@ -352,18 +376,33 @@ test('A11Y-01 every Profile TextInput and Switch has an accessibilityLabel', () 
 
 test('A11Y-02 every sensitive-value and edit action on the Profile is a labelled button', () => {
   const { src, start, end } = profileRegion();
-  const pressables = jsxElements(src, 'GuardDashboardScreen.tsx', ['Pressable'], start, end);
+  // UX-02 Package B: actions are plain Pressables or the shared Profile buttons, which always render a Pressable with
+  // accessibilityRole="button" and an accessibilityLabel (spokenLabel when given, otherwise the visible label); and the
+  // emergency contact card and bank form are helpers the Profile region calls.
+  const card = read('src/components/guard/profile/ProfileCard.tsx');
+  assert.equal(card.split('accessibilityRole="button"\n      accessibilityLabel={spokenLabel ?? label}').length - 1 || card.split('accessibilityRole="button"\r\n      accessibilityLabel={spokenLabel ?? label}').length - 1, 2, 'both shared buttons are labelled buttons');
+  const ranges = [[start, end], ...['renderEmergencyContactCard', 'renderBankForm'].map((name) => {
+    const at = src.indexOf(`  function ${name}(`);
+    assert.ok(at > 0 && src.slice(start, end).includes(`${name}(`), `${name} is rendered by the Profile`);
+    return [at, src.indexOf('\n  }\n', at)];
+  })];
+  const pressables = ranges.flatMap(([from, to]) => jsxElements(src, 'GuardDashboardScreen.tsx', ['Pressable', 'ProfilePrimaryButton', 'ProfileSecondaryButton'], from, to));
   const sensitive = pressables.filter((p) => /handleReveal|clearReveal|clearLicenceReveal|clearBankReveal|handleSave|setEditing|openEmergencyContactEditor|handleRemove|handleDelete|handleLogout/.test(p.text));
   assert.ok(sensitive.length >= 25, `found ${sensitive.length} actions`);
-  const missing = sensitive.filter((p) => !p.attrs.includes('accessibilityLabel') || !p.attrs.includes('accessibilityRole')).map((p) => `@${p.line}: ${p.text.split('\n')[0].trim().slice(0, 80)}`);
+  const labelled = (p) => (p.tag === 'Pressable' ? p.attrs.includes('accessibilityLabel') && p.attrs.includes('accessibilityRole') : p.attrs.includes('label'));
+  const missing = sensitive.filter((p) => !labelled(p)).map((p) => `@${p.line}: ${p.text.split('\n')[0].trim().slice(0, 80)}`);
   assert.deepEqual(missing, []);
+  const rendered = ranges.map(([from, to]) => src.slice(from, to)).join('\n');
   // Each Show / Hide names its field, so a screen reader can tell NINO, UTR, licence and bank apart.
   for (const label of [
     'Show National Insurance number', 'Hide National Insurance number', 'Show Unique Taxpayer Reference', 'Hide Unique Taxpayer Reference',
     'Show driving licence number', 'Hide driving licence number', 'Show bank details', 'Hide bank details now',
     'Save National Insurance number', 'Save Unique Taxpayer Reference', 'Save driving licence number', 'Save emergency contact', 'Save bank details',
     'Remove emergency contact', 'Remove bank details', 'Update bank details', 'Log out',
-  ]) assert.ok(src.slice(start, end).includes(`accessibilityLabel="${label}"`), label);
+  ]) {
+    const asSharedButton = sensitive.some((p) => p.tag !== 'Pressable' && (p.text.includes(`spokenLabel="${label}"`) || (!p.attrs.includes('spokenLabel') && p.text.includes(`label="${label}"`))));
+    assert.ok(rendered.includes(`accessibilityLabel="${label}"`) || asSharedButton, label);
+  }
   // A masked value announces itself as hidden instead of reading out bullet characters.
   for (const field of ['National Insurance number', 'Unique Taxpayer Reference', 'Driving licence number']) {
     assert.ok(src.includes(`'${field}, hidden'`), `${field}: hidden`);
@@ -428,8 +467,17 @@ test('LABELS-01 every enum value has a readable label, and the Profile uses the 
   assert.equal(labels.jobRoleLabel('CCTV_OPERATOR', null), 'CCTV operator');
   const profile = (() => { const { src, start, end } = profileRegion(); return src.slice(start, end); })();
   assert.doesNotMatch(profile, /\.replace\(\/_\/g, ' '\)/, 'no raw enum text on the Profile');
-  for (const use of ['jobRoleLabel(emp.jobRole, emp.customRole)', 'ENGAGEMENT_TYPE_LABELS, emp.engagementType', 'WORKING_ARRANGEMENT_LABELS, emp.workingArrangement', 'PAY_BASIS_LABELS, emp.payBasis', 'PAYROLL_STATUS_LABELS, rec.payrollStatus', 'RELATIONSHIP_LABELS, emergencyContact.relationship']) {
-    assert.ok(profile.includes(use), use);
+  // UX-02 Package B: the employment and pay summaries are built by profileEmployment.ts (which the Profile calls for
+  // every record), and the emergency contact card by renderEmergencyContactCard(); the label maps are used there.
+  assert.ok(profile.includes('lines={employmentSummaryLines(emp)}') && profile.includes('lines={payrollSummaryLines(rec)}'), 'the Profile uses the summaries');
+  assert.ok(profile.includes('renderEmergencyContactCard()'), 'the Profile renders the emergency contact card');
+  const dashboard = read(DASHBOARD);
+  const ecAt = dashboard.indexOf('  function renderEmergencyContactCard() {');
+  const summaries = read('src/components/guard/profile/profileEmployment.ts');
+  const used = summaries + dashboard.slice(ecAt, dashboard.indexOf('\n  }\n', ecAt));
+  assert.doesNotMatch(summaries, /\.replace\(\/_\/g, ' '\)/, 'no raw enum text in the summaries');
+  for (const use of ['jobRoleLabel(emp.jobRole, emp.customRole)', 'ENGAGEMENT_TYPE_LABELS, emp.engagementType', 'WORKING_ARRANGEMENT_LABELS, emp.workingArrangement', 'PAY_BASIS_LABELS, emp.payBasis', 'PAY_FREQUENCY_LABELS, rec.payFrequency', 'PAYROLL_STATUS_LABELS, rec.payrollStatus', 'RELATIONSHIP_LABELS, emergencyContact.relationship']) {
+    assert.ok(used.includes(use), use);
   }
 });
 
@@ -644,10 +692,15 @@ test('NAV-01 the Profile is an overview and seven sections inside the Profile ta
     const opened = [...region.slice(0, at).matchAll(/\{profileSection === '([a-zA-Z]+)' \? \(/g)].pop();
     return opened?.[1];
   };
-  assert.equal(where('testID="guard-profile-save"'), 'personal');
-  assert.equal(where('title="Emergency contact"'), 'personal');
+  // UX-02 Package B: Save profile is the shared button (its testID is passed as nativeTestID); the emergency contact card
+  // is renderEmergencyContactCard(), placed first in Personal details when no contact is saved and after the contact
+  // details otherwise (the two calls are mutually exclusive); the compliance panel also receives the screening status.
+  assert.equal(where('nativeTestID="guard-profile-save"'), 'personal');
+  assert.equal(where('{emergencyContactNeedsAdding ? renderEmergencyContactCard() : null}'), 'personal');
+  assert.equal(where('{emergencyContactNeedsAdding ? null : renderEmergencyContactCard()}'), 'personal');
+  assert.equal(region.split('renderEmergencyContactCard()').length - 1, 2, 'the card has no other place');
   assert.equal(where('<GuardCompaniesPanel'), 'companies');
-  assert.equal(where('<GuardCompliancePanel onSummary={rememberComplianceSummary} />'), 'compliance');
+  assert.equal(where('<GuardCompliancePanel onSummary={rememberComplianceSummary} screeningStatus={overviewCacheRef.current.screening?.value?.status ?? null} />'), 'compliance');
   assert.equal(where('<GuardAvailabilityScreen />'), 'availability');
   assert.equal(where('title="Driving & transport"'), 'availability');
   assert.equal(where('title="Tax identifiers"'), 'employmentPay');
@@ -696,7 +749,7 @@ test('COMPLIANCE-01 SIA and right-to-work: the gap is real, and the only update 
   assert.match(panel, /\{onManageCompliance \? \(\s*<Pressable/, 'Manage compliance only when a caller supplies it');
   const { src, start, end } = profileRegion();
   const region = src.slice(start, end);
-  assert.ok(region.includes('<GuardCompliancePanel onSummary={rememberComplianceSummary} />') && !/<GuardCompliancePanel[^>]*onManageCompliance/.test(region), 'SIA & compliance supplies no Manage compliance');
+  assert.ok(region.includes('<GuardCompliancePanel onSummary={rememberComplianceSummary} screeningStatus={overviewCacheRef.current.screening?.value?.status ?? null} />') && !/<GuardCompliancePanel[^>]*onManageCompliance/.test(region), 'SIA & compliance supplies no Manage compliance');
   assert.ok(region.includes("<GuardComplianceUpdateRoute onOpenScreening={() => openScreeningJourney('compliance')} />"));
   assert.ok(!src.includes('onManageCompliance='), 'no screen routes compliance into screening silently');
   const c = copy.COMPLIANCE_COPY;
@@ -706,7 +759,7 @@ test('COMPLIANCE-01 SIA and right-to-work: the gap is real, and the only update 
   assert.match(c.updateActionAccessibilityLabel, /optional S4 screening file/);
   for (const text of Object.values(c)) for (const pattern of copy.MANDATORY_SCREENING_PATTERNS) assert.doesNotMatch(text, pattern);
   // Deployment eligibility is untouched: still the backend's `assignable`.
-  assert.match(stripComments(read(COMPLIANCE_PANEL)), /const eligibility = getGuardWorkEligibilityLabel\(summary\);/);
+  assert.match(stripComments(read(COMPLIANCE_PANEL)), /const deployment = getGuardWorkEligibilityLabel\(summary\);/);
 });
 
 test('OVERVIEW-05 the dashboard adapter never turns "not loaded yet" or "failed" into "not provided"', () => {
@@ -780,7 +833,7 @@ test('SIA-01 one reading of the SIA licence for the overview and the SIA & compl
   // And the Compliance panel reads the same helper with the same two records, not its own date formatting.
   const panel = stripComments(read(COMPLIANCE_PANEL));
   assert.match(panel, /const sia = siaLicenceStatus\(\{ guard, compliance: summary \}, localToday\(\)\);/);
-  assert.match(panel, /<Summary label="SIA licence" value=\{sia\.number \|\| 'Not added'\} detail=\{sia\.number \? sia\.detail : undefined\}/);
+  assert.match(panel, /<Summary first label="SIA licence" value=\{sia\.number \|\| 'Not added'\} detail=\{sia\.number \? sia\.detail : undefined\}/);
   assert.doesNotMatch(panel, /toLocaleDateString|function formatDate/, 'no second date format');
 });
 
@@ -817,11 +870,19 @@ test('STYLE-01 every Profile section uses the flat Profile card, sentence case a
   const { src, start, end } = profileRegion();
   const region = src.slice(start, end);
   assert.doesNotMatch(region, /<FeatureCard/, 'no FeatureCard (shadow, 22dp radius) inside the Profile');
-  assert.equal(region.split('<ProfileCard').length - 1, 7);
+  // UX-02 Package B: the emergency contact card is rendered by renderEmergencyContactCard(), which the region calls.
+  const ecAt = src.indexOf('  function renderEmergencyContactCard() {');
+  const ecCard = src.slice(ecAt, src.indexOf('\n  }\n', ecAt));
+  assert.equal(region.split('<ProfileCard').length - 1 + ecCard.split('<ProfileCard').length - 1, 7);
+  assert.equal(ecCard.split('<ProfileCard').length - 1, 1);
   assert.doesNotMatch(region, /title="[^"]*\b[A-Z][a-z]+ [A-Z][a-z]+"/, 'card titles in sentence case');
   assert.doesNotMatch(region, /styles\.guardSectionLabel/, 'no uppercase captions inside the Profile');
   assert.doesNotMatch(region, /\{(emp|rec)\.(startDate|endDate|payrollStartDate|payrollEndDate)\}/, 'no raw ISO dates');
-  for (const field of ['emp.startDate', 'emp.endDate', 'rec.payrollStartDate', 'rec.payrollEndDate']) assert.ok(region.includes(`profileDate(${field})`), field);
+  // UX-02 Package B: the employment and pay dates are formatted by the summaries the Profile renders.
+  const summaries = read('src/components/guard/profile/profileEmployment.ts');
+  assert.ok(region.includes('employmentSummaryLines(emp)') && region.includes('payrollSummaryLines(rec)'));
+  assert.doesNotMatch(summaries, /\$\{(emp|rec)\.(startDate|endDate|payrollStartDate|payrollEndDate)\}/, 'no raw ISO dates in the summaries');
+  for (const field of ['emp.startDate', 'emp.endDate', 'rec.payrollStartDate', 'rec.payrollEndDate']) assert.ok(summaries.includes(`profileDate(${field})`), field);
   assert.equal(overview.profileDate('2026-03-02'), '02/03/2026');
   assert.equal(overview.profileDate('2026-03-02T09:00:00.000Z'), '02/03/2026');
   assert.equal(overview.profileDate(null), '—');

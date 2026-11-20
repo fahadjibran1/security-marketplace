@@ -9,6 +9,7 @@ import { colors, radii, spacing, typography } from '../../theme';
 import { Button } from '../ui/Button';
 import { AppModal } from '../ui/Modal';
 import { StatusBadge } from '../StatusBadge';
+import { ProfileCard, ProfilePrimaryButton } from './profile/ProfileCard';
 import {
   invitationErrorMessage,
   relationshipTypeLabel,
@@ -18,7 +19,8 @@ function fmtDate(iso?: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  // UX-02 Package B: UK dates as dd/mm/yyyy, as everywhere else in the Profile (was "27 Oct 2026").
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 type Feedback = { tone: 'success' | 'info'; text: string } | null;
@@ -122,51 +124,53 @@ export function GuardCompaniesPanel({
 
   return (
     <View style={styles.wrapper}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>My Companies</Text>
-          <Text style={styles.subtitle}>
-            {companies.length > 0
-              ? `You are part of ${companies.length} workforce${companies.length === 1 ? '' : 's'}.`
-              : 'Companies you work for will appear here once you join them.'}
-          </Text>
-        </View>
-        <Button label="Join Company" onPress={() => setJoinOpen(true)} />
-      </View>
-
-      {feedback ? (
-        <View style={[styles.feedback, feedback.tone === 'success' ? styles.feedbackSuccess : styles.feedbackInfo]}>
-          <Text style={styles.feedbackText}>{feedback.text}</Text>
-          <Button label="Dismiss" variant="tertiary" size="sm" onPress={() => setFeedback(null)} />
-        </View>
-      ) : null}
-
-      {loading && companies.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyText}>Loading your companies…</Text>
-        </View>
-      ) : companies.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>You have not joined a company yet</Text>
-          <Text style={styles.emptyText}>
-            If a company has given you an invitation code, use Join Company to enter it.
-          </Text>
-        </View>
-      ) : (
-        companies.map((membership) => (
-          <View key={membership.companyId} style={styles.companyCard}>
-            <View style={styles.companyHeader}>
-              <Text style={styles.companyName}>{membership.companyName}</Text>
-              <StatusBadge label={relationshipTypeLabel(membership.relationshipType)} tone="info" />
-            </View>
-            <Text style={styles.companyMeta}>
-              {membership.acceptedAt
-                ? `Joined ${fmtDate(membership.acceptedAt)}`
-                : `In workforce since ${fmtDate(membership.since)}`}
-            </Text>
+      {/* UX-02 Package B: one list card with dividers, the relationship badge always on the line under the company name,
+          UK dates, and the one full-width primary button under the list. Join, preview, accept, decline and refresh are
+          unchanged. */}
+      <ProfileCard
+        title="My companies"
+        subtitle={companies.length > 0
+          ? `${companies.length} compan${companies.length === 1 ? 'y' : 'ies'}`
+          : 'Companies you work for appear here once you join them.'}
+        testID="guard-companies-card"
+      >
+        {feedback ? (
+          <View style={[styles.feedback, feedback.tone === 'success' ? styles.feedbackSuccess : styles.feedbackInfo]}>
+            <Text style={styles.feedbackText}>{feedback.text}</Text>
+            <Button label="Dismiss" variant="tertiary" size="sm" onPress={() => setFeedback(null)} />
           </View>
-        ))
-      )}
+        ) : null}
+
+        {loading && companies.length === 0 ? (
+          <Text style={styles.emptyText}>Loading your companies…</Text>
+        ) : companies.length === 0 ? (
+          <Text style={styles.emptyText}>If a company has given you an invitation code, use Join a company to enter it.</Text>
+        ) : (
+          companies.map((membership, index) => {
+            const relationship = relationshipTypeLabel(membership.relationshipType);
+            const joined = membership.acceptedAt
+              ? `Joined ${fmtDate(membership.acceptedAt)}`
+              : `In workforce since ${fmtDate(membership.since)}`;
+            return (
+              <View
+                key={membership.companyId}
+                style={[styles.companyRow, index > 0 && styles.companyDivider]}
+                accessible
+                accessibilityLabel={`${membership.companyName}. ${relationship}. ${joined}`}
+                testID="guard-company-row"
+              >
+                <Text style={styles.companyName}>{membership.companyName}</Text>
+                <View style={styles.badgeLine}>
+                  <StatusBadge label={relationship} tone="info" />
+                </View>
+                <Text style={styles.companyMeta}>{joined}</Text>
+              </View>
+            );
+          })
+        )}
+
+        <ProfilePrimaryButton label="Join a company" onPress={() => setJoinOpen(true)} nativeTestID="guard-companies-join" />
+      </ProfileCard>
 
       {/* ── Join company ────────────────────────────────────────────────────── */}
       <AppModal
@@ -272,6 +276,9 @@ export function GuardCompaniesPanel({
 
 const styles = StyleSheet.create({
   wrapper: { gap: spacing.md },
+  companyRow: { gap: spacing.xs },
+  companyDivider: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
+  badgeLine: { flexDirection: 'row' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',

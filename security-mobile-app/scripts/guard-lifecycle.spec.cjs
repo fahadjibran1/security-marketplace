@@ -24,8 +24,12 @@ assert.equal(getGuardWorkEligibilityLabel({ assignable: false }), 'Not eligible'
 assert.equal(getGuardWorkEligibilityLabel({ assignable: true }), 'Eligible');
 
 const panel = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'guard', 'GuardCompliancePanel.tsx'), 'utf8');
-assert.match(panel, /Account access/);
-assert.match(panel, /Work eligibility/);
+// UX-02 Package B: the deployment row is labelled "Deployment", and Account access moved from the compliance panel to
+// the account card in Privacy & account (the same static "Active" value as before).
+assert.match(panel, /label="Deployment" value=\{deployment\}/);
+assert.doesNotMatch(panel, /label="Work eligibility"|label="Account access"/);
+const dashboard = fs.readFileSync(path.join(__dirname, '..', 'src', 'screens', 'GuardDashboardScreen.tsx'), 'utf8');
+assert.match(dashboard, /accessibilityLabel="Account access: Active" testID="guard-account-access"/);
 assert.match(panel, /SIA evidence/);
 assert.match(panel, /Right-to-work evidence/);
 assert.doesNotMatch(panel, /uploaded.*Vetted|Vetted.*uploaded/i);

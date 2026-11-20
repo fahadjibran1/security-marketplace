@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { SCREENING_COPY } from "./profile/profileCopy";
+import { profileTokens } from "./profile/profileTheme";
 import {
   acceptMyScreeningConsent,
   addMyScreeningAddress,
@@ -149,47 +150,49 @@ export function GuardScreeningPanel({
     ["Supporting evidence", !!data?.evidence?.some((x) => x.uploadCompleted)],
     ["Consent & declaration", done("consent")],
   ];
+  // UX-02 Package B (owner decision R1): the summary shows the status and the per-step checklist, not the server's
+  // overall percentage or a progress bar. The two disagreed (89% beside 2 of 8 ticked steps), and the checklist is the
+  // detailed progress. The percentage itself, its calculation and the journey (which still shows it) are unchanged.
+  // The section title already says "Optional S4 screening", so there is no eyebrow repeating it.
   return (
     <View
-      style={s.card}
+      style={sum.card}
       accessibilityLabel={SCREENING_COPY.summaryAccessibilityLabel}
+      testID="guard-screening-summary"
     >
-      <Text style={s.eyebrow}>{SCREENING_COPY.eyebrow}</Text>
-      <View style={s.summaryRow}>
-        <View>
-          <Text style={s.label}>Screening status</Text>
-          <Text style={s.title}>{STATUS[data?.status || "NOT_STARTED"]}</Text>
-        </View>
-        <Text style={s.progress}>{data?.progress || 0}%</Text>
+      <View style={sum.statusBlock}>
+        <Text style={sum.label}>Screening status</Text>
+        <Text style={sum.status} accessibilityRole="header">{STATUS[data?.status || "NOT_STARTED"]}</Text>
       </View>
-      <View style={s.track}>
-        <View
-          style={[
-            s.trackFill,
-            { width: `${Math.max(0, Math.min(100, data?.progress || 0))}%` },
-          ]}
-        />
-      </View>
-      <Text style={s.note}>{SCREENING_COPY.optionalStatement}</Text>
-      <Text style={s.note}>{SCREENING_COPY.separateFromCompanyChecks}</Text>
-      <View style={s.checkGrid}>
+      {/* One paragraph (was two), each sentence still its own text run. */}
+      <Text style={sum.note}>
+        <Text>{SCREENING_COPY.optionalStatement}</Text>
+        <Text>{" "}</Text>
+        <Text>{SCREENING_COPY.separateFromCompanyChecks}</Text>
+      </Text>
+      <View style={sum.checklist}>
         {checks.map(([label, done]) => (
-          <Text key={label} style={done ? s.done : s.pending}>
+          <Text
+            key={label}
+            style={done ? sum.done : sum.pending}
+            accessibilityLabel={`${label}: ${done ? "done" : "not done yet"}`}
+          >
             {done ? "✓" : "○"} {label}
           </Text>
         ))}
       </View>
-      <View style={s.accessBox}>
-        <Text style={s.accessGood}>{SCREENING_COPY.marketplaceAccess}</Text>
-        <Text style={s.meta}>{SCREENING_COPY.deploymentLine}</Text>
+      <View style={sum.access}>
+        <Text style={sum.accessGood}>{SCREENING_COPY.marketplaceAccess}</Text>
+        <Text style={sum.note}>{SCREENING_COPY.deploymentLine}</Text>
       </View>
-      <Text style={s.note}>{SCREENING_COPY.benefit}</Text>
+      <Text style={sum.note}>{SCREENING_COPY.benefit}</Text>
       <Pressable
         accessibilityRole="button"
-        style={s.button}
+        style={sum.button}
         onPress={onContinue}
+        testID="guard-screening-continue"
       >
-        <Text style={s.buttonText}>
+        <Text style={sum.buttonText}>
           {data?.id ? "Continue screening" : "Start screening"}
         </Text>
       </Pressable>
@@ -2110,4 +2113,38 @@ const s = StyleSheet.create({
     padding: spacing.md,
     borderRadius: 10,
   },
+});
+
+// UX-02 Package B: the Profile summary of the optional S4 screening file (the journey keeps its own styles above).
+// A flat Profile card (1dp border, 8dp corners, no shadow), the status at 17/22, captions at 13/18 and one full-width
+// Guard teal button of at least 48dp.
+const sum = StyleSheet.create({
+  card: {
+    backgroundColor: profileTokens.colors.surface,
+    borderWidth: profileTokens.shape.cardBorderWidth,
+    borderColor: profileTokens.colors.border,
+    borderRadius: profileTokens.shape.cardRadius,
+    padding: 12,
+    gap: 10,
+  },
+  statusBlock: { gap: 2 },
+  label: { ...profileTokens.type.requirement, color: profileTokens.colors.textSecondary },
+  status: { ...profileTokens.type.sectionTitle, fontSize: 17, lineHeight: 22, color: profileTokens.colors.textPrimary },
+  note: { ...profileTokens.type.requirement, color: profileTokens.colors.textSecondary },
+  checklist: { gap: 4 },
+  done: { ...profileTokens.type.body, color: colors.success },
+  pending: { ...profileTokens.type.body, color: profileTokens.colors.textSecondary },
+  access: { gap: 2, borderTopWidth: 1, borderTopColor: profileTokens.colors.border, paddingTop: 8 },
+  accessGood: { ...profileTokens.type.body, fontFamily: profileTokens.type.button.fontFamily, color: colors.success },
+  button: {
+    alignSelf: "stretch",
+    minHeight: 48,
+    borderRadius: profileTokens.shape.controlRadius,
+    backgroundColor: profileTokens.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  buttonText: { ...profileTokens.type.button, color: profileTokens.colors.onAccent, textAlign: "center" },
 });

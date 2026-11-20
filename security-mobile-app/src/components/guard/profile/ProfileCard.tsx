@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { PROFILE_TONE_COLORS, profileTokens } from './profileTheme';
 import { profileDate } from './profileOverview';
+import { summaryLineText, type SummaryLine } from './profileEmployment';
 
 export { profileDate };
 
@@ -51,6 +52,95 @@ export function ProfileNote({ children, testID, tone = 'secondary' }: { children
   return <Text style={[styles.note, tone === 'warning' && styles.noteWarning]} testID={testID}>{children}</Text>;
 }
 
+/** Minimum height of every Profile button (UX-02 Package B): the Android 48dp target, without relying on hit slop. */
+export const PROFILE_BUTTON_MIN_HEIGHT = 48;
+
+type ProfileButtonProps = {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  /**
+   * Spoken name when it differs from the visible label (for example "Save emergency contact" for "Save"). Named
+   * spokenLabel / nativeTestID rather than accessibilityLabel / testID so they exist only on the Pressable that
+   * receives them, which is what screen readers, UI tests and the specs look for.
+   */
+  spokenLabel?: string;
+  nativeTestID?: string;
+};
+
+/**
+ * The one primary action style for every Profile section (UX-02 Package B; replaces the navy shadowed Save, the
+ * half-width teal Save and the title-case Join button): Guard teal fill, white text, full width, at least 48dp, no shadow.
+ */
+export function ProfilePrimaryButton({ label, onPress, disabled = false, busy = false, spokenLabel, nativeTestID }: ProfileButtonProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={spokenLabel ?? label}
+      accessibilityState={{ disabled, busy }}
+      testID={nativeTestID}
+      style={[styles.primary, disabled && styles.disabled]}
+    >
+      <Text style={styles.primaryText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * A secondary or inline action (Show, Edit, Cancel, Remove): outlined, at least 48dp tall, as wide as its label and
+ * wrapping to the next line at large text rather than breaking a word. `tone="danger"` is kept for actions that remove data.
+ */
+export function ProfileSecondaryButton({ label, onPress, disabled = false, busy = false, spokenLabel, nativeTestID, tone = 'neutral' }: ProfileButtonProps & { tone?: 'neutral' | 'danger' }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={spokenLabel ?? label}
+      accessibilityState={{ disabled, busy }}
+      testID={nativeTestID}
+      style={[styles.secondary, tone === 'danger' && styles.secondaryDanger, disabled && styles.disabled]}
+    >
+      <Text style={[styles.secondaryText, tone === 'danger' && styles.secondaryDangerText]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** A row of inline actions that wraps at large text instead of squeezing its buttons below 48dp. */
+export function ProfileActionRow({ children, testID }: { children: ReactNode; testID?: string }) {
+  return <View style={styles.actionRow} testID={testID}>{children}</View>;
+}
+
+/** A plain row divided from what is above it by a hairline (UX-02 Package B: replaces boxed sub-cards inside a card). */
+export function ProfileDividedRow({ children, testID }: { children: ReactNode; testID?: string; key?: string | number }) {
+  return <View style={styles.dividedRow} testID={testID}>{children}</View>;
+}
+
+/**
+ * A compact read-only summary of one record (a company's employment or pay arrangement): the name, then one or two
+ * lines of "a · b · c" facts. Spoken as one item. Never used for a sensitive value (bank, NINO, UTR, licence number).
+ */
+export function ProfileSummaryRow({ title, lines, first, testID }: { title: string; lines: SummaryLine[]; first: boolean; testID?: string; key?: string | number }) {
+  const shown = lines.filter((line) => line.parts.length > 0);
+  return (
+    <View style={[styles.summaryRow, !first && styles.groupDivider]} accessible accessibilityLabel={[title, ...shown.map(summaryLineText)].join('. ')} testID={testID}>
+      <Text style={styles.summaryTitle}>{title}</Text>
+      {shown.map((line) => (
+        // Each fact is its own text run (wrapping between facts, never inside a word), separated by " · ".
+        <Text key={summaryLineText(line)} style={styles.summaryLine}>
+          {line.lead ? <Text>{`${line.lead} `}</Text> : null}
+          {line.parts.map((part, i) => (
+            <Text key={`${i}-${part}`}>{i > 0 ? <Text>{' · '}</Text> : null}<Text>{part}</Text></Text>
+          ))}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 const t = profileTokens;
 const styles = StyleSheet.create({
   card: {
@@ -75,4 +165,40 @@ const styles = StyleSheet.create({
   groupDivider: { borderTopWidth: 1, borderTopColor: t.colors.border, paddingTop: 8 },
   note: { fontSize: 13, lineHeight: 18, color: t.colors.textSecondary },
   noteWarning: { color: PROFILE_TONE_COLORS.warning.text },
+  primary: {
+    alignSelf: 'stretch',
+    minHeight: PROFILE_BUTTON_MIN_HEIGHT,
+    borderRadius: t.shape.controlRadius,
+    backgroundColor: t.colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  primaryText: { ...t.type.button, color: t.colors.onAccent, textAlign: 'center' },
+  secondary: {
+    minHeight: PROFILE_BUTTON_MIN_HEIGHT,
+    minWidth: PROFILE_BUTTON_MIN_HEIGHT,
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    maxWidth: '100%',
+    borderRadius: t.shape.controlRadius,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  secondaryText: { ...t.type.button, color: t.colors.textPrimary, textAlign: 'center' },
+  secondaryDanger: { borderColor: t.colors.danger },
+  secondaryDangerText: { color: t.colors.danger },
+  disabled: { opacity: 0.45 },
+  actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  dividedRow: { borderTopWidth: 1, borderTopColor: t.colors.border, paddingTop: 10, gap: 4 },
+  summaryRow: { gap: 2 },
+  summaryTitle: { ...t.type.value, fontFamily: t.type.button.fontFamily, color: t.colors.textPrimary },
+  summaryLine: { ...t.type.body, color: t.colors.textSecondary },
 });
