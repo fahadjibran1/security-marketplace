@@ -439,9 +439,18 @@ test('UX-T21-BADGES-SCALE-WITH-TEXT-AND-NEVER-MOVE-THE-HEADER-OR-THE-OFFERS-LABE
   assert.deepEqual([1, 1.3, 2].map(screen.guardBadgeSize), [18, 23, 32]);
   for (const bad of [0, -1, NaN, Infinity]) assert.equal(screen.guardBadgeSize(bad), 18, `${bad} falls back to 1.0x`);
   assert.deepEqual(screen.guardBadgeBox(23), { minWidth: 23, minHeight: 23, borderRadius: 11.5 });
-  // The header badge overhangs the control by 4dp (the actions keep a 12dp gap, so the SOS stays 8dp clear) and at
-  // 1.0x rises no further than the header's 8dp top padding.
-  assert.deepEqual([18, 23, 32].map((s) => screen.guardHeaderBadgeOffset(s)), [{ top: -8, right: -4 }, { top: -11, right: -4 }, { top: -17, right: -4 }]);
+  // UX-02A accessibility correction: the header badge rises exactly the header's 8dp top padding at every text size
+  // (it rose 17dp at 2.0x, into the Android status bar) and grows to the right instead, by at most 12dp, inside the
+  // header's 16dp side padding. Notifications is the last header control, so nothing sits to its right.
+  assert.deepEqual([18, 23, 32].map((s) => screen.guardHeaderBadgeOffset(s)), [{ top: -8, right: -4 }, { top: -8, right: -7 }, { top: -8, right: -12 }]);
+  for (const s of [18, 23, 32, 40, 60]) {
+    const o = screen.guardHeaderBadgeOffset(s);
+    assert.ok(-o.top <= 8, `${s}dp badge: rises no further than the header's top padding`);
+    assert.ok(-o.right <= 12, `${s}dp badge: stays inside the header's 16dp side padding`);
+  }
+  const headerSrcActions = codeOf('src/components/guard/home/GuardHeader.tsx');
+  assert.ok(headerSrcActions.indexOf('{notifications}') > headerSrcActions.indexOf('testID="guard-header-sos"'), 'Notifications is the last header control');
+  assert.match(headerSrcActions, /paddingHorizontal: spacing\.lg,/, '16dp side padding');
   assert.deepEqual(screen.guardOffersBadgeOffset(32), { bottom: '100%', right: -8 });
   const headerSrc = codeOf('src/components/guard/home/GuardHeader.tsx');
   assert.match(headerSrc, /header: \{[^}]*paddingTop: spacing\.sm,/, 'the header keeps 8dp above the actions');
@@ -1825,13 +1834,23 @@ test('UX-T37-PROFILE-OVERVIEW-ADAPTS-TO-SMALL-PHONES-AND-LARGE-TEXT', async () =
       }
       for (const text of row.findAll((n) => n.type === RNW.Text)) assert.equal(text.props.numberOfLines, undefined, `${at} ${key}: never truncated`);
     }
-    // Phase 2D: the header's two facts are equal cells side by side, never wrapping pills.
+    // UX-02A accessibility correction: the two facts are equal growing cells whose basis follows the text scale, in a
+    // wrapping row, so at large text each takes its own full-width row instead of breaking the date or "Deployment".
+    const basis = loadWith('src/components/guard/profile/GuardProfileOverview.tsx').profileFactBasis(fontScale);
     for (const id of ['guard-profile-sia-status', 'guard-profile-deployment-status']) {
-      const cell = flat(root.findAll((n) => n.props?.testID === id && n.props.style)[0].props.style);
-      assert.deepEqual([cell.flex, cell.minWidth, cell.maxWidth], [1, 0, '100%'], `${at} ${id}: an equal cell`);
+      const cellNode = root.findAll((n) => n.props?.testID === id && n.props.style)[0];
+      const cell = flat(cellNode.props.style);
+      assert.deepEqual([cell.flexGrow, cell.flexShrink, cell.flexBasis, cell.minWidth, cell.maxWidth], [1, 1, basis, 0, '100%'], `${at} ${id}: an equal, growing cell`);
+      assert.equal(cell.flex, undefined, `${at} ${id}: no flex:1 (a zero basis never wraps)`);
+      for (const text of cellNode.findAll((n) => n.type === RNW.Text)) assert.equal(text.props.numberOfLines, undefined, `${at} ${id}: never truncated`);
     }
-    const facts = root.findAll((n) => n.props?.style && n.findAll((c) => c.props?.testID === 'guard-profile-sia-status').length && n.findAll((c) => c.props?.testID === 'guard-profile-deployment-status').length && flat(n.props.style).flexDirection === 'row');
-    assert.ok(facts.length > 0 && !facts.some((n) => flat(n.props.style).flexWrap === 'wrap'), `${at}: one row of facts`);
+    const facts = flat(byTestId(root, 'guard-profile-facts')[0].props.style);
+    assert.deepEqual([facts.flexDirection, facts.flexWrap, facts.gap], ['row', 'wrap', 8], `${at}: the facts row wraps by content`);
+    // Whether they share a row, from the card's inner width (16 gutter, 1 border and 12 padding each side; on device the
+    // facts span 302dp of a 360dp screen): side by side up to about 1.3x on 360dp, stacked at 2.0x.
+    const sideBySide = basis * 2 + 8 <= width - 2 * (16 + 1 + 12);
+    const expected = { '412@1': true, '360@1': true, '320@1': true, '412@1.3': true, '360@2': false }[`${width}@${fontScale}`];
+    assert.equal(sideBySide, expected, `${at}: facts ${expected ? 'share a row' : 'stack'}`);
     // Each row's tag is the short form, so it fits beside the title on a standard phone.
     assert.ok(texts(byTestId(root, 'guard-profile-section-compliance')[0]).includes('Company may ask'), `${at}: short tag`);
     await run(() => renderer.unmount());

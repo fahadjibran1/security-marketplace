@@ -557,13 +557,17 @@ export function guardBadgeBox(size: number) {
 }
 
 /**
- * The Notifications badge sits on the control's upper-right corner. It overhangs the right edge by 4dp (the actions
- * keep a 12dp gap, so Log out stays 8dp clear) and rises above the top edge as it grows, so its lower edge stays above
- * the label's last letters (measured on Android 16 at 1.0x, 1.3x and 2.0x) instead of covering them. At 1.0x it rises
- * 8dp: exactly the header's top padding when the actions share the title's row, so it never leaves the header.
+ * The Notifications badge sits on the control's upper-right corner. It rises 8dp above the control at every text size:
+ * exactly the header's top padding, so it never leaves the header into the Android status bar (UX-02A accessibility
+ * correction: it used to rise further as it grew, 17dp at 2.0x, and covered the status bar). As it grows it overhangs
+ * the right edge instead, from 4dp at 1.0x to at most 12dp, inside the header's 16dp side padding. Notifications is the
+ * last header control, so nothing sits to its right; the badge still covers no more than the bell's upper-right corner.
  */
+export const GUARD_HEADER_BADGE_RISE = 8;
+export const GUARD_HEADER_BADGE_MAX_OVERHANG = 12;
 export function guardHeaderBadgeOffset(size: number) {
-  return { top: -Math.round(8 + (size - 18) * 0.65), right: -4 };
+  const overhang = Math.min(GUARD_HEADER_BADGE_MAX_OVERHANG, 4 + Math.round(Math.max(0, size - 18) * 0.6));
+  return { top: -GUARD_HEADER_BADGE_RISE, right: -overhang };
 }
 
 /**
@@ -2611,6 +2615,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
                 profileUnavailable={!loadedProfile && !loading ? { message: PROFILE_UNAVAILABLE_MESSAGE, onRetry: () => loadData() } : null}
                 cache={overviewCacheRef.current}
                 refreshKey={overviewRefreshKey}
+                fontScale={homeLayout.fontScale}
               />
             ) : (
               <GuardProfileSection section={profileSection} onBack={() => openProfileSection(null)}>

@@ -40,6 +40,8 @@ export interface GuardProfileOverviewProps {
   cache?: ProfileOverviewCache;
   /** Phase 2E: changing it re-checks freshness and reads whatever is stale (for example on return to the foreground). */
   refreshKey?: number;
+  /** UX-02A: the system text scale (the dashboard's Guard Home layout), which decides whether the two facts share a row. */
+  fontScale?: number;
 }
 
 export interface ProfileOverviewCache {
@@ -55,7 +57,27 @@ export function complianceFactsFrom(summary: GuardComplianceSummary | null | und
   return { assignable: Boolean(summary?.assignable), blockingReasons: summary?.blockingReasons ?? [], siaExpiryDate: summary?.siaExpiryDate ?? null, siaLicenceNumber: summary?.siaLicenceNumber ?? null };
 }
 
-export function GuardProfileOverview({ source, onOpenSection, profileUnavailable, cache, refreshKey = 0 }: GuardProfileOverviewProps) {
+/**
+ * UX-02A accessibility correction — the narrowest a fact cell's text may be, in unscaled points, before the two cells
+ * stop sharing a row. The longest single word a cell shows is the SIA date ("30/06/2028", about 84pt at 1.0x in the
+ * cell's 14pt SemiBold), so below this width Android broke it mid-value ("30/06/20 | 28") and split "Deployment".
+ */
+export const PROFILE_FACT_MIN_TEXT_WIDTH = 96;
+/** A fact cell's horizontal padding (10dp each side), added to the scaled text width. */
+const FACT_HORIZONTAL_PADDING = 20;
+
+/**
+ * The flex basis of one fact cell at this text scale. The cells sit side by side while two bases fit the card, and
+ * each takes a full-width row (SIA first) when they do not: content-driven wrapping, so nothing is hidden, shortened
+ * or scaled down. On a 360dp phone they share a row up to about 1.3x; on 411dp up to about 1.6x.
+ */
+export function profileFactBasis(fontScale: number): number {
+  const scale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  return Math.ceil(PROFILE_FACT_MIN_TEXT_WIDTH * scale) + FACT_HORIZONTAL_PADDING;
+}
+
+export function GuardProfileOverview({ source, onOpenSection, profileUnavailable, cache, refreshKey = 0, fontScale = 1 }: GuardProfileOverviewProps) {
+  const factBasis = profileFactBasis(fontScale);
   // A fresh cached read is shown at once (no loading flash on Back); otherwise the status loads as before.
   const [compliance, setCompliance] = useState<Loadable<ComplianceFacts>>(() => {
     const cached = freshValue(cache?.compliance, Date.now());
@@ -131,10 +153,12 @@ export function GuardProfileOverview({ source, onOpenSection, profileUnavailable
         </View>
         {/* Phase 2D: two equal cells with a fixed caption and a short value, so the header is the same height loading
             and loaded and never wraps into stacked pills. The full sentence is what a screen reader hears. UX-02A: the
-            SIA cell's verb moved into its caption, so the value is the date alone and fits one line. */}
-        <View style={styles.facts}>
-          <FactCell caption={header.sia.caption} value={header.sia.value} spoken={header.sia.label} tone={header.sia.tone} testID="guard-profile-sia-status" />
-          <FactCell caption="Deployment" value={header.deployment.short} spoken={header.deployment.label} tone={header.deployment.tone} testID="guard-profile-deployment-status" />
+            SIA cell's verb moved into its caption, so the value is the date alone and fits one line. UX-02A accessibility
+            correction: at large text the two cells wrap onto their own full-width rows (profileFactBasis) instead of
+            breaking the date or "Deployment" mid-word. */}
+        <View style={styles.facts} testID="guard-profile-facts">
+          <FactCell caption={header.sia.caption} value={header.sia.value} spoken={header.sia.label} tone={header.sia.tone} basis={factBasis} testID="guard-profile-sia-status" />
+          <FactCell caption="Deployment" value={header.deployment.short} spoken={header.deployment.label} tone={header.deployment.tone} basis={factBasis} testID="guard-profile-deployment-status" />
         </View>
 
         {/* UX-02A: Needs attention is part of the same card (identity, facts, attention), divided from the facts above. */}
@@ -190,11 +214,11 @@ export function GuardProfileOverview({ source, onOpenSection, profileUnavailable
   );
 }
 
-function FactCell({ caption, value, spoken, tone, testID }: { caption: string; value: string; spoken: string; tone: Tone; testID: string }) {
+function FactCell({ caption, value, spoken, tone, basis, testID }: { caption: string; value: string; spoken: string; tone: Tone; basis: number; testID: string }) {
   const colour = tone === 'neutral' ? profileTokens.colors.textPrimary : PROFILE_TONE_COLORS[tone].text;
   return (
     <View
-      style={[styles.fact, { backgroundColor: PROFILE_TONE_COLORS[tone].surface }]}
+      style={[styles.fact, { flexBasis: basis, backgroundColor: PROFILE_TONE_COLORS[tone].surface }]}
       accessible
       accessibilityLabel={spoken}
       testID={testID}
@@ -220,8 +244,9 @@ const styles = StyleSheet.create({
   identityText: { flex: 1, minWidth: 0, gap: 2 },
   name: { ...t.type.sectionTitle, color: t.colors.textPrimary },
   meta: { ...t.type.body, color: t.colors.textSecondary },
-  facts: { flexDirection: 'row', gap: 8 },
-  fact: { flex: 1, minWidth: 0, maxWidth: '100%', borderRadius: t.shape.tagRadius, paddingHorizontal: 10, paddingVertical: 6, gap: 2 },
+  // Wraps when two cells' bases (profileFactBasis) do not fit; each grows to fill its row.
+  facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  fact: { flexGrow: 1, flexShrink: 1, minWidth: 0, maxWidth: '100%', borderRadius: t.shape.tagRadius, paddingHorizontal: 10, paddingVertical: 6, gap: 2 },
   factCaption: { ...t.type.sectionLabel, color: t.colors.textSecondary },
   factValue: { ...t.type.value, fontFamily: t.type.button.fontFamily },
   eyebrow: { ...t.type.sectionLabel, color: t.colors.textSecondary },
