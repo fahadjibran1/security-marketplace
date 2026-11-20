@@ -11,7 +11,9 @@ import type { Tone } from './profileOverview';
  *
  *   - a value in RTW_NOT_VALID_STATUSES is a deployment blocker ("Right-to-work status is …");
  *   - a value in RTW_NO_EXPIRY_STATUSES needs no expiry date (requiresRightToWorkExpiry);
- *   - any other value is treated as time-limited, so an expiry date is required.
+ *   - any other value needs an expiry date (the backend makes no further judgement about it).
+ *
+ * The expiry date is the Guard's own current record (getMyGuard, or the compliance summary built from the same row).
  *
  * Both lists are copied from that file, and scripts/guard-home-ux01.spec.cjs fails if they ever differ. Nothing here
  * decides eligibility: deployment still comes only from the backend's `assignable` flag and blocking reasons.
@@ -29,7 +31,9 @@ export function rightToWorkStatusDescription(status: string | null | undefined, 
   if (!value) return { text: 'Status not added yet', tone: 'warning' };
   if (RTW_NOT_VALID_STATUSES.includes(value)) return { text: 'Status recorded as not valid', tone: 'danger' };
   if (RTW_NO_EXPIRY_STATUSES.includes(value)) return { text: 'Status recorded · no expiry date needed', tone: 'neutral' };
+  // Any other value (including an unrecognised code such as "Psw" or a typo) needs an expiry date. The backend does not
+  // say the status IS time-limited, so neither does the app: it states only that a status is recorded and its expiry.
   return expiryDate
-    ? { text: `Time-limited status recorded · expiry ${profileDate(expiryDate)}`, tone: 'neutral' }
-    : { text: 'Time-limited status recorded · expiry date not added', tone: 'warning' };
+    ? { text: `Status recorded · expiry ${profileDate(expiryDate)}`, tone: 'neutral' }
+    : { text: 'Status recorded · expiry date needed', tone: 'warning' };
 }

@@ -2408,14 +2408,22 @@ test('UX-T50-PKGB-RIGHT-TO-WORK-STATUS-IS-DESCRIBED-NEVER-SHOWN-RAW-AND-MATCHES-
 
   const d = rtw.rightToWorkStatusDescription;
   // R4: a code with no agreed meaning ("Psw") is never shown; it is described by what the backend does with it.
-  assert.deepEqual(d('Psw', '2027-09-30'), { text: 'Time-limited status recorded · expiry 30/09/2027', tone: 'neutral' });
-  assert.deepEqual(d('Psw', null), { text: 'Time-limited status recorded · expiry date not added', tone: 'warning' });
+  assert.deepEqual(d('Psw', '2027-09-30'), { text: 'Status recorded · expiry 30/09/2027', tone: 'neutral' });
+  assert.deepEqual(d('Psw', null), { text: 'Status recorded · expiry date needed', tone: 'warning' });
   assert.deepEqual(d(' Settled ', null), { text: 'Status recorded · no expiry date needed', tone: 'neutral' });
   assert.deepEqual(d('EXPIRED', '2027-01-01'), { text: 'Status recorded as not valid', tone: 'danger' });
   for (const empty of [null, undefined, '', '   ']) assert.deepEqual(d(empty, null), { text: 'Status not added yet', tone: 'warning' });
   for (const value of ['Psw', 'psw', 'Skilled worker', 'british', 'revoked']) {
     assert.ok(!d(value, '2027-09-30').text.toLowerCase().includes(value.toLowerCase()), `the raw status "${value}" is never echoed`);
   }
+  // No invented meaning: the backend only asks unrecognised values (including typos) for an expiry date, so the app never
+  // calls them time-limited, verified, eligible or valid; a missing expiry is the backend's own blocker ("expiry date").
+  for (const value of ['Psw', 'permanant', 'zzz', 'Skilled worker']) {
+    for (const date of ['2027-09-30', null]) {
+      assert.doesNotMatch(d(value, date).text, /time-limited|verified|eligible|\bvalid\b|approved/i, `${value} / ${date}: neutral wording only`);
+    }
+  }
+  assert.match(backend, /this\.pushExpiryState\('Right-to-work clearance', guard\.rightToWorkExpiryDate \|\| null, state, true\)/, 'unrecognised values do need an expiry date');
 });
 
 test('UX-T51-PKGB-SIA-AND-COMPLIANCE-SHOWS-FIVE-SEPARATE-FACTS-AND-NO-RAW-CODE', async () => {
@@ -2436,7 +2444,7 @@ test('UX-T51-PKGB-SIA-AND-COMPLIANCE-SHOWS-FIVE-SEPARATE-FACTS-AND-NO-RAW-CODE',
   for (const label of ['SIA licence', 'SIA evidence', 'Right-to-work evidence', 'Deployment', 'Optional S4 screening']) assert.ok(shown.includes(label), label);
   // R4: no raw code, the neutral description instead.
   assert.ok(!shown.some((t) => /\bPsw\b/.test(t)), 'the raw code is never shown');
-  assert.ok(shown.includes('Time-limited status recorded · expiry 30/09/2027'));
+  assert.ok(shown.includes('Status recorded · expiry 30/09/2027'));
   // Deployment keeps the backend's own result and every genuine blocking reason; it is not merged with screening.
   assert.ok(shown.includes('Not eligible') && shown.includes('Right-to-work document not verified'), 'the blocker is kept');
   assert.ok(byTestId(panel, 'guard-compliance-blockers')[0], 'blockers listed under Deployment');
