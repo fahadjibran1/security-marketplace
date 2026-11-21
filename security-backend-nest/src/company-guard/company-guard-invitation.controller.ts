@@ -22,6 +22,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 const requestMeta = (req: Request) => ({
   // SEC-PUBLIC-02: the trust-proxy-aware client IP, never the client-settable first X-Forwarded-For entry.
@@ -43,6 +44,7 @@ export class CompanyGuardInvitationController {
   /** Returns the plaintext code exactly once. It is not stored and cannot be retrieved again. */
   @Post()
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateCompanyGuardInvitationDto) {
     return this.invitations.createForCompanyUser(user, dto);
   }
@@ -55,6 +57,7 @@ export class CompanyGuardInvitationController {
 
   @Post(':id/revoke')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   revoke(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.invitations.revokeForCompanyUser(user, id);
   }

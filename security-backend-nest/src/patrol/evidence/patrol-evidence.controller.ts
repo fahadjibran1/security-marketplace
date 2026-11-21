@@ -22,6 +22,7 @@ import {
 import { PatrolRecoveryGrantService } from '../patrol-recovery-grant.service';
 import { PatrolEvidenceExportService } from './patrol-evidence-export.service';
 import { PatrolEvidenceService } from './patrol-evidence.service';
+import { CompanyCapability, CompanyCapabilityRequired } from '../../company/company-capability';
 
 /**
  * Company patrol evidence routes (Patrols P1-C). Company accounts only; the deciding checks — the caller's company from
@@ -86,6 +87,7 @@ export class PatrolEvidenceController {
   /** patrols.holds (Owner / Admin): delete through the state machine (quarantined, recoverable until the purge). */
   @Post('evidence/:id/delete')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: PatrolEvidenceReasonDto) {
     return this.evidence.requestDeletion(user, id, dto.reason);
   }
@@ -93,18 +95,21 @@ export class PatrolEvidenceController {
   /** patrols.holds: restore a deleted photo from quarantine. */
   @Post('evidence/:id/restore')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   restore(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: PatrolEvidenceReasonDto) {
     return this.evidence.restore(user, id, dto.reason);
   }
 
   /** patrols.holds: place an evidence hold (photo, run, shift, or site and date range). */
   @Post('holds')
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   placeHold(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolEvidenceHoldDto) {
     return this.evidence.placeHold(user, dto);
   }
 
   @Post('holds/:id/release')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   releaseHold(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ReleasePatrolEvidenceHoldDto) {
     return this.evidence.releaseHold(user, id, dto.reason);
   }
@@ -118,6 +123,7 @@ export class PatrolEvidenceController {
   // ── Exports (patrols.holds) ──
   @Post('exports')
   @HttpCode(202)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   requestExport(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolEvidenceExportDto) {
     return this.exports.request(user, dto);
   }
@@ -140,6 +146,7 @@ export class PatrolEvidenceController {
 
   // ── Exceptional offline recovery grants (issue #68; patrols.holds: Owner / Admin) ──
   @Post('recovery-grants')
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   issueRecoveryGrant(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolRecoveryGrantDto) {
     return this.grants.issue(user, dto);
   }
@@ -151,6 +158,7 @@ export class PatrolEvidenceController {
 
   @Post('recovery-grants/:id/revoke')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   revokeRecoveryGrant(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: RevokePatrolRecoveryGrantDto) {
     return this.grants.revoke(user, id, dto.reason);
   }

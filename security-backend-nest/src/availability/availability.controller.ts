@@ -10,6 +10,7 @@ import { AvailabilityService } from './availability.service';
 import { UpsertAvailabilityOverrideDto } from './dto/upsert-availability-override.dto';
 import { UpsertAvailabilityRuleDto } from './dto/upsert-availability-rule.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('availability')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -43,24 +44,28 @@ export class AvailabilityController {
 
   @Post('rules')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   createRule(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityRuleDto) {
     return this.availabilityService.upsertRuleForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put('rules')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   updateRule(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityRuleDto) {
     return this.availabilityService.upsertRuleForCompanyUser(user.sub, user.role, dto);
   }
 
   @Post('overrides')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   createOverride(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityOverrideDto) {
     return this.availabilityService.upsertOverrideForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put('overrides')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   updateOverride(@CurrentUser() user: JwtPayload, @Body() dto: UpsertAvailabilityOverrideDto) {
     return this.availabilityService.upsertOverrideForCompanyUser(user.sub, user.role, dto);
   }

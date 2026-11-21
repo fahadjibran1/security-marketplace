@@ -8,6 +8,7 @@ import {
   ResetPasswordDto,
   VerifyEmailDto,
 } from './dto/account-recovery.dto';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 /**
  * Unauthenticated account recovery: the caller has no session, which is the reason they are here.
@@ -22,6 +23,7 @@ export class AccountRecoveryController {
   @Post('forgot-password')
   @HttpCode(202)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.recovery.forgotPassword(dto.email);
   }
@@ -29,6 +31,7 @@ export class AccountRecoveryController {
   @Post('reset-password')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   resetPassword(@Body() dto: ResetPasswordDto) {
     return this.recovery.resetPassword(dto.token, dto.newPassword);
   }
@@ -36,6 +39,7 @@ export class AccountRecoveryController {
   @Post('verify-email')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   verifyEmail(@Body() dto: VerifyEmailDto) {
     return this.recovery.verifyEmail(dto.token);
   }
@@ -43,6 +47,7 @@ export class AccountRecoveryController {
   @Post('resend-verification')
   @HttpCode(202)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   resendVerification(@Body() dto: ResendVerificationDto) {
     return this.recovery.resendVerification(dto.email);
   }

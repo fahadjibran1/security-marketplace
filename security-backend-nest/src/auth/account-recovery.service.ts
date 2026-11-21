@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
+import { LoginAttemptLimiter } from './login-attempt-limiter';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { emailVerificationEmail, passwordResetEmail } from '../email/auth-email.templates';
 import { TransactionalEmailService } from '../email/transactional-email.service';
@@ -50,6 +51,7 @@ export class AccountRecoveryService {
     private readonly sessions: AuthSessionService,
     private readonly email: TransactionalEmailService,
     private readonly auditLog: AuditLogService,
+    @Optional() private readonly loginLimiter?: LoginAttemptLimiter,
   ) {}
 
   // ── password reset ────────────────────────────────────────────────────────────────────────────────
@@ -104,7 +106,7 @@ export class AccountRecoveryService {
       // Every device signs in again. Committed together with the password, or not at all.
       await this.sessions.revokeAllForUser(user.id, 'password_change', manager);
       await revokePushDevicesForUser(manager, user.id, 'password_change');
-      return { ok: true as const, userId: user.id, tokenId: spent.token.id };
+      return { ok: true as const, userId: user.id, email: user.email, tokenId: spent.token.id };
     });
 
     if (!outcome.ok) {
@@ -112,6 +114,8 @@ export class AccountRecoveryService {
       throw new BadRequestException(INVALID_RESET_LINK);
     }
 
+    // The mailbox owner has proved control: failed sign-ins recorded against the account no longer hold it (SEC-PUBLIC-02).
+    this.loginLimiter?.clearAccount('user', outcome.email);
     await this.auditLog.log({
       user: { id: outcome.userId },
       action: 'auth.password_reset_completed',

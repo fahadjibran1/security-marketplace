@@ -14,6 +14,7 @@ import { RecordComplianceCheckDto } from './dto/record-compliance-check.dto';
 import { GuardComplianceCheckService } from './guard-compliance-check.service';
 import { GuardComplianceService, GuardComplianceStatus } from './guard-compliance.service';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('compliance')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -72,6 +73,7 @@ export class ComplianceController {
   // check is CompanyPermission.COMPLIANCE_MANAGE, enforced in the service via resolveCompanyContext.
   @Post('documents')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   uploadForCompany(@CurrentUser() user: JwtPayload, @Body() dto: CreateGuardDocumentDto) {
     return this.guardComplianceService.uploadDocumentForCompanyUser(user.sub, user.role, dto);
   }
@@ -100,6 +102,7 @@ export class ComplianceController {
   // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Post('documents/:id/complete-upload')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   completeDocumentUpload(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -110,6 +113,7 @@ export class ComplianceController {
   // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Patch('documents/:id/verify')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   verifyDocument(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -130,6 +134,7 @@ export class ComplianceController {
   // authoritative checks are COMPLIANCE_MANAGE and the ACTIVE relationship, enforced in the service.
   @Post('checks')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   recordCheck(@CurrentUser() user: JwtPayload, @Body() dto: RecordComplianceCheckDto) {
     return this.guardComplianceCheckService.recordForCompanyUser(user.sub, user.role, dto);
   }
@@ -137,6 +142,7 @@ export class ComplianceController {
   // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Post()
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: UpsertComplianceRecordDto) {
     return this.complianceService.upsertForCompanyUser(user.sub, user.role, dto);
   }
@@ -144,6 +150,7 @@ export class ComplianceController {
   // Entry gate only; the authoritative check is COMPLIANCE_MANAGE, enforced in the service.
   @Put()
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   update(@CurrentUser() user: JwtPayload, @Body() dto: UpsertComplianceRecordDto) {
     return this.complianceService.upsertForCompanyUser(user.sub, user.role, dto);
   }

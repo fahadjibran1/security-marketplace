@@ -184,6 +184,31 @@ function fail(message: string): never {
   process.exit(2);
 }
 
+/**
+ * SEC-PUBLIC-03: a self-registered company starts pending_verification and cannot publish jobs, invite Guards or create
+ * shifts until S4 approves it. The seeder therefore approves its synthetic company explicitly, as the approved platform
+ * administrator (UAT_PLATFORM_ADMIN_EMAIL, created by the operator CLI, never by this seeder), through the product's own
+ * CompanyVerificationService: a real, audited company.verification_changed decision, not a direct database write.
+ *
+ * platformAdminId() is called BEFORE anything is written, so a missing administrator stops the run with nothing to undo.
+ */
+export const COMPANY_APPROVAL_ADMIN_MISSING =
+  `the approved platform administrator (${UAT_PLATFORM_ADMIN_EMAIL}) does not exist; create it with the operator CLI (npm run admin:bootstrap) first`;
+
+async function platformAdminId(app: any): Promise<number> {
+  const { DataSource } = await import('typeorm');
+  const rows = await app.get(DataSource).query(`select id from users where lower(email) = $1 and role = 'admin'`, [UAT_PLATFORM_ADMIN_EMAIL]);
+  if (rows.length !== 1) fail(`${COMPANY_APPROVAL_ADMIN_MISSING}; nothing written`);
+  return Number(rows[0].id);
+}
+
+async function approveSyntheticCompany(app: any, adminId: number, companyId: number) {
+  const { CompanyVerificationService } = await import('../src/company/verification/company-verification.service');
+  const decided = await app.get(CompanyVerificationService).decide({ sub: adminId, role: 'admin' } as any, companyId, 'approved' as any, null);
+  if (decided.verificationStatus !== 'approved') throw new Error(`company ${companyId} was not approved (${decided.verificationStatus})`);
+  console.log(`  company ${companyId} approved by the platform administrator (audited company.verification_changed)`);
+}
+
 function readEnvFile(file: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -541,6 +566,7 @@ async function seed(t: Target) {
   const password = () => `${randomBytes(12).toString('base64url')}Aa1!`;
 
   try {
+    const adminId = await platformAdminId(app);
     const ownerPass = password();
     registerSecret(ownerPass);
     await auth.register({ email: PEOPLE.owner.email, password: ownerPass, role: 'company', fullName: PEOPLE.owner.fullName, phone: '01632960001', ...COMPANY });
@@ -551,6 +577,8 @@ async function seed(t: Target) {
     const ownerToken: string = owner.accessToken;
     registerSecret(ownerToken);
     const companyId: number = owner.user.companyId;
+    // Before any operational setup: the synthetic company is approved explicitly (it registers pending_verification).
+    await approveSyntheticCompany(app, adminId, companyId);
 
     const client = await api('POST', '/clients', ownerToken, CLIENT);
     const siteIds: Record<string, number> = {};
@@ -701,6 +729,7 @@ async function companyB(t: Target, loginsFile: string) {
   };
   let companyBId: number;
   try {
+    const adminId = await platformAdminId(app);
     const { TransactionalEmailService } = await import('../src/email/transactional-email.service');
     const pass = `${randomBytes(12).toString('base64url')}Aa1!`;
     registerSecret(pass);
@@ -728,6 +757,8 @@ async function companyB(t: Target, loginsFile: string) {
     companyBId = Number(login.json.user?.companyId);
     if (!Number.isInteger(companyBId) || companyBId === companyA) throw new Error(`Company B owner resolved to company ${companyBId}, not a new company`);
     console.log(`  signs in to the ${target === 'staging' ? 'deployed staging' : 'local'} API as the Owner of company ${companyBId}`);
+    // Approved, so the tenant-isolation probes reach the tenant checks (a pending company's writes stop at the policy).
+    await approveSyntheticCompany(app, adminId, companyBId);
   } finally {
     await app.close();
   }

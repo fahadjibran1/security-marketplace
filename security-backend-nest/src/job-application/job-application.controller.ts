@@ -10,6 +10,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { ReviewJobApplicationDto } from './dto/review-job-application.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('job-applications')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -47,12 +48,14 @@ export class JobApplicationController {
   // when the hire creates a shift). The role list is the door, not the authorisation.
   @Post(':id/hire')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   hire(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: HireApplicationDto) {
     return this.jobApplicationService.hireForUser(user, id, dto);
   }
 
   @Patch(':id/review')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   review(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

@@ -192,6 +192,10 @@ function companyPrivacyExemptions(ids: ProbeIds): Record<string, Exemption> {
     },
     // ── Purpose-built responses, read below by every company role ──
     CompanyGuardInvitationController: { kind: 'contract', reason: 'invitation codes and their status; no guard or account objects', evidence: ['company-guard-link-security.spec.ts'], probes: { list: '/company-guards/invitations' } },
+    CompanyVerificationSelfController: {
+      kind: 'contract', reason: "the caller's own company verification status, S4's note to it and the decision time, built field by field; the reconsideration request answers the same",
+      evidence: ['sec-public-launch.spec.ts'], probes: { status: '/companies/me/verification' },
+    },
     CoverageController: {
       kind: 'contract', reason: readOnlyWorkflow, evidence: ['operational-coverage.spec.ts', 'live-operations-consistency.spec.ts'],
       probes: { shifts: '/coverage/shifts', operations: `/coverage/operations?shiftIds=${shiftId}`, sites: '/coverage/sites', eligibleGuards: `/coverage/shifts/${shiftId}/eligible-guards` },

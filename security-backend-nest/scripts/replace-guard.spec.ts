@@ -1007,6 +1007,62 @@ async function main() {
       assert.equal(st.coverageState, 'fully_planned');
       assert.equal((await coverage()).coverageState, 'confirmed', 'confirmed only once they accept');
     });
+
+    // SEC-PUBLIC hardening: the draft follows the shift, but what the outgoing Guard typed into it is theirs. Without
+    // a reset the replacement read the outgoing Guard's note and inherited their claimed hours.
+    await test('RG-23-THE-OUTGOING-GUARDS-DRAFT-ENTRIES-DO-NOT-MOVE-TO-THE-REPLACEMENT', async () => {
+      const s = await offer(ga);
+      const [{ id: tsId }] = await q(`SELECT id FROM timesheets WHERE "shiftId" = $1`, [s.id]);
+      const NOTE = `Outgoing Guard private draft note ${s.id}`;
+      const edit = await api('PATCH', `/timesheets/${tsId}`, ga.token, {
+        guardNote: NOTE, hoursWorked: 7.5, workedMinutes: 450, breakMinutes: 30, roundedMinutes: 450,
+        actualCheckInAt: iso(s.start), actualCheckOutAt: iso(s.end),
+      });
+      assert.equal(edit.status, 200, `draft edit: ${edit.status} ${JSON.stringify(edit.body)}`);
+      assert.equal((await replace(s.id, gb.id)).status, 201);
+
+      const mine = await api('GET', '/timesheets/mine', gb.token);
+      assert.equal(mine.status, 200);
+      const t = (mine.body as any[]).find((x) => x.id === tsId);
+      assert.ok(t, 'the replacement sees the draft that followed the shift');
+      assert.ok(!JSON.stringify(t).includes(NOTE), 'the outgoing Guard\'s note reached the replacement');
+      assert.equal(t.guardNote ?? null, null);
+      assert.equal(Number(t.hoursWorked), 0, 'claimed hours must not be inherited');
+      assert.equal(Number(t.workedMinutes), 0);
+      assert.equal(Number(t.breakMinutes), 0);
+      assert.equal(Number(t.roundedMinutes), 0);
+      assert.equal(t.actualCheckInAt ?? null, null);
+      assert.equal(t.actualCheckOutAt ?? null, null);
+      const row = await one(`SELECT "guardId" g, "guardNote" n, "hoursWorked" h FROM timesheets WHERE id = $1`, [tsId]);
+      assert.equal(row.g, gb.id);
+      assert.equal(row.n, null);
+      assert.equal(Number(row.h), 0);
+
+      const outgoing = await api('GET', '/timesheets/mine', ga.token);
+      assert.ok(!(outgoing.body as any[]).some((x) => x.id === tsId), 'the outgoing Guard no longer sees the draft');
+
+      // What was cleared stays in the company's audit history, never in the replacement's view of the timesheet.
+      const [reset] = await q(`SELECT "companyId" c, "userId" u, "beforeData" b, "afterData" a FROM audit_logs
+        WHERE action = 'timesheet.draft_reset_on_replace_guard' AND "entityType" = 'timesheet' AND "entityId" = $1`, [tsId]);
+      assert.ok(reset, 'the cleared draft entries are audited');
+      assert.equal(Number(reset.c), A.id);
+      assert.equal(Number(reset.u), A.ownerId);
+      assert.equal(reset.b.guardId, ga.id);
+      assert.equal(reset.b.guardNote, NOTE);
+      assert.equal(Number(reset.b.hoursWorked), 7.5);
+      assert.equal(Number(reset.b.workedMinutes), 450);
+      assert.equal(reset.a.guardId, gb.id);
+      const history = await api('GET', `/timesheets/${tsId}/history`, gb.token);
+      assert.equal(history.status, 200, `history: ${history.status} ${JSON.stringify(history.body)}`);
+      assert.ok(!JSON.stringify(history.body).includes(NOTE), 'the replacement\'s timesheet history shows no cleared entry');
+      assert.equal((await api('GET', '/audit-logs/company', gb.token)).status, 403, 'a Guard cannot read the audit log');
+      // An untouched draft moves without an audit entry (nothing was cleared).
+      const s2 = await offer(ga);
+      assert.equal((await replace(s2.id, gb.id)).status, 201);
+      const [{ n }] = await q(`SELECT count(*)::int n FROM audit_logs a JOIN timesheets t ON t.id = a."entityId"
+        WHERE a.action = 'timesheet.draft_reset_on_replace_guard' AND t."shiftId" = $1`, [s2.id]);
+      assert.equal(n, 0);
+    });
   } finally {
     await gn.drain();
     await app.close();

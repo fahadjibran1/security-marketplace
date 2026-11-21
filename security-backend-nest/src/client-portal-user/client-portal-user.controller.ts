@@ -9,6 +9,7 @@ import { COMPANY_ADMIN_ROLES } from '../user/entities/user.entity';
 import { UpsertClientPortalUserDto } from './dto/upsert-client-portal-user.dto';
 import { ClientPortalUserService } from './client-portal-user.service';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('client-portal-users')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -24,6 +25,7 @@ export class ClientPortalUserController {
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   upsert(@CurrentUser() user: JwtPayload, @Body() dto: UpsertClientPortalUserDto) {
     return this.clientPortalUserService.upsertForCompanyUser(user.sub, user.role, dto);
   }

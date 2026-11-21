@@ -13,6 +13,8 @@ import { ClientPortalUserModule } from '../client-portal-user/client-portal-user
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthThrottlerGuard } from './auth-throttler.guard';
+import { LoginAttemptLimiter } from './login-attempt-limiter';
+import { ClientIpDiagnosticsController } from '../common/http/client-ip-diagnostics.controller';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import { AuthSession } from './entities/auth-session.entity';
 import { AuthSessionService } from './auth-session.service';
@@ -46,7 +48,7 @@ import { AUTH_THROTTLERS } from './auth-throttler.guard';
       })
     })
   ],
-  controllers: [AuthController, AccountRecoveryController, AccountController],
+  controllers: [AuthController, AccountRecoveryController, AccountController, ClientIpDiagnosticsController],
   providers: [
     AuthService,
     AuthSessionService,
@@ -55,10 +57,11 @@ import { AUTH_THROTTLERS } from './auth-throttler.guard';
     AccountDeletionService,
     JwtStrategy,
     AuthThrottlerGuard,
+    LoginAttemptLimiter,
   ],
   // ThrottlerModule and the proxy-aware guard are exported so other modules can rate-limit their own
   // bearer-secret endpoints against the same configuration instead of registering a second throttler
   // with separate storage.
-  exports: [AuthService, AuthSessionService, ThrottlerModule, AuthThrottlerGuard]
+  exports: [AuthService, AuthSessionService, ThrottlerModule, AuthThrottlerGuard, LoginAttemptLimiter]
 })
 export class AuthModule {}

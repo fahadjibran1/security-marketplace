@@ -29,6 +29,7 @@ import { ListRotaSlotsDto } from './dto/list-rota-slots.dto';
 import { UpdateRotaSlotMetadataDto } from './dto/update-rota-slot-metadata.dto';
 import { toSlotDetail, toSlotSummary } from './rota-slot.mapper';
 import { RotaSlotService } from './rota-slot.service';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('rota-slots')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -69,6 +70,7 @@ export class RotaSlotController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async create(@CurrentUser() user: JwtPayload, @Body() dto: CreateRotaSlotDto) {
     const slot = await this.rotaSlotService.createSlot(user, {
       siteId: dto.siteId,
@@ -87,6 +89,7 @@ export class RotaSlotController {
 
   @Patch(':id')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async updateMetadata(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -102,6 +105,7 @@ export class RotaSlotController {
 
   @Patch(':id/requirement')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async changeRequirement(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -119,6 +123,7 @@ export class RotaSlotController {
 
   @Patch(':id/time')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async changeTime(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -133,6 +138,7 @@ export class RotaSlotController {
 
   @Patch(':id/check-call')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async changeCheckCall(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -144,6 +150,7 @@ export class RotaSlotController {
 
   @Post(':id/assign')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async assignPosition(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -158,6 +165,7 @@ export class RotaSlotController {
 
   @Post(':id/assign-multiple')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async assignMultiple(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -178,6 +186,7 @@ export class RotaSlotController {
 
   @Post(':id/positions/:shiftId/replace')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   async replacePosition(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -189,6 +198,7 @@ export class RotaSlotController {
 
   @Delete(':id/positions/:shiftId')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   async cancelPosition(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -200,6 +210,7 @@ export class RotaSlotController {
 
   @Post(':id/cancel')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   async cancelSlot(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

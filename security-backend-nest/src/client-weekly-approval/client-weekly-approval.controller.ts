@@ -11,6 +11,7 @@ import { ResubmitApprovalDto } from './dto/resubmit-approval.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { ReviseApprovedTimeDto } from './dto/revise-approved-time.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('timesheets/weekly-approvals')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -20,6 +21,7 @@ export class ClientWeeklyApprovalController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateWeeklyApprovalDto) {
     return this.service.createSubmission(user.sub, user.role, dto);
   }
@@ -61,6 +63,7 @@ export class ClientWeeklyApprovalController {
 
   @Patch(':id/disputes/:disputeId/resolve')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   resolveDispute(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -72,6 +75,7 @@ export class ClientWeeklyApprovalController {
 
   @Post(':id/resubmit')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   resubmit(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -82,6 +86,7 @@ export class ClientWeeklyApprovalController {
 
   @Patch(':id/revise-approved-time')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   reviseApprovedTime(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

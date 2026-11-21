@@ -13,6 +13,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('shifts')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -40,6 +41,7 @@ export class ShiftController {
   // Create shift (company/admin only)
   @Post()
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateShiftDto) {
     return this.shiftService.createForUser(user, dto);
   }
@@ -48,6 +50,7 @@ export class ShiftController {
   // administrators do not bypass tenant authorisation to edit or delete a company's shifts.
   @Patch(':id')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   update(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
     return this.shiftService.updateForUser(user, id, dto);
   }
@@ -59,6 +62,7 @@ export class ShiftController {
    */
   @Post(':id/replace-guard')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   replaceGuard(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ReplaceGuardDto) {
     return this.shiftService.replaceGuardForUser(user, id, dto);
   }
@@ -81,6 +85,7 @@ export class ShiftController {
   // Company accounts, including staff; the deciding check is the membership's shifts.manage permission
   // (owner, admin, operations), enforced in the service. Platform admins and Guards are excluded.
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   reconcileWithoutBookOff(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -91,6 +96,7 @@ export class ShiftController {
 
   @Delete(':id')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.shiftService.removeForUser(user, id);
   }

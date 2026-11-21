@@ -8,6 +8,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('jobs')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -29,6 +30,7 @@ export class JobController {
 
   @Post()
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateJobDto) {
     return this.jobService.createForUser(user, dto);
   }

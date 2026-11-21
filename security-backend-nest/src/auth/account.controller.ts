@@ -6,7 +6,7 @@ import { AccountDeletionService } from './account-deletion.service';
 import { AuthThrottlerGuard } from './auth-throttler.guard';
 import { ConfirmAccountDeletionDto } from './dto/account-deletion.dto';
 import { JwtPayload } from './types/jwt-payload.type';
-import { AllowUnapprovedCompany } from '../company/company-approval.interceptor';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 /**
  * The signed-in account holder's own account. Only an S4 user account may use these — a client portal
@@ -31,7 +31,7 @@ export class AccountController {
 
   @Post('deletion/request')
   @HttpCode(200)
-  @AllowUnapprovedCompany()
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   requestDeletion(@CurrentUser() user: JwtPayload) {
     return this.deletion.requestDeletion(this.userId(user));
   }
@@ -39,9 +39,9 @@ export class AccountController {
   /** Throttled: it checks a password, so it must not become a password-guessing endpoint. */
   @Post('deletion/confirm')
   @HttpCode(200)
-  @AllowUnapprovedCompany()
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   confirmDeletion(@CurrentUser() user: JwtPayload, @Body() dto: ConfirmAccountDeletionDto) {
     return this.deletion.completeDeletion(this.userId(user), dto.password);
   }

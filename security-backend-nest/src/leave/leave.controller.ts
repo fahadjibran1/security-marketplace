@@ -9,6 +9,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { UpsertGuardLeaveDto } from './dto/upsert-guard-leave.dto';
 import { LeaveService } from './leave.service';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('leave')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -37,12 +38,14 @@ export class LeaveController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   createForCompany(@CurrentUser() user: JwtPayload, @Body() dto: UpsertGuardLeaveDto) {
     return this.leaveService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   updateForCompany(@CurrentUser() user: JwtPayload, @Body() dto: UpsertGuardLeaveDto) {
     return this.leaveService.upsertForCompanyUser(user.sub, user.role, dto);
   }

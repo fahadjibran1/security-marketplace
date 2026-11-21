@@ -39,6 +39,7 @@ import { JwtPayload } from '../src/auth/types/jwt-payload.type';
 import { buildTypeOrmOptions } from '../src/database/typeorm.config';
 import { AuditLog } from '../src/audit-log/entities/audit-log.entity';
 import { Company, CompanyStatus } from '../src/company/entities/company.entity';
+import { CompanyVerificationStatus } from '../src/company/company-verification';
 import {
   CompanyGuard,
   CompanyGuardStatus,
@@ -234,6 +235,8 @@ async function createCompany(ds: DataSource, suffix: string) {
     user: ownerUser, name: `${TEST_PREFIX}-${suffix}`,
     companyNumber: `CG-${suffix.slice(0, 8)}`, address: 'Test',
     contactDetails: 'test', status: CompanyStatus.ACTIVE,
+    // An operating company: approved explicitly (new companies start pending_verification, SEC-PUBLIC-03).
+    verificationStatus: CompanyVerificationStatus.APPROVED,
   }));
   const site = await ds.getRepository(Site).save(ds.getRepository(Site).create({
     company, name: `${TEST_PREFIX}-Site-${suffix}`, address: 'Test',

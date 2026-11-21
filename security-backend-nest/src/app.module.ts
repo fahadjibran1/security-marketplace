@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { CompanyApprovalInterceptor } from './company/company-approval.interceptor';
+import { GuardResponsePrivacyInterceptor } from './common/privacy/guard-response-privacy';
 import { CompanyVerificationModule } from './company/verification/company-verification.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -138,6 +139,9 @@ import { PatrolModule } from './patrol/patrol.module';
     PoolDiagnosticsService,
     // SEC-PUBLIC-03: only an APPROVED company may perform operational actions (every mutating company route).
     { provide: APP_INTERCEPTOR, useClass: CompanyApprovalInterceptor },
+    // SEC-PUBLIC-04: every response to a Guard is reduced to what a Guard may see (owner accounts, client contacts and
+    // company money never leave the server for a Guard, whichever route or nested relation carries them).
+    { provide: APP_INTERCEPTOR, useClass: GuardResponsePrivacyInterceptor },
   ],
 })
 export class AppModule {}

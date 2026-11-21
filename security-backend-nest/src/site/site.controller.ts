@@ -9,6 +9,7 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateSiteDto } from './dto/create-site.dto';
 import { UpdateSiteDto } from './dto/update-site.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('sites')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -38,12 +39,14 @@ export class SiteController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSiteDto) {
     return this.siteService.createForCompanyUser(user.sub, user.role, dto);
   }
 
   @Patch(':id')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

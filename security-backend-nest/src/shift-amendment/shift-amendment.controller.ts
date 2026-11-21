@@ -19,6 +19,7 @@ import {
   WithdrawAmendmentDto,
 } from './dto/shift-amendment.dto';
 import { ShiftAmendmentService } from './shift-amendment.service';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 /**
  * Live Shift Amendments (Phase 1). Role guards here only admit the right kind of account; the deciding checks — the
@@ -32,6 +33,7 @@ export class ShiftAmendmentController {
 
   @Post('shifts/:shiftId/amendments')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   propose(@CurrentUser() user: JwtPayload, @Param('shiftId', ParseIntPipe) shiftId: number, @Body() dto: ProposeAmendmentDto) {
     return this.service.propose(user, shiftId, dto);
   }
@@ -40,6 +42,7 @@ export class ShiftAmendmentController {
   @Post('shifts/:shiftId/amendments/assessment')
   @HttpCode(200)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   assess(@CurrentUser() user: JwtPayload, @Param('shiftId', ParseIntPipe) shiftId: number, @Body() dto: AssessAmendmentDto) {
     return this.service.assessProposal(user, shiftId, dto.proposedEnd);
   }
@@ -71,12 +74,14 @@ export class ShiftAmendmentController {
 
   @Put('shift-amendments/policy')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   updatePolicy(@CurrentUser() user: JwtPayload, @Body() dto: UpdateShiftPolicyDto) {
     return this.service.updatePolicy(user, dto);
   }
 
   @Put('shift-amendments/control-room/:userId')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   setControlRoomAuthorisation(
     @CurrentUser() user: JwtPayload,
     @Param('userId', ParseIntPipe) userId: number,
@@ -108,6 +113,7 @@ export class ShiftAmendmentController {
   @Post('shift-amendments/:id/approve')
   @HttpCode(200)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   approve(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ApproveAmendmentDto) {
     return this.service.approve(user, id, dto);
   }
@@ -115,6 +121,7 @@ export class ShiftAmendmentController {
   @Post('shift-amendments/:id/withdraw')
   @HttpCode(200)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   withdraw(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: WithdrawAmendmentDto) {
     return this.service.withdraw(user, id, dto);
   }
@@ -122,6 +129,7 @@ export class ShiftAmendmentController {
   @Post('shift-amendments/:id/record-verbal-agreement')
   @HttpCode(200)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   recordVerbalAgreement(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: RecordVerbalAgreementDto) {
     return this.service.recordVerbalAgreement(user, id, dto);
   }
@@ -129,6 +137,7 @@ export class ShiftAmendmentController {
   @Post('shift-amendments/:id/resolve-dispute')
   @HttpCode(200)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   resolveDispute(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ResolveDisputeDto) {
     return this.service.resolveDispute(user, id, dto);
   }

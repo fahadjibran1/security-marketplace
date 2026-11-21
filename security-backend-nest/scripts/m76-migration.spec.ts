@@ -3,16 +3,21 @@
  * local database populated at Migration 75.
  *
  *   M76-01  the identifier and order: 76 files, 1720900000023 follows 75 and is the last; a database at 75 applies exactly 76
- *   M76-02  every company that existed before 76 is approved (pilot access preserved), whatever its legacy status, with no
- *           decision note or time; no other row of any table changes
+ *   M76-02  legacy 'onboarding' and 'active' companies are approved (pilot access preserved) with no note or decision time;
+ *           legacy 'inactive' and 'suspended' companies are NOT reactivated: they are verification 'suspended', with a
+ *           note naming the carried-over status; no other row of any table changes
  *   M76-03  exactly the enum type (four labels, in order) and the three companies columns were added; nothing else changed
  *   M76-04  a company created after 76 without naming the column starts pending_verification; the enum refuses other values
  *   M76-05  the legacy companies."status" column and its values are untouched
- *   M76-06  down() removes exactly what 76 added; the schema and every row are as they were at 75; up() again re-approves
- *           the companies that existed (a re-run is the same backfill)
+ *   M76-06  down() removes exactly what 76 added; the schema and every row are as they were at 75; up() again is the same
+ *           backfill (the same mapping from the untouched legacy status)
  *   M76-07  no semantic entity-to-migration drift at 76 (the release gate's own rule)
  *   M76-08  rollback compatibility: the previous release's migrations find nothing to run on a 76 database, and its
  *           company INSERTs (which never name the new columns) still work
+ *   M76-09  a fresh, empty database migrates 0 → 76 in one run, ends at 76 with the pending default and no drift
+ *   M76-10  every migration identifier, file name and class name is unique, and each class name carries its file's
+ *           identifier (no two migrations can collide in the ledger). The held alerts index (previously called
+ *           "Migration 76" in planning notes, never committed) must take the next free identifier and number 77.
  *
  * Needs M76_MIGRATION_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -62,6 +67,10 @@ async function main() {
   await at75.query('CREATE SCHEMA public');
   await at75.runMigrations({ transaction: 'each' });
   const legacy = ['onboarding', 'active', 'inactive', 'suspended'];
+  /** What Migration 76 makes of a pre-existing company, from its legacy status. */
+  const expectedAfter76 = (status: string) => (['inactive', 'suspended'].includes(status)
+    ? ['suspended', `Carried over from the company's previous status (${status}) when S4 introduced company verification. Contact S4 to have it reviewed.`, null]
+    : ['approved', null, null]);
   for (const [i, status] of legacy.entries()) {
     const [u] = await at75.query(`INSERT INTO users (email,"passwordHash",role,status,"isEmailVerified") VALUES ($1,'x','company_admin','active',true) RETURNING id`,
       [`m76.owner${i}@example.invalid`]);
@@ -115,9 +124,9 @@ async function main() {
       assert.equal((await ledger()).length, 76);
     });
 
-    await test('M76-02-EXISTING-COMPANIES-APPROVED', async () => {
+    await test('M76-02-EXISTING-COMPANIES-MAPPED', async () => {
       const rows = await q(`SELECT "verificationStatus" s, "verificationNote" n, "verificationDecidedAt" d FROM companies ORDER BY id`);
-      assert.deepEqual(rows.map((r: any) => [r.s, r.n, r.d]), legacy.map(() => ['approved', null, null]));
+      assert.deepEqual(rows.map((r: any) => [r.s, r.n, r.d]), legacy.map(expectedAfter76));
       assert.deepEqual(await hashAll(), rows75, 'no other value of any row changed');
     });
 
@@ -155,8 +164,8 @@ async function main() {
       assert.deepEqual(await schema(), schema75, 'exactly the schema at 75');
       assert.deepEqual(await hashAll(), rows75, 'every row as it was at 75');
       await ds.runMigrations({ transaction: 'each' });
-      assert.deepEqual((await q(`SELECT "verificationStatus" s FROM companies ORDER BY id`)).map((r: any) => r.s), legacy.map(() => 'approved'),
-        'up() again is the same backfill: companies that exist are approved');
+      assert.deepEqual((await q(`SELECT "verificationStatus" s, "verificationNote" n, "verificationDecidedAt" d FROM companies ORDER BY id`))
+        .map((r: any) => [r.s, r.n, r.d]), legacy.map(expectedAfter76), 'up() again is the same backfill from the untouched legacy status');
     });
 
     await test('M76-07-NO-SEMANTIC-DRIFT', async () => {
@@ -184,6 +193,43 @@ async function main() {
   } finally {
     await ds.destroy();
   }
+
+  await test('M76-09-FRESH-DATABASE', async () => {
+    const fresh = source(1720900000023, appEntities);
+    await fresh.initialize();
+    try {
+      await fresh.query('DROP SCHEMA public CASCADE');
+      await fresh.query('CREATE SCHEMA public');
+      const applied = await fresh.runMigrations({ transaction: 'each' });
+      assert.equal(applied.length, 76, 'all 76 migrations apply to an empty database');
+      assert.equal(applied.at(-1)?.name, MIGRATION_76);
+      assert.equal(Number((await fresh.query('SELECT count(*) n FROM companies'))[0].n), 0, 'no company is invented');
+      const [col] = await fresh.query(`SELECT column_default d FROM information_schema.columns WHERE table_name = 'companies' AND column_name = 'verificationStatus'`);
+      assert.equal(col.d, `'pending_verification'::${ENUM}`);
+      const drift = (await fresh.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query)
+        .filter((x) => /companies/.test(x) && NEW_COLUMNS.some((c) => x.includes(`"${c}"`)) || x.includes(ENUM));
+      assert.deepEqual(drift, []);
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
+  await test('M76-10-UNIQUE-IDENTIFIERS-AND-NAMES', async () => {
+    const ids = allFiles.map((f) => f.split('-')[0]);
+    assert.equal(new Set(ids).size, ids.length, 'identifiers unique');
+    assert.equal(new Set(allFiles.map((f) => f.replace(/^\d+-/, ''))).size, allFiles.length, 'file names unique');
+    const classes = allFiles.map((f) => {
+      const text = fs.readFileSync(path.join(migrationsDir, f), 'utf8');
+      const cls = /export class (\w+)/.exec(text)?.[1];
+      const name = /^  (?:public )?name = '([^']+)';/m.exec(text)?.[1];
+      assert.ok(cls, `${f}: has a class`);
+      assert.ok(cls!.endsWith(f.split('-')[0]), `${f}: class ${cls} carries the file identifier`);
+      if (name) assert.equal(name, cls, `${f}: name matches the class`);
+      return cls!;
+    });
+    assert.equal(new Set(classes).size, classes.length, 'class names unique (the ledger key)');
+    assert.ok(ids.every((id, i) => i === 0 || Number(id) > Number(ids[i - 1])), 'identifiers strictly increase in file order');
+  });
 
   console.log(JSON.stringify({ event: 'm76_migration_certified', passed, failed: failures.length }));
   if (failures.length) {

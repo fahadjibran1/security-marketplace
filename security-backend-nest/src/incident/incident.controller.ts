@@ -10,6 +10,7 @@ import { CreateIncidentDto } from './dto/create-incident.dto';
 import { UpdateIncidentStatusDto } from './dto/update-incident-status.dto';
 import { INCIDENT_RESOLUTION_REASONS } from '../safety-alert/resolution-reasons';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('incidents')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -40,6 +41,7 @@ export class IncidentController {
 
   @Patch(':id/status')
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SAFETY)
   updateStatus(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

@@ -9,6 +9,7 @@ import { UpdateCompanyGuardDto } from './dto/update-company-guard.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('company-guards')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -40,6 +41,7 @@ export class CompanyGuardController {
    */
   @Post()
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.NEW_OPERATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateCompanyGuardDto) {
     if (user.role === UserRole.ADMIN) {
       return this.companyGuardService.createForUser(user, dto);
@@ -53,6 +55,7 @@ export class CompanyGuardController {
    */
   @Patch(':id')
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   updateStatus(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

@@ -35,7 +35,20 @@ Only deploy a commit that has:
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
 - `TRUST_PROXY=1` behind the single Render edge-proxy hop. Do not use `true`, which trusts arbitrary forwarding chains.
 - Authentication throttling uses the API instance's in-memory store. Keep `numInstances: 1` for the pilot; multi-instance deployment requires a distributed/shared rate-limit store.
-- The client IP (authentication limiter, audit records) is Express's `req.ip` under `TRUST_PROXY` (`src/common/http/client-ip.ts`): the address the trusted edge proxy appended to `X-Forwarded-For`, never the client-supplied first entry, which anyone can forge (SEC-PUBLIC-02). Sign-in also has a per-account limit (10 attempts per 15 minutes per email) that holds however many addresses are used. Before any change to the proxy chain (for example a CDN or WAF in front of Render), confirm on staging which address `req.ip` resolves to and set `TRUST_PROXY` to the exact number of trusted hops; a hop count that is too high trusts forged entries, one that is too low puts every client in one shared bucket.
+- The client IP (authentication limiter, audit records) is Express's `req.ip` under `TRUST_PROXY` (`src/common/http/client-ip.ts`): the address the trusted edge proxy appended to `X-Forwarded-For`, never the client-supplied first entry, which anyone can forge (SEC-PUBLIC-02).
+- Sign-in limits (`src/auth/login-attempt-limiter.ts`) count FAILED sign-ins only, per 15 minutes: 5 per (account, client IP), 30 per client IP, and 10 per account across all IPs. When the account-wide limit trips, only IPs that have not signed in to that account successfully in the last 30 days are refused, so an attacker cannot lock a user out from where they normally sign in; a completed password reset clears the account. The refusal is the same neutral `429` for existing and non-existent accounts. Separately, the per-IP request cap on `/auth/login` and `/auth/client-login` is 30 a minute, so many users behind one office or carrier address can sign in together.
+
+### Client IP verification gate (before relying on the sign-in limits; repeat after any proxy, CDN or WAF change)
+
+The hop count Render puts in front of the API has not been verified from documentation (community reports differ on whether a Cloudflare layer adds a second hop). It must be measured on staging with the deployed build, not assumed:
+
+1. Sign in to the staging portal as the platform administrator and call `GET /admin/diagnostics/client-ip` (admin-only, read-only) from a network whose public IP you know (check it at any "what is my IP" page).
+2. PASS when `resolvedClientIp` equals your public IP. Record `trustProxy`, `forwardedForEntries` and `cdnHeadersPresent` in the release record.
+3. Repeat from a second network (for example a phone on mobile data): `resolvedClientIp` must change to that network's IP. If both networks show the same address, or an address that is not yours (a Render or Cloudflare edge address), the hop count is too LOW: every client shares one bucket and 30 failed sign-ins anywhere would hold sign-in for everyone. Increase `TRUST_PROXY` by the number of extra trusted hops and repeat from step 1.
+4. Send the same request with a forged header, `X-Forwarded-For: 203.0.113.99`: `resolvedClientIp` must still be your real IP. If it shows `203.0.113.99`, the hop count is too HIGH (forged entries are trusted): lower it and repeat.
+5. Production: repeat steps 1–4 once against production after the release, as the platform administrator, before announcing public sign-up.
+
+Until this gate has passed, treat the per-IP limits and the known-IP exemption as unverified. The 10-failure account-wide limit itself holds whatever the client IP resolves to.
 
 Never place production secrets in GitHub, Blueprint files, screenshots or support tickets.
 

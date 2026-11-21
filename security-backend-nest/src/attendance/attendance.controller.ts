@@ -10,6 +10,7 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { AttendanceAuthorisationDto, CorrectAttendanceDto, ManualAttendanceDto } from './dto/manual-attendance.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('attendance')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -63,6 +64,7 @@ export class AttendanceController {
   @Post('manual/book-on')
   @UseGuards(RolesGuard)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   manualBookOn(@CurrentUser() user: JwtPayload, @Body() dto: ManualAttendanceDto) {
     return this.manualAttendanceService.bookOn(user, dto);
   }
@@ -70,6 +72,7 @@ export class AttendanceController {
   @Post('manual/book-off')
   @UseGuards(RolesGuard)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   manualBookOff(@CurrentUser() user: JwtPayload, @Body() dto: ManualAttendanceDto) {
     return this.manualAttendanceService.bookOff(user, dto);
   }
@@ -77,6 +80,7 @@ export class AttendanceController {
   @Post('events/:id/corrections')
   @UseGuards(RolesGuard)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   correct(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: CorrectAttendanceDto) {
     return this.manualAttendanceService.correct(user, id, dto);
   }
@@ -92,6 +96,7 @@ export class AttendanceController {
   @Put('control-room/:userId')
   @UseGuards(RolesGuard)
   @Roles(...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   setControlRoomAuthorisation(
     @CurrentUser() user: JwtPayload,
     @Param('userId', ParseIntPipe) userId: number,

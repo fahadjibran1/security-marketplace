@@ -19,6 +19,10 @@
  *            --recover-logins boots the app; no in-process timer (incl. amendment expiry) runs; the report tolerates 63
  *   SEED-13  the recovery allowlist is the 3 UAT accounts plus at most the approved platform administrator
  *            (uat-s4-admin@example.com, admin role); any other user is refused; only the 3 UAT accounts are reset
+ *   SEED-15  the synthetic companies are approved (audited, as the CLI-created platform administrator) before any
+ *            operational setup; a missing administrator stops the run before anything is written
+ *   SEED-15  the synthetic companies are approved (audited, as the CLI-created platform administrator) before any
+ *            operational setup; a missing administrator stops the run before anything is written
  *   SEED-11  --recover-logins touches only the 3 fictional accounts, only through the product's reset workflow,
  *            saves each login before the next step and proves it on the deployed staging API
  */
@@ -354,6 +358,26 @@ test('SEED-14-COMPANY-B-IS-ONE-APPROVED-OWNER-ADDED-THROUGH-THE-PRODUCT-ROUTES-O
   assert.match(code, /path\.join\(SECRETS, 'staging-patrol-probe\.env'\)/);
   const main = code.slice(code.indexOf('if (addCompanyB) {'));
   assert.ok(main.indexOf('return;') < main.indexOf('await seed(t)'), 'the mode returns before the seed path');
+});
+
+test('SEED-15-THE-SYNTHETIC-COMPANIES-ARE-APPROVED-BEFORE-ANY-OPERATIONAL-SETUP', () => {
+  const code = source.replace(/\r\n/g, '\n');
+  // The decision goes through the product's own audited service, as the CLI-created platform administrator.
+  const helper = code.slice(code.indexOf('async function approveSyntheticCompany'), code.indexOf('async function approveSyntheticCompany') + 600);
+  assert.match(helper, /app\.get\(CompanyVerificationService\)\.decide\(\{ sub: adminId, role: 'admin' \}/);
+  assert.doesNotMatch(code, /UPDATE\s+"?companies"?\s+SET\s+"?verificationStatus/i, 'never a direct database approval');
+  assert.match(code, /role = 'admin'/);
+  assert.match(code, /UAT_PLATFORM_ADMIN_EMAIL\]\)/, 'only the approved platform administrator decides');
+  // seed(): administrator found before anything is written; approval before the first operational request.
+  const seedStart = code.indexOf('async function seed(');
+  const seedBody = code.slice(seedStart, code.indexOf('\nasync function', seedStart + 10));
+  const at = (s: string) => { const i = seedBody.indexOf(s); assert.ok(i >= 0, `seed(): ${s}`); return i; };
+  assert.ok(at('await platformAdminId(app)') < at('await auth.register('), 'the administrator is checked before the owner is registered');
+  assert.ok(at('await approveSyntheticCompany(app, adminId, companyId)') < at("api('POST', '/clients'"), 'approved before clients and sites');
+  // companyB(): the same.
+  const bBody = code.slice(code.indexOf('async function companyB('), code.indexOf('async function report('));
+  assert.ok(bBody.indexOf('await platformAdminId(app)') >= 0 && bBody.indexOf('await platformAdminId(app)') < bBody.indexOf("'/auth/register'"));
+  assert.match(bBody, /await approveSyntheticCompany\(app, adminId, companyBId\)/);
 });
 
 queue.then(

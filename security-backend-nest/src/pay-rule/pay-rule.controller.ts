@@ -9,6 +9,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES } from '../user/entities/user.e
 import { UpsertPayRuleConfigDto } from './dto/upsert-pay-rule-config.dto';
 import { PayRuleService } from './pay-rule.service';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('pay-rules')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -24,12 +25,14 @@ export class PayRuleController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   create(@CurrentUser() user: JwtPayload, @Body() dto: UpsertPayRuleConfigDto) {
     return this.payRuleService.upsertForCompanyUser(user.sub, user.role, dto);
   }
 
   @Put()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   update(@CurrentUser() user: JwtPayload, @Body() dto: UpsertPayRuleConfigDto) {
     return this.payRuleService.upsertForCompanyUser(user.sub, user.role, dto);
   }

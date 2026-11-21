@@ -9,6 +9,7 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES } from '../user/entities/user.e
 import { CreatePayrollBatchDto } from './dto/create-payroll-batch.dto';
 import { PayrollBatchService } from './payroll-batch.service';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('payroll-batches')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -18,6 +19,7 @@ export class PayrollBatchController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreatePayrollBatchDto) {
     return this.payrollBatchService.createForCompany(user.sub, user.role, dto);
   }
@@ -36,12 +38,14 @@ export class PayrollBatchController {
 
   @Patch(':id/finalise')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   finalise(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.payrollBatchService.finaliseForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/pay')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   pay(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.payrollBatchService.payForCompany(user.sub, user.role, id);
   }

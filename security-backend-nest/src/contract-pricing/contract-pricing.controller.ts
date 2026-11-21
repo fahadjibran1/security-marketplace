@@ -11,6 +11,7 @@ import { ContractPricingQueryDto } from './dto/contract-pricing-query.dto';
 import { CreateContractPricingRuleDto } from './dto/create-contract-pricing-rule.dto';
 import { UpdateContractPricingRuleDto } from './dto/update-contract-pricing-rule.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('contract-pricing')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -38,12 +39,14 @@ export class ContractPricingController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateContractPricingRuleDto) {
     return this.contractPricingService.createForCompany(user.sub, user.role, dto);
   }
 
   @Patch(':id')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -54,6 +57,7 @@ export class ContractPricingController {
 
   @Patch(':id/deactivate')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   deactivate(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.contractPricingService.deactivateForCompany(user.sub, user.role, id);
   }

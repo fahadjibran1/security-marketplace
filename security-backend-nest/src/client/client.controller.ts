@@ -9,6 +9,7 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('clients')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -30,12 +31,14 @@ export class ClientController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateClientDto) {
     return this.clientService.createForCompanyUser(user.sub, user.role, dto);
   }
 
   @Patch(':id')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

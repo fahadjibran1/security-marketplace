@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { AccountThrottle, AuthThrottlerGuard } from './auth-throttler.guard';
+import { AuthThrottlerGuard, LOGIN_REQUESTS_PER_MINUTE } from './auth-throttler.guard';
+import { ClientLoginAttemptInterceptor, UserLoginAttemptInterceptor } from './login-attempt-limiter';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -10,7 +11,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from './types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
-import { AllowUnapprovedCompany } from '../company/company-approval.interceptor';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('auth')
 export class AuthController {
@@ -19,14 +20,16 @@ export class AuthController {
   @Post('register')
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
 
   @Post('login')
   @UseGuards(AuthThrottlerGuard)
-  @Throttle({ default: { limit: 6, ttl: 60_000 } })
-  @AccountThrottle()
+  @Throttle({ default: { limit: LOGIN_REQUESTS_PER_MINUTE, ttl: 60_000 } })
+  @UseInterceptors(UserLoginAttemptInterceptor)
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   login(@Body() dto: LoginDto, @Headers(MOBILE_CLIENT_HEADER) client?: string) {
     // Only the mobile app is handed a renewable session. The marker is a header so an older
     // deployment, which validates bodies with forbidNonWhitelisted, still accepts this login.
@@ -42,6 +45,7 @@ export class AuthController {
   @Post('refresh')
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 12, ttl: 60_000 } })
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   refresh(@Body() dto: RefreshDto) {
     // An absent token falls through to the same generic 401 as an invalid one.
     return this.authService.refresh(dto.refreshToken ?? '');
@@ -53,15 +57,16 @@ export class AuthController {
    */
   @Post('logout')
   @UseGuards(JwtAuthGuard)
-  @AllowUnapprovedCompany()
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   logout(@CurrentUser() user: JwtPayload, @Body() dto: RefreshDto) {
     return this.authService.logout(user.sub, dto.refreshToken);
   }
 
   @Post('client-login')
   @UseGuards(AuthThrottlerGuard)
-  @Throttle({ default: { limit: 6, ttl: 60_000 } })
-  @AccountThrottle()
+  @Throttle({ default: { limit: LOGIN_REQUESTS_PER_MINUTE, ttl: 60_000 } })
+  @UseInterceptors(ClientLoginAttemptInterceptor)
+  @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   clientLogin(@Body() dto: LoginDto) {
     return this.authService.clientLogin(dto);
   }

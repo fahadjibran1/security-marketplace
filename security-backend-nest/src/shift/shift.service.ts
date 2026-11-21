@@ -58,6 +58,7 @@ import { lockGuardsForAssignment, returningRows } from '../operations/advisory-l
 import { assertNoShiftClash } from '../availability/shift-clash';
 import { shiftPatrolRequirementSetting, shiftPatrolRequirements, storedPatrolRequirement } from '../patrol/patrol-shift-requirement';
 import { SHIFT_PATROL_REQUIREMENT_CHANGED_ACTION } from '../patrol/patrol-shift-windows';
+import { isCompanyApproved } from '../company/company-verification';
 import {
   COMPANY_FORBIDDEN_TRANSITIONS,
   DELETABLE_STATUSES,
@@ -587,6 +588,16 @@ export class ShiftService {
 
     // On acceptance, re-verify current eligibility
     if (dto.response === 'accepted') {
+      // SEC-PUBLIC-03: accepting an offer commits the Guard to new work, which only an APPROVED company may take on
+      // (an unaccepted offer is not yet an existing obligation). Declining is always possible.
+      if (!isCompanyApproved(preCheck.company)) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: 'Conflict',
+          code: 'SHIFT_OFFER_UNAVAILABLE',
+          message: 'This shift offer can no longer be accepted. You can decline it.',
+        });
+      }
       await this.companyGuardService.ensureActiveRelationship(preCheck.company.id, guard.id);
       await this.availabilityService.assertGuardCanTakeShift(
         preCheck.company.id, guard.id, preCheck.start, preCheck.end, id,
@@ -1246,12 +1257,46 @@ export class ShiftService {
         throw replaceGuardError(HttpStatus.CONFLICT, E.CHANGED, 'This shift changed while the Guard was being replaced. Reload it and try again.');
       }
 
-      // The draft timesheet follows the shift to its new Guard (non-draft ones were refused above).
+      // The draft timesheet follows the shift to its new Guard (non-draft ones were refused above). What the outgoing
+      // Guard typed into it (note, claimed times and minutes) is theirs, not the replacement's: it is reset to the
+      // values a new draft starts with. No attendance exists here (refused above), so nothing verified is lost. When the
+      // outgoing Guard had entered anything, what was cleared is kept in the company's audit log (company and admin
+      // readers only; the action is not one a Guard's timesheet history shows, so the replacement never sees it).
       const replacement = await manager.getRepository(GuardProfile).findOneOrFail({ where: { id: replacementGuardId } });
       const timesheetRepo = manager.getRepository(Timesheet);
       const timesheets = await timesheetRepo.find({ where: { shift: { id: shift.id } }, relations: ['shift', 'guard', 'company'] });
       for (const timesheet of timesheets) {
+        const cleared = {
+          guardId: timesheet.guard?.id ?? outgoingGuardId,
+          guardNote: timesheet.guardNote ?? null,
+          hoursWorked: Number(timesheet.hoursWorked ?? 0),
+          workedMinutes: Number(timesheet.workedMinutes ?? 0),
+          breakMinutes: Number(timesheet.breakMinutes ?? 0),
+          roundedMinutes: Number(timesheet.roundedMinutes ?? 0),
+          actualCheckInAt: timesheet.actualCheckInAt ?? null,
+          actualCheckOutAt: timesheet.actualCheckOutAt ?? null,
+        };
+        const hadEntries = cleared.guardNote !== null || cleared.hoursWorked !== 0 || cleared.workedMinutes !== 0
+          || cleared.breakMinutes !== 0 || cleared.roundedMinutes !== 0 || cleared.actualCheckInAt !== null || cleared.actualCheckOutAt !== null;
+        if (hadEntries) {
+          await this.auditLogService.logInTransaction(manager, {
+            company: { id: actorCompany.id },
+            user: { id: user.sub },
+            action: 'timesheet.draft_reset_on_replace_guard',
+            entityType: 'timesheet',
+            entityId: timesheet.id,
+            beforeData: cleared,
+            afterData: { guardId: replacementGuardId, shiftId: shift.id, replacementAuditId: audit.id },
+          });
+        }
         timesheet.guard = replacement;
+        timesheet.guardNote = null;
+        timesheet.hoursWorked = 0;
+        timesheet.workedMinutes = 0;
+        timesheet.breakMinutes = 0;
+        timesheet.roundedMinutes = 0;
+        timesheet.actualCheckInAt = null;
+        timesheet.actualCheckOutAt = null;
         await timesheetRepo.save(timesheet);
       }
       if (!timesheets.length) {

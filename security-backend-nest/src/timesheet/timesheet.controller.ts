@@ -9,6 +9,7 @@ import { UpdateTimesheetPayrollDto } from './dto/update-timesheet-payroll.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('timesheets')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -33,6 +34,7 @@ export class TimesheetController {
 
   @Patch('company/payroll')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   updatePayrollForCompany(
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTimesheetPayrollDto,
@@ -62,6 +64,7 @@ export class TimesheetController {
 
   @Patch(':id')
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

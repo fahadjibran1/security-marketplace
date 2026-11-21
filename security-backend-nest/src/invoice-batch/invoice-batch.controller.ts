@@ -10,6 +10,7 @@ import { CreateInvoiceBatchDto } from './dto/create-invoice-batch.dto';
 import { CreatePaymentRecordDto } from './dto/create-payment-record.dto';
 import { InvoiceBatchService } from './invoice-batch.service';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @Controller('invoice-batches')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -19,6 +20,7 @@ export class InvoiceBatchController {
 
   @Post()
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateInvoiceBatchDto) {
     return this.invoiceBatchService.createForCompany(user.sub, user.role, dto);
   }
@@ -43,24 +45,28 @@ export class InvoiceBatchController {
 
   @Patch(':id/finalise')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   finalise(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.invoiceBatchService.finaliseForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/issue')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   issue(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.invoiceBatchService.issueForCompany(user.sub, user.role, id);
   }
 
   @Patch(':id/pay')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   pay(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.invoiceBatchService.payForCompany(user.sub, user.role, id);
   }
 
   @Post(':id/payments')
   @Roles(...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   recordPayment(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

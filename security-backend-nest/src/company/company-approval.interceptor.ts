@@ -1,67 +1,52 @@
-import {
-  CallHandler,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  NestInterceptor,
-  SetMetadata,
-} from '@nestjs/common';
+import { CallHandler, ExecutionContext, ForbiddenException, Injectable, NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { CompanyMembershipService } from '../company-membership/company-membership.service';
+import { CompanyService } from './company.service';
 import { isCompanyRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
-import {
-  COMPANY_NOT_APPROVED_CODE,
-  COMPANY_VERIFICATION_STATUSES,
-  CompanyVerificationStatus,
-  isCompanyApproved,
-} from './company-verification';
-
-export const ALLOW_UNAPPROVED_COMPANY_KEY = 's4:allow-unapproved-company';
-
-/**
- * Marks a mutating company route a company that is not APPROVED may still use, and in which verification states. With
- * no argument, every state. Only for account housekeeping and safety (sign out, delete the account, correct the details
- * S4 is verifying, mark a notification read, act on a Guard's safety alert); never for an operational action.
- */
-export const AllowUnapprovedCompany = (...statuses: CompanyVerificationStatus[]) =>
-  SetMetadata(ALLOW_UNAPPROVED_COMPANY_KEY, statuses.length ? statuses : COMPANY_VERIFICATION_STATUSES);
+import { COMPANY_NOT_APPROVED_CODE, CompanyVerificationStatus } from './company-verification';
+import { COMPANY_CAPABILITY_KEY, CompanyCapability, companyMay } from './company-capability';
 
 const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 const REFUSAL_MESSAGES: Record<Exclude<CompanyVerificationStatus, CompanyVerificationStatus.APPROVED>, string> = {
   [CompanyVerificationStatus.PENDING_VERIFICATION]:
-    'Your company is awaiting verification by S4. You can sign in and see your verification status; this action becomes available once S4 has approved your company.',
+    'Your company is awaiting verification by S4. You can set up your account in the meantime; this action becomes available once S4 has approved your company.',
   [CompanyVerificationStatus.REJECTED]:
-    'Your company was not approved by S4, so this action is not available. See your verification status for the reason.',
+    'Your company was not approved by S4, so this action is not available. See your verification status for the reason; you can correct your details and ask S4 to reconsider.',
   [CompanyVerificationStatus.SUSPENDED]:
-    'Your company has been suspended by S4, so this action is not available. See your verification status for the reason.',
+    'Your company has been suspended by S4. Existing work, safety alerts and records remain available, but this action is not. See your verification status for the reason.',
 };
 
+/** Most restrictive first: when a user can act for more than one company, the least-trusted one decides. */
+const RESTRICTIVENESS: CompanyVerificationStatus[] = [
+  CompanyVerificationStatus.REJECTED,
+  CompanyVerificationStatus.SUSPENDED,
+  CompanyVerificationStatus.PENDING_VERIFICATION,
+  CompanyVerificationStatus.APPROVED,
+];
+
 /**
- * SEC-PUBLIC-03: only an APPROVED company may perform operational actions.
+ * SEC-PUBLIC-03: enforces the company capability policy (company-capability.ts) on every route.
  *
- * Registered globally (APP_INTERCEPTOR), so it covers every route, including routes added later: every mutating request
- * (anything but GET / HEAD / OPTIONS) made by a company user (company, company_admin, company_staff) is refused with
- * 403 COMPANY_NOT_APPROVED unless the caller's company is APPROVED or the route opts in with @AllowUnapprovedCompany.
- * Interceptors run after the route's guards, so the caller is already authenticated (JwtAuthGuard) and authorised by
- * role (RolesGuard) when this runs.
+ * Registered globally (APP_INTERCEPTOR), it sees every request after the route's guards (so the caller is authenticated
+ * and authorised by role). For a company user (company, company_admin, company_staff) making a mutating request, the
+ * route's capability (@CompanyCapabilityRequired, NEW_OPERATIONS when absent) must be granted to the verification state
+ * of EVERY company the user can act for: the company resolveCompanyContext resolves (the one nearly every route acts on)
+ * AND the company the user owns (the direct owner lookup some routes use, e.g. sites). The most restrictive state wins,
+ * so being active in an approved company never unlocks a pending one, whichever lookup a route uses.
  *
- * Reads stay open: a pending or rejected company has nothing to read but its own account and verification status, and a
- * suspended company keeps read access to its own records (it cannot change them).
- *
- * The company is the one the route itself would act on (CompanyMembershipService.resolveCompanyContext, the canonical
- * resolution). When it cannot be resolved (no company, a suspended or revoked membership), the request continues so the
- * route answers exactly as before; this interceptor only ever adds refusals.
- *
- * Guards, clients and platform administrators are not affected.
+ * When no company can be resolved at all, the request continues and the route answers exactly as before (it fails the
+ * same way); this interceptor only ever adds refusals. Reads are never refused. Guards, clients and platform
+ * administrators are not affected.
  */
 @Injectable()
 export class CompanyApprovalInterceptor implements NestInterceptor {
   constructor(
     private readonly reflector: Reflector,
     private readonly membershipService: CompanyMembershipService,
+    private readonly companyService: CompanyService,
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
@@ -71,27 +56,36 @@ export class CompanyApprovalInterceptor implements NestInterceptor {
     if (!user || !isCompanyRole(user.role)) return next.handle();
     if (READ_ONLY_METHODS.has((request.method ?? 'GET').toUpperCase())) return next.handle();
 
-    let status: CompanyVerificationStatus;
-    try {
-      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role);
-      if (isCompanyApproved(company)) return next.handle();
-      status = company.verificationStatus;
-    } catch {
-      return next.handle();
-    }
+    const status = await this.effectiveStatus(user);
+    if (status === null || status === CompanyVerificationStatus.APPROVED) return next.handle();
 
-    const allowed = this.reflector.getAllAndOverride<readonly CompanyVerificationStatus[] | undefined>(
-      ALLOW_UNAPPROVED_COMPANY_KEY,
-      [context.getHandler(), context.getClass()],
-    );
-    if (allowed?.includes(status)) return next.handle();
+    const capability =
+      this.reflector.getAllAndOverride<CompanyCapability | undefined>(COMPANY_CAPABILITY_KEY, [context.getHandler(), context.getClass()]) ??
+      CompanyCapability.NEW_OPERATIONS;
+    if (companyMay(status, capability)) return next.handle();
 
     throw new ForbiddenException({
       statusCode: 403,
       error: 'Forbidden',
       code: COMPANY_NOT_APPROVED_CODE,
       verificationStatus: status,
-      message: REFUSAL_MESSAGES[status as keyof typeof REFUSAL_MESSAGES] ?? REFUSAL_MESSAGES[CompanyVerificationStatus.PENDING_VERIFICATION],
+      capability,
+      message: REFUSAL_MESSAGES[status as keyof typeof REFUSAL_MESSAGES],
     });
+  }
+
+  /** The most restrictive verification state among the companies this user can act for; null when there are none. */
+  private async effectiveStatus(user: JwtPayload): Promise<CompanyVerificationStatus | null> {
+    const statuses: CompanyVerificationStatus[] = [];
+    try {
+      const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role);
+      if (company?.verificationStatus) statuses.push(company.verificationStatus);
+    } catch {
+      // no resolvable company (or a suspended / revoked membership): the route itself refuses, as before
+    }
+    const owned = await this.companyService.findByUserId(user.sub).catch(() => null);
+    if (owned?.verificationStatus) statuses.push(owned.verificationStatus);
+    if (!statuses.length) return null;
+    return RESTRICTIVENESS.find((s) => statuses.includes(s)) ?? null;
   }
 }

@@ -1,19 +1,17 @@
-import { createHash } from 'node:crypto';
-import { ExecutionContext, Injectable, SetMetadata } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { resolveClientIp } from '../common/http/client-ip';
 
 /**
- * Rate limiting for unauthenticated and abuse-sensitive routes.
+ * Request-rate limiting for unauthenticated and abuse-sensitive routes, per client IP.
  *
- * Two independent limits, both of which must pass:
+ * The IP is Express's trust-proxy-aware `req.ip` (resolveClientIp), never the client-settable first X-Forwarded-For
+ * entry (SEC-PUBLIC-02: rotating that value used to give every request a fresh bucket, so the limit never applied).
  *
- *  - `default`, per client IP. The IP is Express's trust-proxy-aware `req.ip` (resolveClientIp), never the
- *    client-settable first X-Forwarded-For entry (SEC-PUBLIC-02: rotating that value used to give every request a
- *    fresh bucket, so the limit never applied).
- *  - `account`, per target account (the normalised email in the body), only on routes marked @AccountThrottle(). It
- *    holds however many addresses an attacker controls: attempts against one account are capped wherever they come
- *    from. The key is a SHA-256 of the email, so the throttler's storage never holds an address.
+ * This is only a request-rate cap. Password guessing is limited separately, by FAILED sign-ins, in
+ * LoginAttemptLimiter (per account and source, per source, and per account with a known-source exemption), which a
+ * shared office or mobile-carrier IP does not trip by signing in successfully, and which cannot be used to lock a user
+ * out from where they normally sign in.
  */
 @Injectable()
 export class AuthThrottlerGuard extends ThrottlerGuard {
@@ -22,32 +20,11 @@ export class AuthThrottlerGuard extends ThrottlerGuard {
   }
 }
 
-export const ACCOUNT_THROTTLE_KEY = 's4:account-throttle';
-/** Applies the per-account limit (the `account` throttler) to a route whose body carries the account email. */
-export const AccountThrottle = () => SetMetadata(ACCOUNT_THROTTLE_KEY, true);
-
-/** Every sign-in attempt for one account counts, failed or not: 10 per 15 minutes. */
-export const ACCOUNT_THROTTLE_LIMIT = 10;
-export const ACCOUNT_THROTTLE_TTL_MS = 15 * 60_000;
-
-export function accountThrottleKey(req: Record<string, any>): string {
-  const email = typeof req?.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  return `account:${createHash('sha256').update(email).digest('hex')}`;
-}
-
-/** The `account` throttler applies only to routes that opt in with @AccountThrottle(). */
-export function skipUnlessAccountThrottled(context: ExecutionContext): boolean {
-  return Reflect.getMetadata(ACCOUNT_THROTTLE_KEY, context.getHandler()) !== true;
-}
+/**
+ * Sign-in requests per client IP per minute. Generous on purpose: many legitimate users can share one public IP (an
+ * office, a site's guest Wi-Fi, a mobile carrier's NAT), and guessing is held by the failure limits, not by this cap.
+ */
+export const LOGIN_REQUESTS_PER_MINUTE = 30;
 
 /** The throttler definitions the module that registers AuthThrottlerGuard uses (ThrottlerModule.forRoot). */
-export const AUTH_THROTTLERS = [
-  { name: 'default', ttl: 60_000, limit: 6 },
-  {
-    name: 'account',
-    ttl: ACCOUNT_THROTTLE_TTL_MS,
-    limit: ACCOUNT_THROTTLE_LIMIT,
-    getTracker: (req: Record<string, any>) => accountThrottleKey(req),
-    skipIf: skipUnlessAccountThrottled,
-  },
-];
+export const AUTH_THROTTLERS = [{ name: 'default', ttl: 60_000, limit: 6 }];

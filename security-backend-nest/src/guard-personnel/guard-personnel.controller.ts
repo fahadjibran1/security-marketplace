@@ -34,6 +34,7 @@ import { UpdateGuardBankDetailsDto } from './dto/update-guard-bank-details.dto';
 import { PayrollAdminService } from './payroll-admin.service';
 import { CreatePayrollAdminDto } from './dto/create-payroll-admin.dto';
 import { UpdatePayrollAdminDto } from './dto/update-payroll-admin.dto';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 // P1A access model:
 //   GUARD        — read and update own identity; reveal own data (audited)
@@ -313,6 +314,7 @@ export class GuardPersonnelController {
 
   @Patch('company/guard/:guardId/employment')
   @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   upsertGuardEmploymentForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
@@ -409,6 +411,7 @@ export class GuardPersonnelController {
 
   @Post('company/guard/:guardId/payroll-admin')
   @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   createGuardPayrollAdmin(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,
@@ -432,6 +435,7 @@ export class GuardPersonnelController {
 
   @Patch('company/guard/:guardId/payroll-admin')
   @Roles(UserRole.COMPANY, UserRole.COMPANY_ADMIN, UserRole.COMPANY_STAFF)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   updateGuardPayrollAdminForCompany(
     @CurrentUser() user: JwtPayload,
     @Param('guardId', ParseIntPipe) guardId: number,

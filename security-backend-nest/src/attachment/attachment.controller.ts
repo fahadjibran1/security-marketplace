@@ -8,6 +8,7 @@ import { AttachmentService } from './attachment.service';
 import { CreateAttachmentDto } from './dto/create-attachment.dto';
 import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('attachments')
@@ -29,6 +30,7 @@ export class AttachmentController {
 
   @Post()
   @Roles(UserRole.ADMIN, UserRole.GUARD, ...COMPANY_ADMIN_ROLES)
+  @CompanyCapabilityRequired(CompanyCapability.EXISTING_OBLIGATIONS)
   create(
     @Req() req: { user: { sub: number } },
     @Body() dto: CreateAttachmentDto,

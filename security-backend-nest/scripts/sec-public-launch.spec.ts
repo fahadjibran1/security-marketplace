@@ -15,8 +15,12 @@
  *
  * SEC-PUBLIC-03 — company verification
  *   S03-REGISTERS-PENDING   a self-registered company is pending_verification and can sign in and read its own status
- *   S03-PENDING-REFUSED     pending: creating a client, site, job or Guard invitation is 403 COMPANY_NOT_APPROVED, and
- *                           nothing is created
+ *   S03-PENDING-REFUSED     pending: new operations (job, Guard invitation, shift, rota slot) are 403 COMPANY_NOT_APPROVED
+ *                           with the refused capability, and nothing is created
+ *   S03-PENDING-SETUP       pending: account setup (clients, sites) is allowed by the capability policy (Phase 1
+ *                           refused it too)
+ *   S03-PENDING-TENANT      pending: its draft clients and sites are tenant-scoped; jobs, shifts, invitations, hires and
+ *                           assignments stay refused until approval
  *   S03-PENDING-ALLOWED     pending: correcting its details (PATCH /companies/me) and signing out still work
  *   S03-NO-SELF-APPROVAL    a company cannot set its own verification through PATCH /companies/me
  *   S03-ADMIN-ONLY          company users and Guards cannot reach the verification administration (403)
@@ -28,6 +32,11 @@
  *                           Guard can neither open nor apply for them, and its invitation codes are refused (generic 404)
  *   S03-REINSTATED          approved again: everything returns
  *   S03-UNAPPROVED-JOBS-HIDDEN  a pending company's job (inserted directly) is never shown to a Guard
+ *   S03-RECONSIDERATION     rejected → asks for reconsideration → pending; only from rejected; Guards cannot; audited
+ *   S03-SUSPENDED-SAFETY    suspended: safety and existing-obligation routes pass the policy (a missing record answers
+ *                           404, never COMPANY_NOT_APPROVED); setup and new operations are refused
+ *   S04-GUARD-RESPONSES     a Guard's shifts, timesheets, notifications and assignments never carry the company owner's
+ *                           account, the client's contacts, the billing rate or the margin
  *   S03-AUDIT               every decision is audited as company.verification_changed with before and after
  *   S03-GUARD-REGISTRATION  Guard self-registration is unaffected (no verification step, no screening requirement)
  *
@@ -178,10 +187,16 @@ async function main() {
       job: () => api('POST', '/jobs', s.token, { title: `Static guard ${RUN}`, guardsRequired: 1, hourlyRate: 15 }),
       invitation: () => api('POST', '/company-guards/invitations', s.token, {}),
     });
-    const expectNotApproved = (r: Res, status: string, what: string) => {
+    const expectNotApproved = (r: Res, status: string, what: string, capability?: string) => {
       assert.equal(r.status, 403, `${what}: ${r.status} ${r.text}`);
       assert.equal(r.body.code, 'COMPANY_NOT_APPROVED', what);
       assert.equal(r.body.verificationStatus, status, what);
+      if (capability) assert.equal(r.body.capability, capability, `${what}: capability`);
+    };
+    /** The capability policy let the request through (whatever the route itself then answered). */
+    const expectPolicyAllows = (r: Res, what: string) => {
+      assert.notEqual(r.body?.code, 'COMPANY_NOT_APPROVED', `${what}: refused by the policy: ${r.text}`);
+      assert.ok(r.status < 500, `${what}: ${r.status} ${r.text}`);
     };
     const counts = async (companyId: number) => (await q(
       `SELECT (SELECT count(*) FROM clients WHERE "companyId" = $1)::int AS clients,
@@ -190,13 +205,21 @@ async function main() {
               (SELECT count(*) FROM company_guard_invitations WHERE "companyId" = $1)::int AS invitations`, [companyId]))[0];
 
     const ops = operational(alpha);
-    expectNotApproved(await ops.client(), 'pending_verification', 'pending: create client');
-    expectNotApproved(await ops.job(), 'pending_verification', 'pending: create job');
-    expectNotApproved(await ops.invitation(), 'pending_verification', 'pending: issue invitation');
-    // Site creation resolves the company by a direct owner lookup, not resolveCompanyContext: the global gate still holds.
-    expectNotApproved(await api('POST', '/sites', alpha.token, { name: 'Nope', address: '1 Way' }), 'pending_verification', 'pending: create site');
+    expectNotApproved(await ops.job(), 'pending_verification', 'pending: create job', 'new_operations');
+    expectNotApproved(await ops.invitation(), 'pending_verification', 'pending: issue invitation', 'new_operations');
+    expectNotApproved(await api('POST', '/shifts', alpha.token, { siteName: 'Nope', start: new Date(Date.now() + 864e5).toISOString(),
+      end: new Date(Date.now() + 900e5).toISOString() }), 'pending_verification', 'pending: create shift', 'new_operations');
+    expectNotApproved(await api('POST', '/rota-slots', alpha.token, {}), 'pending_verification', 'pending: create rota slot', 'new_operations');
     assert.deepEqual(await counts(alphaId), { clients: 0, sites: 0, jobs: 0, invitations: 0 }, 'nothing was created');
-    pass('S03-PENDING-REFUSED: pending companies cannot create clients, sites, jobs or invitations; nothing is created');
+    assert.equal(Number((await q(`SELECT count(*) n FROM shifts WHERE "companyId" = $1`, [alphaId]))[0].n), 0, 'no shift was created');
+    pass('S03-PENDING-REFUSED: pending companies cannot publish jobs, invite Guards or create shifts; nothing is created');
+
+    const pendingClient = await api('POST', '/clients', alpha.token, { name: `Setup client ${RUN}` });
+    assert.equal(pendingClient.status, 201, `pending: create client (setup): ${errText(pendingClient)}`);
+    const pendingSite = await api('POST', '/sites', alpha.token, { name: `Setup site ${RUN}`, address: '1 Way', clientId: pendingClient.body.id });
+    assert.equal(pendingSite.status, 201, `pending: create site (setup): ${errText(pendingSite)}`);
+    assert.deepEqual(await counts(alphaId), { clients: 1, sites: 1, jobs: 0, invitations: 0 });
+    pass('S03-PENDING-SETUP: a pending company may set up clients and sites');
 
     const rename = await api('PATCH', '/companies/me', alpha.token, { name: `Alpha ${RUN} Security Limited` });
     assert.equal(rename.status, 200, errText(rename));
@@ -240,7 +263,31 @@ async function main() {
     assert.equal(meRejected.body.verificationNote, 'Companies House number does not match the company name.', 'the company sees the reason');
     expectNotApproved(await ops.job(), 'rejected', 'rejected: create job');
     assert.equal((await api('PATCH', '/companies/me', alpha.token, { companyNumber: '12345678' })).status, 200, 'rejected: may correct details');
+    expectNotApproved(await ops.client(), 'rejected', 'rejected: create client', 'setup');
     pass('S03-REJECTED: a rejected company sees the reason, may correct its details and cannot operate');
+
+    const ownStatus = await api('GET', '/companies/me/verification', alpha.token);
+    assert.equal(ownStatus.status, 200, errText(ownStatus));
+    assert.equal(ownStatus.body.verificationStatus, 'rejected');
+    assert.deepEqual(Object.keys(ownStatus.body).sort(), ['verificationDecidedAt', 'verificationNote', 'verificationStatus'],
+      'only the company\'s own status, S4\'s note to it and the decision time');
+    assert.equal(ownStatus.body.verificationNote, 'Companies House number does not match the company name.');
+    assert.equal((await api('GET', '/companies/me/verification', outsiderGuard.token)).status, 403, 'a Guard cannot read it');
+    assert.equal((await api('POST', '/companies/me/verification/reconsideration', outsiderGuard.token, {})).status, 403, 'a Guard cannot');
+    const reconsider = await api('POST', '/companies/me/verification/reconsideration', alpha.token, { message: 'Companies House number corrected.' });
+    assert.equal(reconsider.status, 200, errText(reconsider));
+    assert.equal(reconsider.body.verificationStatus, 'pending_verification');
+    assert.equal(reconsider.body.verificationNote, null, 'the old reason is cleared from the company record');
+    assert.equal(await verificationOf(alphaId), 'pending_verification');
+    const again = await api('POST', '/companies/me/verification/reconsideration', alpha.token, {});
+    assert.equal(again.status, 403, 'a pending company has nothing to reconsider (the capability is rejected-only)');
+    assert.equal(again.body.capability, 'reconsideration');
+    const [reconAudit] = await q(`SELECT "beforeData", "afterData", "userId" FROM audit_logs WHERE action = 'company.verification_reconsideration_requested' AND "entityId" = $1`, [alphaId]);
+    assert.equal(reconAudit.afterData.message, 'Companies House number corrected.');
+    assert.equal(reconAudit.beforeData.verificationNote, 'Companies House number does not match the company name.', 'the reason is kept in the audit log');
+    assert.equal(Number(reconAudit.userId), alpha.userId);
+    expectNotApproved(await ops.job(), 'pending_verification', 'reconsidering: still cannot operate', 'new_operations');
+    pass('S03-RECONSIDERATION: a rejected company asks for reconsideration and waits as pending; audited');
 
     const approved = await decide(alphaId, 'approved');
     assert.equal(approved.status, 200, errText(approved));
@@ -337,6 +384,10 @@ async function main() {
     assert.equal((await decide(beta.companyId!, 'approved')).status, 200);
     assert.equal((await api('GET', `/jobs/${jobId}`, beta.token)).status, 404, 'another company cannot read the job');
     assert.ok(!(await api('GET', '/jobs', beta.token)).body.some((j: any) => j.id === jobId), 'nor list it');
+    const betaStatus = await api('GET', '/companies/me/verification', beta.token);
+    assert.equal(betaStatus.status, 200, errText(betaStatus));
+    assert.equal(betaStatus.body.verificationStatus, 'approved', 'each company reads only its own verification');
+    assert.ok(!betaStatus.text.includes('Companies House number'), 'never another company\'s note');
     pass('S01-TENANT: another company cannot read or list the job');
 
     const closedJob = await api('POST', '/jobs', alpha.token, { title: `Closed ${RUN}`, guardsRequired: 1, hourlyRate: 14 });
@@ -351,8 +402,8 @@ async function main() {
     assert.equal(suspendNoReason.status, 400);
     const suspended = await decide(alphaId, 'suspended', 'Insurance certificate expired.');
     assert.equal(suspended.status, 200, errText(suspended));
-    expectNotApproved(await ops.job(), 'suspended', 'suspended: create job');
-    expectNotApproved(await ops.client(), 'suspended', 'suspended: create client');
+    expectNotApproved(await ops.job(), 'suspended', 'suspended: create job', 'new_operations');
+    expectNotApproved(await ops.client(), 'suspended', 'suspended: create client', 'setup');
     expectNotApproved(await api('PATCH', '/companies/me', alpha.token, { name: 'Renamed' }), 'suspended', 'suspended: details locked');
     assert.equal((await api('GET', `/jobs/${jobId}`, alpha.token)).status, 200, 'suspended: still reads its own records');
     assert.ok(!(await api('GET', '/jobs', guard.token)).body.some((j: any) => j.company?.id === alphaId), 'hidden from discovery');
@@ -368,6 +419,23 @@ async function main() {
     assert.equal(Number((await q(`SELECT count(*) n FROM company_guards WHERE "companyId" = $1 AND "guardId" = $2`, [alphaId, guard3.guardId]))[0].n), 0);
     pass('S03-SUSPENDED: a suspended company cannot operate; its jobs and invitations are closed to Guards');
 
+    const missing = 2147483000;
+    const probes: Array<[string, string, unknown]> = [
+      ['PATCH', `/alerts/${missing}/ack`, {}],
+      ['PATCH', `/alerts/${missing}/close`, {}],
+      ['PATCH', `/incidents/${missing}/status`, { status: 'resolved' }],
+      ['POST', `/patrols/exceptions/${missing}/acknowledge`, {}],
+      ['POST', '/attendance/manual/book-off', { shiftId: missing }],
+      ['POST', `/shifts/${missing}/reconcile-without-book-off`, {}],
+      ['DELETE', `/rota-slots/${missing}/positions/${missing}`, undefined],
+      ['PATCH', `/timesheets/${missing}`, {}],
+      ['PATCH', `/notifications/${missing}/read`, {}],
+    ];
+    for (const [method, path, body] of probes) expectPolicyAllows(await api(method, path, alpha.token, body), `suspended: ${method} ${path}`);
+    expectNotApproved(await api('POST', '/rota-slots', alpha.token, {}), 'suspended', 'suspended: create rota slot', 'new_operations');
+    expectNotApproved(await api('PUT', '/patrols/policies/default', alpha.token, {}), 'suspended', 'suspended: patrol policy', 'setup');
+    pass('S03-SUSPENDED-SAFETY: a suspended company keeps safety handling and existing obligations, not setup or new work');
+
     const reinstated = await decide(alphaId, 'approved');
     assert.equal(reinstated.status, 200, errText(reinstated));
     assert.equal((await api('GET', `/jobs/${jobId}`, guard3.token)).status, 200);
@@ -375,6 +443,57 @@ async function main() {
     assert.ok(accepted.status === 200 || accepted.status === 201, `accept: ${accepted.status} ${accepted.text}`);
     assert.equal((await ops.job()).status, 201);
     pass('S03-REINSTATED: an approved company operates again and its jobs and invitations return');
+
+    // ── S04: what a Guard is shown of its own work ──
+    // guard3 now works for alpha. A shift at the client's site on the billed job, an invoiced timesheet and a notification
+    // from the company: each loaded entity's eager relations reach the owner account, the client and the billing rate.
+    const start = new Date(Date.now() + 864e5);
+    const [{ id: shiftId }] = await q(
+      `INSERT INTO shifts ("companyId", "guardId", "siteId", "jobId", "siteName", start, "end", status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready') RETURNING id`,
+      [alphaId, guard3.guardId, site.body.id, jobId, `Riverside ${RUN}`, start, new Date(start.getTime() + 8 * 36e5)]);
+    await q(
+      `INSERT INTO timesheets ("shiftId", "guardId", "companyId", "approvalStatus", "hoursWorked", "billingRateSnapshot",
+         "clientBilledHoursSnapshot", "billingStatus")
+       VALUES ($1, $2, $3, 'approved', 8, $4, 8, 'invoiced')`, [shiftId, guard3.guardId, alphaId, SECRET.billingRate]);
+    await q(`INSERT INTO notifications ("userId", "companyId", type, title, message) VALUES ($1, $2, 'job_assigned', 'New shift', $3)`,
+      [guard3.userId, alphaId, `Shift ${RUN}`]);
+    const NEVER_TO_A_GUARD = [ownerAddress, SECRET.clientContactName, SECRET.clientContactEmail, SECRET.clientContactPhone];
+    const NEVER_KEYS = ['"billingRate"', '"billingRateSnapshot"', '"effectiveBillingRate"', '"revenueAmount"', '"marginAmount"',
+      '"clientBilledHoursSnapshot"', '"billingStatus"', '"passwordHash"', '"email"', '"lastLoginAt"', '"companyNumber"',
+      '"verificationNote"', '"contactEmail"', '"contactPhone"', '"contactName"', '"client"'];
+    const assertGuardSafe = (r: Res, what: string) => {
+      assert.equal(r.status, 200, `${what}: ${errText(r)}`);
+      for (const v of NEVER_TO_A_GUARD) assert.ok(!r.text.includes(String(v)), `${what}: ${v} leaked`);
+      for (const k of NEVER_KEYS) assert.ok(!r.text.includes(k), `${what}: ${k} present`);
+    };
+    const myShifts = await api('GET', '/shifts/my', guard3.token);
+    assertGuardSafe(myShifts, 'GET /shifts/my');
+    const mine = (Array.isArray(myShifts.body) ? myShifts.body : myShifts.body.items ?? []).find((x: any) => x.id === shiftId);
+    assert.ok(mine, 'the Guard still sees its shift');
+    assert.equal(mine.siteName, `Riverside ${RUN}`);
+    assert.deepEqual(Object.keys(mine.company).sort(), ['id', 'name'], 'the employer is named, nothing more');
+    assert.equal(mine.site.name, `Riverside ${RUN}`, 'the site it works at');
+    assert.equal(mine.site.specialInstructions, SECRET.siteInstructions, 'and the site instructions it needs on shift');
+    assert.equal(Number(mine.job.hourlyRate), 15.25, 'and its own pay rate');
+    assertGuardSafe(await api('GET', '/shifts', guard3.token), 'GET /shifts');
+    assertGuardSafe(await api('GET', `/shifts/${shiftId}`, guard3.token), 'GET /shifts/:id');
+    const sheets = await api('GET', '/timesheets/mine', guard3.token);
+    assertGuardSafe(sheets, 'GET /timesheets/mine');
+    const sheet = sheets.body.find((t: any) => t.shift?.id === shiftId || t.shiftId === shiftId);
+    assert.ok(sheet, 'the Guard still sees its timesheet');
+    assert.equal(Number(sheet.hoursWorked), 8, 'with its hours');
+    const notes = await api('GET', '/notifications/mine', guard3.token);
+    assertGuardSafe(notes, 'GET /notifications/mine');
+    const note = notes.body.find((n: any) => n.message === `Shift ${RUN}`);
+    assert.ok(note, 'the Guard still sees its notification');
+    assertGuardSafe(await api('PATCH', `/notifications/${note.id}/read`, guard3.token, {}), 'PATCH /notifications/:id/read');
+    assertGuardSafe(await api('GET', '/assignments', guard3.token), 'GET /assignments');
+    // The company still reads its own shift in full.
+    const companyShift = await api('GET', `/shifts/${shiftId}`, alpha.token);
+    assert.equal(companyShift.status, 200, errText(companyShift));
+    assert.equal(Number(companyShift.body.job?.billingRate), SECRET.billingRate, 'the company still sees its billing rate');
+    pass('S04-GUARD-RESPONSES: a Guard sees its shifts, timesheets and notifications without the owner account, client contacts or company money');
 
     const pendingCo = await registerCompany('gamma');
     await q(`INSERT INTO jobs ("companyId", title, "guardsRequired", "hourlyRate", status) VALUES ($1, $2, 1, 20, 'open')`,
@@ -385,11 +504,52 @@ async function main() {
     assert.equal((await api('POST', '/job-applications', guard.token, { jobId: pendingJobId })).status, 404);
     pass('S03-UNAPPROVED-JOBS-HIDDEN: a pending company\'s job is never shown to a Guard');
 
+    // A pending company's setup records are its own drafts: tenant-scoped, invisible to other companies, unusable for
+    // deploying anyone until approval.
+    const gammaClient = await api('POST', '/clients', pendingCo.token, { name: `Gamma draft client ${RUN}` });
+    assert.equal(gammaClient.status, 201, `pending: create client: ${errText(gammaClient)}`);
+    const gammaSite = await api('POST', '/sites', pendingCo.token, { name: `Gamma draft site ${RUN}`, address: '3 Way', clientId: gammaClient.body.id });
+    assert.equal(gammaSite.status, 201, `pending: create site: ${errText(gammaSite)}`);
+    const [owned] = await q(`SELECT (SELECT "companyId" FROM clients WHERE id = $1) c, (SELECT "companyId" FROM sites WHERE id = $2) s`,
+      [gammaClient.body.id, gammaSite.body.id]);
+    assert.equal(Number(owned.c), pendingCo.companyId, 'the client belongs to the pending company');
+    assert.equal(Number(owned.s), pendingCo.companyId, 'the site belongs to the pending company');
+    for (const [path, id] of [['/clients', gammaClient.body.id], ['/sites', gammaSite.body.id]] as const) {
+      const other = await api('GET', `${path}/${id}`, beta.token);
+      assert.ok(other.status === 404 || other.status === 403, `another company reads ${path}/:id: ${other.status}`);
+      const listed = await api('GET', path, beta.token);
+      assert.equal(listed.status, 200);
+      assert.ok(!JSON.stringify(listed.body).includes(`Gamma draft`), `another company lists the pending company's ${path}`);
+    }
+    const crossSite = await api('POST', '/sites', pendingCo.token, { name: `Cross-tenant site ${RUN}`, address: '4 Way', clientId: pendingClient.body.id });
+    assert.ok(crossSite.status >= 400 && crossSite.status < 500, `a site on another company's client: ${crossSite.status} ${crossSite.text}`);
+    assert.equal(Number((await q(`SELECT count(*) n FROM sites WHERE name = $1`, [`Cross-tenant site ${RUN}`]))[0].n), 0);
+    const deploy: Array<[string, string, unknown]> = [
+      ['POST', '/jobs', { title: `Gamma job ${RUN}`, guardsRequired: 1, hourlyRate: 15, siteId: gammaSite.body.id }],
+      ['POST', '/shifts', { siteId: gammaSite.body.id, start: new Date(Date.now() + 864e5).toISOString(), end: new Date(Date.now() + 900e5).toISOString() }],
+      ['POST', '/rota-slots', { siteId: gammaSite.body.id }],
+      ['POST', '/company-guards/invitations', {}],
+      ['POST', '/company-guards', {}],
+      ['PUT', '/client-portal-users', { clientId: gammaClient.body.id }],
+      ['POST', `/job-applications/${missing}/hire`, {}],
+      ['POST', `/rota-slots/${missing}/assign`, {}],
+      ['POST', `/rota-slots/${missing}/assign-multiple`, {}],
+      ['POST', `/shifts/${missing}/replace-guard`, {}],
+      ['PATCH', `/shifts/${missing}`, {}],
+    ];
+    for (const [method, path, body] of deploy) {
+      expectNotApproved(await api(method, path, pendingCo.token, body), 'pending_verification', `pending: ${method} ${path}`, 'new_operations');
+    }
+    assert.equal(Number((await q(`SELECT count(*) n FROM shifts WHERE "companyId" = $1`, [pendingCo.companyId]))[0].n), 0);
+    assert.equal(Number((await q(`SELECT count(*) n FROM company_guard_invitations WHERE "companyId" = $1`, [pendingCo.companyId]))[0].n), 0);
+    pass('S03-PENDING-TENANT: a pending company\'s drafts are its own and cannot activate jobs, shifts, invitations or deployments');
+
     const audit = await q(
       `SELECT "beforeData", "afterData", "userId" FROM audit_logs WHERE action = 'company.verification_changed' AND "entityId" = $1 ORDER BY id`,
       [alphaId]);
     assert.deepEqual(audit.map((a: any) => [a.beforeData.verificationStatus, a.afterData.verificationStatus]),
-      [['pending_verification', 'rejected'], ['rejected', 'approved'], ['approved', 'suspended'], ['suspended', 'approved']]);
+      // (rejected → pending_verification in between is the company's own reconsideration request, audited separately)
+      [['pending_verification', 'rejected'], ['pending_verification', 'approved'], ['approved', 'suspended'], ['suspended', 'approved']]);
     assert.ok(audit.every((a: any) => Number(a.userId) === admin.userId), 'every decision is attributed to the administrator');
     pass('S03-AUDIT: every verification decision is audited with before and after');
 

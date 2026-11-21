@@ -121,4 +121,59 @@ export class CompanyVerificationService {
 
     return this.get(companyId);
   }
+
+  /** What the company itself is shown about its verification (GET /companies/me/verification). */
+  async ownStatus(companyId: number): Promise<{ verificationStatus: CompanyVerificationStatus; verificationNote: string | null; verificationDecidedAt: Date | null }> {
+    const company = await this.companies.findOne({ where: { id: companyId } });
+    if (!company) throw new NotFoundException('Company not found');
+    return {
+      verificationStatus: company.verificationStatus,
+      verificationNote: company.verificationNote ?? null,
+      verificationDecidedAt: company.verificationDecidedAt ?? null,
+    };
+  }
+
+  /**
+   * A REJECTED company, having corrected its registration, asks S4 to look again: rejected → pending_verification. The
+   * administrator's earlier reason is cleared from the company's record (the audit log keeps it, with the company's
+   * message), and the company waits for a new decision. Only from rejected: a pending, approved or suspended company has
+   * nothing to reconsider (suspension is lifted only by S4).
+   */
+  async requestReconsideration(user: JwtPayload, companyId: number, message?: string | null) {
+    const company = await this.companies.findOne({ where: { id: companyId } });
+    if (!company) throw new NotFoundException('Company not found');
+    if (company.verificationStatus !== CompanyVerificationStatus.REJECTED) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'COMPANY_VERIFICATION_TRANSITION_NOT_ALLOWED',
+        message: 'Only a company whose verification was rejected can ask for it to be reconsidered.',
+      });
+    }
+    const note = typeof message === 'string' && message.trim() ? message.trim() : null;
+    const result = await this.companies
+      .createQueryBuilder()
+      .update(Company)
+      .set({ verificationStatus: CompanyVerificationStatus.PENDING_VERIFICATION, verificationNote: null, verificationDecidedAt: null })
+      .where('id = :companyId AND "verificationStatus" = :from', { companyId, from: CompanyVerificationStatus.REJECTED })
+      .execute();
+    if (!result.affected) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'COMPANY_VERIFICATION_CHANGED',
+        message: 'Your company\'s verification changed in the meantime. Reload it and try again.',
+      });
+    }
+    await this.auditLogService.log({
+      company: { id: company.id },
+      user: { id: user.sub },
+      action: 'company.verification_reconsideration_requested',
+      entityType: 'company',
+      entityId: company.id,
+      beforeData: { verificationStatus: CompanyVerificationStatus.REJECTED, verificationNote: company.verificationNote ?? null },
+      afterData: { verificationStatus: CompanyVerificationStatus.PENDING_VERIFICATION, message: note },
+    });
+    return this.ownStatus(companyId);
+  }
 }

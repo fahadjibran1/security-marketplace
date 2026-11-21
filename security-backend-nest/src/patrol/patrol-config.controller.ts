@@ -28,6 +28,7 @@ import { PatrolExceptionService } from './patrol-exception.service';
 import { PatrolQueryService } from './patrol-query.service';
 import { PatrolWindowsDayService } from './patrol-windows-day.service';
 import { PatrolSetupService } from './patrol-setup.service';
+import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 /**
  * Company Patrol Management (Migration 68). Company accounts only (Guards and S4 platform admins are refused by the
@@ -53,11 +54,13 @@ export class PatrolConfigController {
   }
 
   @Put('policies/default')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   putCompanyDefault(@CurrentUser() user: JwtPayload, @Body() dto: UpsertPatrolPolicyDto) {
     return this.config.upsertPolicy(user, null, dto);
   }
 
   @Put('policies/sites/:siteId')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   putSitePolicy(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number, @Body() dto: UpsertPatrolPolicyDto) {
     return this.config.upsertPolicy(user, siteId, dto);
   }
@@ -70,6 +73,7 @@ export class PatrolConfigController {
 
   /** Saves the whole setup in one transaction; never activates it. */
   @Put('sites/:siteId/setup')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   putSiteSetup(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number, @Body() dto: PutPatrolSiteSetupDto) {
     return this.setup.putSetup(user, siteId, dto);
   }
@@ -77,6 +81,7 @@ export class PatrolConfigController {
   /** Activation: 422 PATROL_SETUP_INCOMPLETE (details.checklist) unless the setup is complete. */
   @Post('sites/:siteId/setup/confirm')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   confirmSiteSetup(@CurrentUser() user: JwtPayload, @Param('siteId', ParseIntPipe) siteId: number) {
     return this.setup.confirmSetup(user, siteId);
   }
@@ -93,17 +98,20 @@ export class PatrolConfigController {
   }
 
   @Post('schedules')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   createSchedule(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolScheduleDto) {
     return this.config.createSchedule(user, dto);
   }
 
   @Patch('schedules/:id')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   updateSchedule(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePatrolScheduleDto) {
     return this.config.updateSchedule(user, id, dto);
   }
 
   /** Archives (never deletes). */
   @Delete('schedules/:id')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   archiveSchedule(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.config.archiveSchedule(user, id);
   }
@@ -120,23 +128,27 @@ export class PatrolConfigController {
   }
 
   @Post('checkpoints')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   createCheckpoint(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolCheckpointDto) {
     return this.config.createCheckpoint(user, dto);
   }
 
   @Patch('checkpoints/:id')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   updateCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePatrolCheckpointDto) {
     return this.config.updateCheckpoint(user, id, dto);
   }
 
   @Post('checkpoints/:id/rotate')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   rotateCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.config.rotateCheckpoint(user, id);
   }
 
   @Post('checkpoints/:id/revoke')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   revokeCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.config.revokeCheckpoint(user, id);
   }
@@ -144,6 +156,7 @@ export class PatrolConfigController {
   /** S4 1.3.0 B1: an authorised test scan of the checkpoint's current label (patrols.manage); confirms it. */
   @Post('checkpoints/:id/confirm')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   confirmCheckpoint(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ConfirmPatrolCheckpointDto) {
     return this.setup.confirmCheckpoint(user, id, dto);
   }
@@ -166,17 +179,20 @@ export class PatrolConfigController {
   }
 
   @Post('routes')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   createRoute(@CurrentUser() user: JwtPayload, @Body() dto: CreatePatrolRouteDto) {
     return this.config.createRoute(user, dto);
   }
 
   @Patch('routes/:id')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   updateRoute(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePatrolRouteDto) {
     return this.config.updateRoute(user, id, dto);
   }
 
   /** Archives (never deletes). */
   @Delete('routes/:id')
+  @CompanyCapabilityRequired(CompanyCapability.SETUP)
   archiveRoute(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.config.archiveRoute(user, id);
   }
@@ -218,12 +234,14 @@ export class PatrolConfigController {
 
   @Post('exceptions/:id/acknowledge')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.SAFETY)
   acknowledgeException(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     return this.exceptions.acknowledge(user, id);
   }
 
   @Post('exceptions/:id/resolve')
   @HttpCode(200)
+  @CompanyCapabilityRequired(CompanyCapability.SAFETY)
   resolveException(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number, @Body() dto: ResolvePatrolExceptionDto) {
     return this.exceptions.resolve(user, id, dto);
   }
