@@ -11,6 +11,8 @@ import { COMPANY_ADMIN_ROLES, COMPANY_VIEW_ROLES, UserRole } from '../user/entit
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CompanyPermission } from '../company-membership/company-membership-types';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { AllowUnapprovedCompany } from './company-approval.interceptor';
+import { CompanyVerificationStatus } from './company-verification';
 
 // RB-006: findAll()/findOne(:id) are platform-admin-only — they return/target
 // any tenant's record with no ownership filter. Company-side roles (company,
@@ -53,7 +55,9 @@ export class CompanyController {
     return this.companyService.create(dto);
   }
 
+  // A pending or rejected company may correct the details S4 is verifying.
   @Patch('me')
+  @AllowUnapprovedCompany(CompanyVerificationStatus.PENDING_VERIFICATION, CompanyVerificationStatus.REJECTED)
   @Roles(...COMPANY_ADMIN_ROLES)
   async updateMine(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCompanyDto) {
     const { company } = await this.membershipService.resolveCompanyContext(

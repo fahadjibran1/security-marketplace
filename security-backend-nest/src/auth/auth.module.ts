@@ -23,10 +23,11 @@ import { AccountDeletionService } from './account-deletion.service';
 import { AccountRecoveryController } from './account-recovery.controller';
 import { AccountController } from './account.controller';
 import { EmailModule } from '../email/email.module';
+import { AUTH_THROTTLERS } from './auth-throttler.guard';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 6 }]),
+    ThrottlerModule.forRoot(AUTH_THROTTLERS),
     ConfigModule,
     UserModule,
     CompanyModule,

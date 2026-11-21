@@ -9,6 +9,7 @@ import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { CreateSafetyAlertDto } from './dto/create-safety-alert.dto';
 import { ResolveSafetyAlertDto } from './dto/resolve-safety-alert.dto';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { AllowUnapprovedCompany } from '../company/company-approval.interceptor';
 
 @Controller('alerts')
 @UseInterceptors(CompanyResponsePrivacyInterceptor)
@@ -40,7 +41,9 @@ export class SafetyAlertController {
 
   // Entry gate. Company staff reach this only to act on their own company's compliance lapse alerts with
   // compliance.manage; that, and everything else, is enforced in the service.
+  // Safety first: a suspended company can still act on a Guard's alert from a shift already under way.
   @Patch(':id/ack')
+  @AllowUnapprovedCompany()
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.COMPANY_STAFF)
   acknowledge(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
     if (user.role === UserRole.ADMIN) {
@@ -55,6 +58,7 @@ export class SafetyAlertController {
    * when one IS sent, the service validates the reason against the stored alert's own type.
    */
   @Patch(':id/close')
+  @AllowUnapprovedCompany()
   @Roles(UserRole.ADMIN, ...COMPANY_ADMIN_ROLES, UserRole.COMPANY_STAFF)
   close(
     @CurrentUser() user: JwtPayload,

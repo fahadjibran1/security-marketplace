@@ -140,7 +140,7 @@ async function main() {
   } as never);
   await migrator.initialize();
   const migrated = await migrator.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022', 'the head is Migration 75 (Patrol Monitor indexes; 74 = patrol site setup; 73 = durable schedule successors; 72 = patrol sync recovery grants)');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
   await migrator.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -185,7 +185,7 @@ async function main() {
     const company = async (companyId: number, label: string, number: string) => {
       const ownerEmail = `${label}.owner@example.invalid`;
       const ownerId = await user(ownerEmail, 'company_admin');
-      const { id } = await one(`INSERT INTO companies (id,"userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,$4,'1 Way','ops@example.invalid') RETURNING id`, [companyId, ownerId, `${label} Security Ltd`, number]);
+      const { id } = await one(`INSERT INTO companies (id,"userId",name,"companyNumber",address,"contactDetails","verificationStatus") VALUES ($1,$2,$3,$4,'1 Way','ops@example.invalid','approved') RETURNING id`, [companyId, ownerId, `${label} Security Ltd`, number]);
       const siteId = (await one(`INSERT INTO sites ("companyId",name,address,timezone) VALUES ($1,'Harbour Gate','2 Way','Europe/London') RETURNING id`, [id])).id as number;
       return { id: id as number, ownerId, siteId, token: await login(ownerEmail) };
     };

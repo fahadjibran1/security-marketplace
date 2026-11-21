@@ -289,7 +289,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022', 'the head is Migration 75 (the Patrol Monitor indexes)');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -341,7 +341,7 @@ async function main() {
     seq += 1;
     const ownerEmail = `pmon.${label}.owner@example.invalid`;
     const ownerId = await mkUser(ownerEmail, 'company_admin');
-    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',$4) RETURNING id`,
+    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',$4,'approved') RETURNING id`,
       [ownerId, `PMON ${label} Ltd`, String(77000000 + seq), patrolsEnabled]);
     return { id: Number(id), ownerId, ownerEmail, user: { sub: ownerId, email: ownerEmail, role: 'company_admin', status: 'active' } as any };
   };

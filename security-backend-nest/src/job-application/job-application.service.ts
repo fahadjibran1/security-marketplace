@@ -21,6 +21,8 @@ import { CompanyGuardRelationshipType } from '../company-guard/entities/company-
 import { ReviewJobApplicationDto } from './dto/review-job-application.dto';
 import { AvailabilityService } from '../availability/availability.service';
 import { Job } from '../job/entities/job.entity';
+import { GuardJobApplicationView, toGuardJobApplicationView } from '../job/dto/guard-job.view';
+import { isCompanyApproved } from '../company/company-verification';
 
 @Injectable()
 export class JobApplicationService {
@@ -84,6 +86,8 @@ export class JobApplicationService {
 
   private async createForGuard(jobId: number, guardId: number): Promise<JobApplication> {
     const job = await this.jobsService.findOne(jobId);
+    // SEC-PUBLIC-03: a job of a company that is not APPROVED does not exist for a Guard (the same 404 as an unknown id).
+    if (!isCompanyApproved(job.company)) throw new NotFoundException('Job not found');
     const guard = await this.guardService.findOne(guardId);
 
     if (job.status !== 'open') {
@@ -127,14 +131,21 @@ export class JobApplicationService {
       return applications.map((application) => this.normalizeApplication(application));
     }
 
+    // Guards read their own applications through findOwnForGuard (the Guard view); nobody else reaches this point.
+    throw new ForbiddenException('Insufficient permissions');
+  }
+
+  async findOwnForGuard(user: JwtPayload): Promise<GuardJobApplicationView[]> {
+    // SEC-PUBLIC-01: a Guard's own applications, with each job reduced to its Guard view. The raw rows carried the job's
+    // company owner account, site client contacts and billing rate, and the assignments' shifts; applying to every open
+    // job would otherwise hand a Guard back everything GET /jobs no longer shows. The Guard app reads only the fields kept.
     const guard = await this.guardService.findByUserId(user.sub);
     if (!guard) throw new NotFoundException('Guard profile not found');
     const applications = await this.appRepo.find({
       where: { guard: { id: guard.id } },
-      relations: { assignments: { shifts: true } },
       order: { appliedAt: 'DESC' },
     });
-    return applications.map((application) => this.normalizeApplication(application));
+    return applications.map((application) => toGuardJobApplicationView(this.normalizeApplication(application)));
   }
 
   async findOne(id: number): Promise<JobApplication> {
@@ -150,12 +161,13 @@ export class JobApplicationService {
     return this.createForGuard(dto.jobId, guardId);
   }
 
-  async createForUser(user: JwtPayload, dto: CreateJobApplicationDto): Promise<JobApplication> {
+  async createForUser(user: JwtPayload, dto: CreateJobApplicationDto): Promise<GuardJobApplicationView> {
     if (user.role === UserRole.ADMIN) {
       throw new BadRequestException('Admin job application creation requires an explicit guard selection flow');
     }
     const guard = await this.resolveGuardForUser(user);
-    return this.createForGuard(dto.jobId, guard.id);
+    const application = await this.createForGuard(dto.jobId, guard.id);
+    return toGuardJobApplicationView(this.normalizeApplication(application));
   }
 
   /**

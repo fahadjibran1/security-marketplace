@@ -47,6 +47,7 @@ export const COMPANY_MANAGED_RESPONSIBILITY_STATEMENT =
  * declined, revoked, or addressed to a different licence. A caller learns only that this code is not
  * usable by them, never whether it exists or what became of it.
  */
+import { isCompanyApproved } from '../company/company-verification';
 const GENERIC_CODE_FAILURE = 'That invitation code is not valid.';
 
 export type InvitationState = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED' | 'EXPIRED';
@@ -267,8 +268,10 @@ export class CompanyGuardInvitationService {
       !!invitation &&
       !!invitation.targetSiaLicenceNumber &&
       invitation.targetSiaLicenceNumber.trim() !== guardSiaLicenceNumber.trim();
+    // SEC-PUBLIC-03: a code issued by a company that is not (or no longer) APPROVED is refused like any invalid code.
+    const companyNotApproved = !!invitation && !isCompanyApproved(invitation.company);
 
-    if (!invitation || state !== 'PENDING' || licenceMismatch) {
+    if (!invitation || state !== 'PENDING' || licenceMismatch || companyNotApproved) {
       await this.auditLogService.log({
         company: invitation ? { id: invitation.companyId } : null,
         user: { id: user.sub },
@@ -282,7 +285,9 @@ export class CompanyGuardInvitationService {
             ? 'unknown'
             : licenceMismatch
               ? 'licence_mismatch'
-              : (state ?? 'unknown').toLowerCase(),
+              : companyNotApproved
+                ? 'company_not_approved'
+                : (state ?? 'unknown').toLowerCase(),
           tokenDigestPrefix: tokenDigest ? tokenDigest.slice(0, 8) : null,
         },
         ipAddress: meta?.ipAddress ?? null,

@@ -150,6 +150,20 @@ async function main() {
   await to67.query(`INSERT INTO attendance_events ("shiftId","guardId",type,"occurredAt","gpsVerified") VALUES ($1,$2,'check-in',now() - interval '1 hour',false)`, [shiftA, gA0.id]);
   await to67.destroy();
 
+  // Migration 76 (company verification, SEC-PUBLIC-03) is independent of Patrols, and the application under test selects its
+  // companies columns, so it is applied to the baseline as production applies it: to companies that already exist, which it
+  // backfills as approved. Migrations 68–75 below are then the only difference between the two boots, as before.
+  const with76 = new DataSource({
+    ...base,
+    entities: [],
+    migrations: allFiles.filter((f) => Number(f.split('-')[0]) <= 1720900000013 || f.startsWith('1720900000023-')).map((f) => path.join(migrationsDir, f)),
+  } as never);
+  await with76.initialize();
+  assert.deepEqual((await with76.runMigrations({ transaction: 'each' })).map((m) => m.name), ['AddCompanyVerification1720900000023']);
+  assert.equal(Number((await with76.query(`SELECT count(*) n FROM companies WHERE "verificationStatus" <> 'approved'`))[0].n), 0,
+    'existing companies are approved');
+  await with76.destroy();
+
   // ── Boot helper ────────────────────────────────────────────────────────────────────────────────────────────
   const boot = async () => {
     const { AppModule } = await import('../src/app.module');

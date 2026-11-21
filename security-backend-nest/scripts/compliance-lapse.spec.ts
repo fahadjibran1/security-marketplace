@@ -108,7 +108,7 @@ async function main() {
     const company = async (label: string, number: string) => {
       const ownerEmail = `${label}.owner@example.invalid`;
       const ownerId = await user(ownerEmail, 'company_admin');
-      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,'1 Way','ops@example.invalid') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
+      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid','approved') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
       const site = await one(`INSERT INTO sites ("companyId",name,address) VALUES ($1,'Main Site','2 Way') RETURNING id`, [id]);
       // One staff member per membership role, so recipients are checked against the real permission matrix.
       const staff: Record<string, number> = {};

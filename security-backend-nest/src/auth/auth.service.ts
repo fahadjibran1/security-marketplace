@@ -129,6 +129,7 @@ export class AuthService {
             address: dto.address!,
             contactDetails: dto.contactDetails!,
             status: CompanyStatus.ONBOARDING,
+            // verificationStatus: the entity and database default, pending_verification (SEC-PUBLIC-03).
           }, manager);
         }
 

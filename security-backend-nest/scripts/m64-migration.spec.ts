@@ -145,7 +145,7 @@ async function main() {
     await test('M64-01-FRESH-DATABASE-MIGRATES-TO-64-AND-64-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 64 is pending on a 63 database');
       assert.equal(applied[0].name, MIGRATION_64);
-      assert.equal(allFiles.length, 75);
+      assert.equal(allFiles.length, 76);
       assert.equal(allFiles[63], '1720900000010-AddShiftAmendments.ts');
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts', 'Migration 65 follows 64 and is certified by m65-migration.spec.ts');
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
@@ -323,7 +323,9 @@ async function main() {
       const m74 = /^ALTER TABLE "shifts" ADD "patrolRequirement" /;
       // …and Migration 75's two Patrol Monitor indexes (m75-migration.spec.ts M75-10 certifies them).
       const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
-      const semantic = drift.filter((x) => !after64.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m74.test(x) && !m75.test(x) &&
+      // Migration 76 (1720900000023, certified by m76-migration.spec.ts) follows: its enum and companies columns are not drift here.
+      const m76 = /^CREATE TYPE "(public"\.")?company_verification_status_enum"|^ALTER TABLE "companies" ADD "(verificationStatus|verificationNote|verificationDecidedAt)" /;
+      const semantic = drift.filter((x) => !m76.test(x) && !after64.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 64: ${drift.length} statement(s))`);

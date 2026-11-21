@@ -70,7 +70,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022', 'no new migration: the head is still Migration 75');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -120,7 +120,7 @@ async function main() {
     seq += 1;
     const ownerEmail = `pops.${label}.owner@example.invalid`;
     const ownerId = await mkUser(ownerEmail, 'company_admin', `Owner${label}`);
-    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',$4) RETURNING id`,
+    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',$4,'approved') RETURNING id`,
       [ownerId, `POPS ${label} Ltd`, String(78000000 + seq), patrolsEnabled]);
     return { id: Number(id), ownerId, ownerEmail, user: { sub: ownerId, email: ownerEmail, role: 'company_admin', status: 'active' } as any };
   };

@@ -115,7 +115,7 @@ async function main() {
     const login = async (email: string) => ((await auth.login({ email, password: PASSWORD } as never)) as any).accessToken as string;
     const company = async (label: string, number: string) => {
       const ownerId = await user(`${label}.owner@example.invalid`, 'company_admin');
-      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,'1 Way','ops@example.invalid') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
+      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid','approved') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
       const site = await one(`INSERT INTO sites ("companyId",name,address) VALUES ($1,'Main Site','2 Way') RETURNING id`, [id]);
       return { id: id as number, name: `${label} Security Ltd`, ownerEmail: `${label}.owner@example.invalid`, siteId: site.id as number, token: '' };
     };

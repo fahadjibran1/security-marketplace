@@ -157,7 +157,7 @@ async function main() {
   const migrate = new DataSource({ ...base, entities: [], migrations: allFiles.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
   await migrate.initialize();
   const migrated = await migrate.runMigrations({ transaction: 'each' });
-  assert.equal(migrated[migrated.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022', 'the head is Migration 75 (Patrol Monitor indexes; 74 = patrol site setup; 73 = durable schedule successors; 72 = patrol sync recovery grants)');
+  assert.equal(migrated[migrated.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
   await migrate.destroy();
 
   const { AppModule } = await import('../src/app.module');
@@ -215,7 +215,7 @@ async function main() {
     seq += 1;
     const ownerEmail = `ps.${label}.owner@example.invalid`;
     const ownerId = await mkUser(ownerEmail, 'company_admin');
-    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,'1 Way','ops@example.invalid') RETURNING id`,
+    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid','approved') RETURNING id`,
       [ownerId, `PS ${label} Ltd`, String(69000000 + seq)]);
     return { id: Number(id), ownerId, ownerEmail };
   };

@@ -10,6 +10,8 @@ import { SiteService } from '../site/site.service';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 import { isCompanyRole, UserRole } from '../user/entities/user.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { GuardJobView, toGuardJobView } from './dto/guard-job.view';
+import { CompanyVerificationStatus, isCompanyApproved } from '../company/company-verification';
 
 @Injectable()
 export class JobService {
@@ -60,7 +62,7 @@ export class JobService {
     return this.jobRepo.find();
   }
 
-  async findAllForUser(user: JwtPayload): Promise<Job[]> {
+  async findAllForUser(user: JwtPayload): Promise<Job[] | GuardJobView[]> {
     if (user.role === UserRole.ADMIN) {
       return this.findAll();
     }
@@ -74,10 +76,27 @@ export class JobService {
       });
     }
 
-    return this.jobRepo.find({
-      where: { status: 'open' },
+    // SEC-PUBLIC-01 / 03: a Guard discovers only the open jobs of APPROVED companies, and only through the Guard view —
+    // never the raw entity, whose eager relations carry the company owner's account, the site's client contacts and
+    // the billing rate of every tenant.
+    if (user.role !== UserRole.GUARD) throw new NotFoundException('Job not found');
+    const jobs = await this.jobRepo.find({
+      where: { status: 'open', company: { verificationStatus: CompanyVerificationStatus.APPROVED } },
       order: { id: 'DESC' },
     });
+    return jobs.map(toGuardJobView);
+  }
+
+  /**
+   * A job a Guard may apply for: open, and posted by an APPROVED company. Anything else is "Job not found", the same
+   * answer as for an id that does not exist, so a Guard cannot probe for unapproved companies' jobs.
+   */
+  async findApplicableForGuard(id: number): Promise<Job> {
+    const job = await this.findOne(id);
+    if (job.status !== 'open' || !isCompanyApproved(job.company)) {
+      throw new NotFoundException('Job not found');
+    }
+    return job;
   }
 
   async findOne(id: number): Promise<Job> {
@@ -86,14 +105,13 @@ export class JobService {
     return job;
   }
 
-  async findOneForUser(user: JwtPayload, id: number): Promise<Job> {
-    const job = await this.findOne(id);
-
+  async findOneForUser(user: JwtPayload, id: number): Promise<Job | GuardJobView> {
     if (user.role === UserRole.ADMIN) {
-      return job;
+      return this.findOne(id);
     }
 
     if (isCompanyRole(user.role)) {
+      const job = await this.findOne(id);
       const { company } = await this.membershipService.resolveCompanyContext(user.sub, user.role, CompanyPermission.SHIFTS_VIEW);
       if (job.company.id !== company.id) {
         throw new NotFoundException('Job not found');
@@ -101,11 +119,8 @@ export class JobService {
       return job;
     }
 
-    if (job.status !== 'open') {
-      throw new NotFoundException('Job not found');
-    }
-
-    return job;
+    if (user.role !== UserRole.GUARD) throw new NotFoundException('Job not found');
+    return toGuardJobView(await this.findApplicableForGuard(id));
   }
 
   async createForUser(user: JwtPayload, dto: CreateJobDto): Promise<Job> {

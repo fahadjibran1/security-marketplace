@@ -120,7 +120,7 @@ async function main() {
     const company = async (label: string, number: string) => {
       const ownerEmail = `${label}.owner@example.invalid`;
       const ownerId = await user(ownerEmail, 'company_admin');
-      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails") VALUES ($1,$2,$3,'1 Way','ops@example.invalid') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
+      const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid','approved') RETURNING id`, [ownerId, `${label} Security Ltd`, number]);
       const siteId = (await one(`INSERT INTO sites ("companyId",name,address) VALUES ($1,'Main Site','2 Way') RETURNING id`, [id])).id as number;
       const site2Id = (await one(`INSERT INTO sites ("companyId",name,address) VALUES ($1,'Second Site','3 Way') RETURNING id`, [id])).id as number;
       return { id: id as number, ownerId, siteId, site2Id, token: await login(ownerEmail) };

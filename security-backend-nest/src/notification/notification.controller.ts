@@ -5,6 +5,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { NotificationService } from './notification.service';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { CompanyResponsePrivacyInterceptor } from '../common/privacy/company-response-privacy';
+import { AllowUnapprovedCompany } from '../company/company-approval.interceptor';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
@@ -28,6 +29,7 @@ export class NotificationController {
   }
 
   @Patch(':id/read')
+  @AllowUnapprovedCompany()
   markRead(
     @Req() req: { user: { sub: number } },
     @Param('id', ParseIntPipe) id: number,

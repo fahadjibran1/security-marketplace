@@ -17,13 +17,15 @@ import { RedeemCompanyGuardInvitationDto } from './dto/redeem-company-guard-invi
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthThrottlerGuard } from '../auth/auth-throttler.guard';
+import { resolveClientIp } from '../common/http/client-ip';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { COMPANY_VIEW_ROLES, UserRole } from '../user/entities/user.entity';
 import { JwtPayload } from '../auth/types/jwt-payload.type';
 
 const requestMeta = (req: Request) => ({
-  ipAddress: (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ?? req.ip ?? null,
+  // SEC-PUBLIC-02: the trust-proxy-aware client IP, never the client-settable first X-Forwarded-For entry.
+  ipAddress: resolveClientIp(req),
   userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
 });
 

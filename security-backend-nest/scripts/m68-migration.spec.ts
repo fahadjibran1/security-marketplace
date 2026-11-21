@@ -149,7 +149,7 @@ async function main() {
     await test('M68-01-A-67-DATABASE-MIGRATES-TO-68-AND-ONLY-69-FOLLOWS', () => {
       assert.equal(applied.length, 1, 'only 68 is pending on a 67 database');
       assert.equal(applied[0].name, MIGRATION_68);
-      assert.equal(allFiles.length, 75);
+      assert.equal(allFiles.length, 76);
       assert.equal(allFiles[67], '1720900000014-AddPatrolManagement.ts');
       assert.equal(allFiles[68], '1720900000015-AddPatrolScheduling.ts', 'Migration 69 follows 68 and is certified by m69-migration.spec.ts');
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts', 'Migration 70 follows 69 and is certified by m70-migration.spec.ts');
@@ -430,7 +430,9 @@ async function main() {
       const m74 = /^ALTER TABLE "(patrol_policies|patrol_schedules|patrol_routes|patrol_checkpoints|shifts)" ADD "(setupMode|windowAnchor|setupConfirmedAt|setupConfirmedByUserId|anchor|kind|supersededByRouteId|supersededAt|confirmedAt|confirmedByUserId|confirmedTokenVersion|patrolRequirement)" |^CREATE (UNIQUE )?INDEX "(UQ_patrol_routes_superseded_by|IDX_patrol_routes_superseded)" /;
       // …and Migration 75's two Patrol Monitor indexes (m75-migration.spec.ts M75-10 certifies them).
       const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
-      const semantic = drift.filter((x) => !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x) &&
+      // Migration 76 (1720900000023, certified by m76-migration.spec.ts) follows: its enum and companies columns are not drift here.
+      const m76 = /^CREATE TYPE "(public"\.")?company_verification_status_enum"|^ALTER TABLE "companies" ADD "(verificationStatus|verificationNote|verificationDecidedAt)" /;
+      const semantic = drift.filter((x) => !m76.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /"patrol_|patrolsEnabled/.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x));

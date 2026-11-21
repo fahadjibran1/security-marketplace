@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { AuthThrottlerGuard } from './auth-throttler.guard';
+import { AccountThrottle, AuthThrottlerGuard } from './auth-throttler.guard';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -10,6 +10,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from './types/jwt-payload.type';
 import { UserRole } from '../user/entities/user.entity';
+import { AllowUnapprovedCompany } from '../company/company-approval.interceptor';
 
 @Controller('auth')
 export class AuthController {
@@ -25,6 +26,7 @@ export class AuthController {
   @Post('login')
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @AccountThrottle()
   login(@Body() dto: LoginDto, @Headers(MOBILE_CLIENT_HEADER) client?: string) {
     // Only the mobile app is handed a renewable session. The marker is a header so an older
     // deployment, which validates bodies with forbidNonWhitelisted, still accepts this login.
@@ -51,6 +53,7 @@ export class AuthController {
    */
   @Post('logout')
   @UseGuards(JwtAuthGuard)
+  @AllowUnapprovedCompany()
   logout(@CurrentUser() user: JwtPayload, @Body() dto: RefreshDto) {
     return this.authService.logout(user.sub, dto.refreshToken);
   }
@@ -58,6 +61,7 @@ export class AuthController {
   @Post('client-login')
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @AccountThrottle()
   clientLogin(@Body() dto: LoginDto) {
     return this.authService.clientLogin(dto);
   }

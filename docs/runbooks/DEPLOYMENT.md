@@ -35,7 +35,7 @@ Only deploy a commit that has:
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
 - `TRUST_PROXY=1` behind the single Render edge-proxy hop. Do not use `true`, which trusts arbitrary forwarding chains.
 - Authentication throttling uses the API instance's in-memory store. Keep `numInstances: 1` for the pilot; multi-instance deployment requires a distributed/shared rate-limit store.
-- The authentication limiter uses the first `X-Forwarded-For` address, which Render sets to the real client IP. Do not expose the API process directly without a trusted proxy that overwrites this first address.
+- The client IP (authentication limiter, audit records) is Express's `req.ip` under `TRUST_PROXY` (`src/common/http/client-ip.ts`): the address the trusted edge proxy appended to `X-Forwarded-For`, never the client-supplied first entry, which anyone can forge (SEC-PUBLIC-02). Sign-in also has a per-account limit (10 attempts per 15 minutes per email) that holds however many addresses are used. Before any change to the proxy chain (for example a CDN or WAF in front of Render), confirm on staging which address `req.ip` resolves to and set `TRUST_PROXY` to the exact number of trusted hops; a hop count that is too high trusts forged entries, one that is too low puts every client in one shared bucket.
 
 Never place production secrets in GitHub, Blueprint files, screenshots or support tickets.
 

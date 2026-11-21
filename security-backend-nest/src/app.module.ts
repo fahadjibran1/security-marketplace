@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { CompanyApprovalInterceptor } from './company/company-approval.interceptor';
+import { CompanyVerificationModule } from './company/verification/company-verification.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -128,8 +131,13 @@ import { PatrolModule } from './patrol/patrol.module';
     WelfarePushModule,
     OperationsModule,
     PatrolModule,
+    CompanyVerificationModule,
   ],
   controllers: [HealthController],
-  providers: [PoolDiagnosticsService],
+  providers: [
+    PoolDiagnosticsService,
+    // SEC-PUBLIC-03: only an APPROVED company may perform operational actions (every mutating company route).
+    { provide: APP_INTERCEPTOR, useClass: CompanyApprovalInterceptor },
+  ],
 })
 export class AppModule {}

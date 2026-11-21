@@ -40,6 +40,7 @@ import {
   INVITATION_TTL_MS,
 } from '../src/company-guard/company-guard-invitation.service';
 import { GuardScreening, ScreeningStatus } from '../src/screening/entities/screening.entities';
+import { CompanyVerificationStatus } from '../src/company/company-verification';
 
 let passed = 0;
 async function test(id: string, fn: () => Promise<void> | void) {
@@ -106,7 +107,7 @@ async function main() {
         role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE, isEmailVerified: true,
       }));
       return companies.save(companies.create({
-        user: owner, name: `${label.toUpperCase()} Security Ltd`, companyNumber: number,
+        verificationStatus: CompanyVerificationStatus.APPROVED, user: owner, name: `${label.toUpperCase()} Security Ltd`, companyNumber: number,
         address: `1 ${label} Way`, contactDetails: `ops@${label}.example.invalid`,
       }));
     };

@@ -18,6 +18,7 @@ import { Client } from '../../client/entities/client.entity';
 import { InvoiceBatch } from '../../invoice-batch/entities/invoice-batch.entity';
 import { PaymentRecord } from '../../payment-record/entities/payment-record.entity';
 import { PayrollBatch } from '../../payroll-batch/entities/payroll-batch.entity';
+import { CompanyVerificationStatus } from '../company-verification';
 
 export enum CompanyStatus {
   ONBOARDING = 'onboarding',
@@ -65,6 +66,27 @@ export class Company {
     default: CompanyStatus.ONBOARDING,
   })
   status!: CompanyStatus;
+
+  /**
+   * SEC-PUBLIC-03 verification lifecycle (Migration 76). New companies start pending; every company that existed when
+   * Migration 76 ran was backfilled `approved`, so the pilot companies keep their access. Changed only by an S4 platform
+   * administrator (PUT /admin/companies/:companyId/verification, audited as company.verification_changed).
+   */
+  @Column({
+    type: 'enum',
+    enum: CompanyVerificationStatus,
+    enumName: 'company_verification_status_enum',
+    default: CompanyVerificationStatus.PENDING_VERIFICATION,
+  })
+  verificationStatus!: CompanyVerificationStatus;
+
+  /** The administrator's reason, shown to the company (required for a rejection or suspension). */
+  @Column({ type: 'text', nullable: true })
+  verificationNote?: string | null;
+
+  /** When the current verification state was decided (null until first decided, including for the Migration 76 backfill). */
+  @Column({ type: 'timestamptz', nullable: true })
+  verificationDecidedAt?: Date | null;
 
   /**
    * Patrol Management feature switch (Migration 68), off by default; only an S4 platform administrator changes it

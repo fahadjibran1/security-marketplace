@@ -152,7 +152,7 @@ async function main() {
     seq += 1;
     const ownerEmail = `pt.${label}.owner@example.invalid`;
     const ownerId = await mkUser(ownerEmail, 'company_admin');
-    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',true) RETURNING id`,
+    const { id } = await one(`INSERT INTO companies ("userId",name,"companyNumber",address,"contactDetails","patrolsEnabled","verificationStatus") VALUES ($1,$2,$3,'1 Way','ops@example.invalid',true,'approved') RETURNING id`,
       [ownerId, `PT ${label} Ltd`, String(79000000 + seq)]);
     testCompanies.push(Number(id));
     return { id: Number(id), ownerId, token: await login(ownerEmail) };

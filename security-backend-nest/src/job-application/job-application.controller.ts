@@ -20,6 +20,7 @@ export class JobApplicationController {
   @Get()
   @Roles(UserRole.ADMIN, ...COMPANY_VIEW_ROLES, UserRole.GUARD)
   findAll(@CurrentUser() user: JwtPayload) {
+    if (user.role === UserRole.GUARD) return this.jobApplicationService.findOwnForGuard(user);
     return this.jobApplicationService.findAllForUser(user);
   }
 
@@ -32,7 +33,7 @@ export class JobApplicationController {
   @Get('self')
   @Roles(UserRole.GUARD)
   findSelf(@CurrentUser() user: JwtPayload) {
-    return this.jobApplicationService.findAllForUser(user);
+    return this.jobApplicationService.findOwnForGuard(user);
   }
 
   @Post('self')

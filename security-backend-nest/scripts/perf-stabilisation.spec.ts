@@ -124,6 +124,8 @@ async function main() {
       companyName: `${label} ${RUN} Ltd`, companyNumber: String(10000000 + Math.floor(Math.random() * 8999999)),
       address: '1 High St, London', contactDetails: `ops@${label}.test`,
     } as any);
+    // SEC-PUBLIC-03: this spec exercises an operating company, so its fixture company is approved (as every pilot company is).
+    await ds.query(`UPDATE companies SET "verificationStatus" = 'approved' WHERE "userId" = (SELECT id FROM users WHERE email = $1)`, [email]);
     await verify(email);
     const s: any = await auth.login({ email, password });
     return { userId: s.user.id as number, companyId: s.user.companyId as number, token: s.accessToken as string, role: UserRole.COMPANY };

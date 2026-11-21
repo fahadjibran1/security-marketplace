@@ -22,6 +22,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { DataSource, Repository } from 'typeorm';
 import { appEntities } from '../src/database/entities';
+import { CompanyVerificationStatus } from '../src/company/company-verification';
 
 const url = process.env.GATE2_DATABASE_URL;
 if (!url) throw new Error('GATE2_DATABASE_URL is required (use a disposable database)');
@@ -80,7 +81,7 @@ async function main() {
   assert.ok(applied.some((m) => m.name === 'AddAccountLifecycleAndVerificationTokens1720900000007'), 'Migration 61 applied');
   assert.ok(applied.some((m) => m.name === 'AddGuardComplianceChecks1720900000008'), 'Migration 62 applied');
   assert.ok(applied.some((m) => m.name === 'AddComplianceLapseAlerts1720900000009'), 'Migration 63 applied');
-  assert.equal(applied[applied.length - 1]?.name, 'AddPatrolMonitorIndexes1720900000022');
+  assert.equal(applied[applied.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
 
   const { User, UserRole, UserStatus } = await import('../src/user/entities/user.entity');
   const { GuardProfile } = await import('../src/guard-profile/entities/guard-profile.entity');
@@ -454,7 +455,7 @@ async function main() {
       role: UserRole.COMPANY_ADMIN, status: UserStatus.ACTIVE, emailVerificationRequired: false,
     }));
     const company = await repo(Company).save(repo(Company).create({
-      user: owner, name: 'Gate Two Security Ltd', companyNumber: '61616161', address: '1 Gate Street', contactDetails: 'ops@gate2.example.invalid',
+      verificationStatus: CompanyVerificationStatus.APPROVED, user: owner, name: 'Gate Two Security Ltd', companyNumber: '61616161', address: '1 Gate Street', contactDetails: 'ops@gate2.example.invalid',
     }));
     const site = await repo(Site).save(repo(Site).create({ company, name: 'GATE 2 SITE', address: '2 Gate Street', timezone: 'Europe/London' }));
 
