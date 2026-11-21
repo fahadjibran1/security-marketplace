@@ -773,11 +773,11 @@ test('SIGNER-13F-THE-DISTRIBUTED-VC17-ARTEFACT-IS-SUPERSEDED-BY-THE-GUARD-NOTIFI
   // is prepared, not built (SIGNER-13P). 17 Nov 2026: 27 was built (EAS 5bb7a0c2), not uploaded.
   // 21 Nov 2026 (owner statement): 1.2.3 (27) was uploaded by the owner and is the active Play Internal Testing release, so
   // it is the distributed approved artefact (SIGNER-13P) and 1.2.2 (26) is distributed-superseded (SIGNER-13O); 1.2.4 (28)
-  // is prepared, not built (SIGNER-13Q).
+  // is prepared, not built (SIGNER-13Q). 21 Nov 2026: 28 was built (EAS e1866f5b), not uploaded.
   assert.equal(config.approvedArtefact.versionCode, 27);
   assert.equal(config.expectedRelease.versionCode, 28);
   assert.equal(config.expectedRelease.versionCode, config.preparedArtefact.versionCode);
-  assert.equal(config.preparedArtefact.status, 'prepared-not-built', 'only the prepared, not built 1.2.4 (28) is in front of the distributed 1.2.3 (27)');
+  assert.equal(config.preparedArtefact.status, 'built-not-uploaded', 'only the built, not uploaded 1.2.4 (28) is in front of the distributed 1.2.3 (27)');
 });
 
 test('SIGNER-13G-THE-DISTRIBUTED-VC18-ARTEFACT-IS-SIGNED-BY-THE-SAME-UPLOAD-KEY-AS-VC17-AND-SUPERSEDED-BY-VC19', () => {
@@ -914,7 +914,7 @@ test('SIGNER-13I-THE-1-1-2-VC20-IS-DISTRIBUTED-AND-USES-THE-VC17-VC18-VC19-UPLOA
   // (owner-confirmed 28 Oct 2026). No uploaded hash was read back from Play, so none is claimed; 1.1.1 (19) is superseded.
   // Owner correction (1 Nov 2026): superseded on 31 Oct 2026 by 1.2.0 (23), published to Play Internal Testing (SIGNER-13M);
   // the 1.1.2 (20) record moved, unchanged apart from status and retirement, into retiredArtefacts.
-  assert.equal(config.preparedArtefact.status, 'prepared-not-built', 'the prepared, not built 1.2.4 (28) is in front of the distributed 1.2.3 (27); 1.2.0 (23), 1.2.1 (24), 1.2.2 (25) and 1.2.2 (26) are retired (SIGNER-13J, 13M, 13N, 13O, 13P, 13Q)');
+  assert.equal(config.preparedArtefact.status, 'built-not-uploaded', 'the built, not uploaded 1.2.4 (28) is in front of the distributed 1.2.3 (27); 1.2.0 (23), 1.2.1 (24), 1.2.2 (25) and 1.2.2 (26) are retired (SIGNER-13J, 13M, 13N, 13O, 13P, 13Q)');
   assert.equal((config.retiredArtefacts || []).filter((entry) => entry.versionCode === 20).length, 1, 'recorded once');
   const current = config.retiredArtefacts.find((entry) => entry.versionCode === 20);
   const vc19 = config.retiredArtefacts.find((entry) => entry.versionCode === 19);
@@ -1471,31 +1471,42 @@ test('SIGNER-13P-THE-1-2-3-VC27-IS-THE-DISTRIBUTED-ARTEFACT-ON-THE-SAME-IDENTITY
   assert.doesNotMatch(JSON.stringify(config), /private_key|api_key|current_key|BEGIN [A-Z ]*PRIVATE KEY/);
 });
 
-test('SIGNER-13Q-THE-1-2-4-VC28-IS-PREPARED-NOT-BUILT-ON-THE-SAME-IDENTITY-AND-UPLOAD-KEY', () => {
+test('SIGNER-13Q-THE-1-2-4-VC28-IS-BUILT-NOT-UPLOADED-ON-THE-SAME-IDENTITY-AND-UPLOAD-KEY', () => {
   // S4 1.2.4 (28), 21 Nov 2026: the distributed 1.2.3 (27) plus UX-02 Packages A and B (PR #125, merged to
   // release/s4-pilot-rc1 at 9b56ef2 on 20 Nov 2026 by fast-forward), versioned on release-prep/s4-1.2.4-android-28.
   // Prepared, not built: no EAS build, file, hash or store fact exists, and none is recorded. Play Console is not readable
   // from the build machine, so the absence of a versionCode 28 or higher in Play is NOT verified; the record says so, and
-  // the owner must confirm it before a build.
+  // the owner must confirm it before a build. Later on 21 Nov 2026 PR #126 was merged (release/s4-pilot-rc1 b45ffc3), the
+  // owner verified in Play Console that 27 was the highest versionCode (not inspected from the build machine) and 28 was
+  // built from b45ffc3 (EAS e1866f5b, owner-approved). Verified from the downloaded AAB; not uploaded, no Play fact.
   const prepared = config.preparedArtefact;
   const current = config.approvedArtefact;
-  assert.deepEqual([prepared.versionName, prepared.versionCode, prepared.status], ['1.2.4', 28, 'prepared-not-built']);
+  assert.deepEqual([prepared.versionName, prepared.versionCode, prepared.status], ['1.2.4', 28, 'built-not-uploaded']);
   assert.deepEqual([prepared.versionName, prepared.versionCode], [appJson.expo.version, appJson.expo.android.versionCode], 'app.json carries 1.2.4 (28)');
   assert.deepEqual([config.expectedRelease.versionName, config.expectedRelease.versionCode, config.expectedRelease.minSdkVersion], ['1.2.4', 28, 24], 'the post-build check expects 1.2.4 (28)');
   assert.equal(prepared.versionCode, Math.max(current.versionCode, ...config.retiredArtefacts.map((entry) => entry.versionCode)) + 1, 'one above every Android build');
   assert.equal(prepared.versionCode, current.versionCode + 1, 'one above the distributed 27');
-  assert.match(prepared.storeNumberCheck, /^NOT VERIFIED from Play Console\./);
-  assert.match(prepared.storeNumberCheck, /The owner stated on 21 Nov 2026 that 1\.2\.3 \(27\) is uploaded to Google Play Internal Testing/);
-  assert.match(prepared.storeNumberCheck, /The owner must confirm it before 28 is built\.$/);
-  // Nothing built: no build, file, hash, signer reading or verification is claimed.
-  for (const key of ['easBuildId', 'easBuildUrl', 'gitCommit', 'completedAt', 'aabFilename', 'aabSha256', 'aabSizeBytes', 'uploadCertificateSha256', 'certifiedOn', 'verified', 'apkSha256']) {
-    assert.ok(!(key in prepared), `no ${key} before a build`);
-  }
+  assert.match(prepared.storeNumberCheck, /^Owner-verified in Google Play Console before this build \(stated in the S4 Android 1\.2\.4 \(28\) build approval, 21 Nov 2026\): versionCode 27 is the highest uploaded S4 build and no versionCode 28 or higher existed\. Not inspected from the build machine\.$/);
+  // Built and certified from the downloaded AAB: the exact build, file, hash, size and signer.
+  assert.deepEqual([prepared.easBuildId, prepared.gitCommit, prepared.aabSha256, prepared.aabSizeBytes, prepared.aabFilename, prepared.certifiedOn],
+    ['e1866f5b-150c-43dd-b883-1c676e5960b7', 'b45ffc32a1dd56008332652eb4d12958b750c05d', '3a32f3bcba111020a54806bc9b272e677c6a7a3fa9b6513c66b630dfc5e12a6f', 64958717, 's4-1.2.4-vc28-e1866f5b.aab', '2026-11-21']);
+  assert.ok(prepared.easBuildUrl.endsWith('/builds/e1866f5b-150c-43dd-b883-1c676e5960b7'));
+  assert.equal(prepared.completedAt, '2026-11-21T01:21:57.315Z');
+  assert.ok(!('apkSha256' in prepared), 'an App Bundle');
+  assert.deepEqual([prepared.verified.package, prepared.verified.versionCode, prepared.verified.versionName, prepared.verified.minSdkVersion, prepared.verified.targetSdkVersion], ['com.sfour.s4', 28, '1.2.4', 24, 36]);
+  assert.deepEqual([prepared.uploadCertificateSha256, prepared.verified.signerCertificateSha256], [S4_CERT_SHA256, S4_CERT_SHA256], 'signed with the permanent S4 upload key');
+  assert.deepEqual([prepared.verified.apiBaseUrl, prepared.verified.productionApiUrls, prepared.verified.stagingApiUrls], ['https://security-marketplace-api.onrender.com', 1, 0], 'the production API only');
+  assert.match(prepared.verified.embeddedConfig, /no extra\.appVariant \(the store app; the UAT label constant is inert\)/);
+  assert.match(prepared.verified.featuresInBundle, /^yes: UX-02 Packages A and B \("Status recorded · expiry date needed"/);
+  assert.match(prepared.verified.featuresInBundle, /14 of which are not in 1\.2\.3 \(27\)/);
+  assert.equal(prepared.verified.sessionStorageKey, 'security-app-session (unchanged)');
+  assert.notEqual(prepared.aabSha256, current.aabSha256, 'a new artefact, not the distributed 27');
+  assert.match(prepared.sourceGate, /44845700527 \(PR #126\) and 44847132116 \(push to release\/s4-pilot-rc1\), both passed on this exact commit/);
+  assert.match(prepared.releaseBranch, /^release\/s4-pilot-rc1 \(b45ffc3 since PR #126 was merged on 21 Nov 2026\)/);
   assert.deepEqual(Object.keys(prepared).filter((key) => /^play|internalTesting|uploaded|handover/i.test(key)), [], 'no Play fact');
-  assert.match(prepared.note, /Prepared, not built/);
+  assert.match(prepared.note, /the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced/);
   assert.match(prepared.note, /Not uploaded to Google Play/);
   assert.match(prepared.note, /UX-02 Packages A and B \(PR #125, merged 20 Nov 2026\)/);
-  assert.match(prepared.note, /Mobile presentation only: no backend, migration, dependency, identity, signing or session-storage change/);
   assert.deepEqual([prepared.easBuildProfile, prepared.distribution, prepared.sourceBranch], ['production', 'STORE', 'release-prep/s4-1.2.4-android-28']);
   assert.equal(prepared.sourceFixCommit, '9b56ef2f1f339e16a41697ca634056e866aa11e7', 'UX-02 on release/s4-pilot-rc1');
   assert.match(prepared.sourceBase, /^9b56ef2 \(release\/s4-pilot-rc1 after PR #125/);
