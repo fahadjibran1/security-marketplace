@@ -68,10 +68,14 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   // S4 1.2.3 (17 Nov 2026): Android 27 adds the Guard Profile redesign (PR #123) on the same store identity, prepared,
   // not built. Android 26 is the active Play Internal Testing release (owner-confirmed 17 Nov 2026). The iOS build number
   // stays 24 (no iOS build while the Apple account restriction is unresolved); the shared marketing version is 1.2.3.
-  assert.equal(expo.version, '1.2.3');
-  assert.equal(expo.android.versionCode, 27);
+  // S4 1.2.4 (21 Nov 2026): Android 28 adds UX-02 Packages A and B (PR #125) on the same store identity, prepared, not
+  // built. Android 27 is uploaded and is the active Play Internal Testing release (owner-stated 21 Nov 2026). The iOS
+  // build number stays 24 (no iOS build); the shared marketing version is 1.2.4.
+  assert.equal(expo.version, '1.2.4');
+  assert.equal(expo.android.versionCode, 28);
   assert.equal(expo.ios.buildNumber, '24');
-  assert.ok(expo.android.versionCode > 26, 'above Android 26, the active Play Internal Testing release (owner-confirmed 17 Nov 2026)');
+  assert.ok(expo.android.versionCode > 27, 'above Android 27, the active Play Internal Testing release (owner-stated 21 Nov 2026)');
+  assert.ok(expo.android.versionCode > 26, 'above Android 26, distributed and superseded by 27');
   assert.ok(expo.android.versionCode > 25, 'above Android 25, uploaded to Play Internal Testing (owner-verified 15 Nov 2026)');
   assert.ok(Number(expo.ios.buildNumber) > 23, 'above iOS 23, uploaded to App Store Connect');
   assert.ok(expo.android.versionCode > 24, 'above the built, never uploaded Android 24');

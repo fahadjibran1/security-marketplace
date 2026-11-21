@@ -6,11 +6,12 @@
     "Nothing has been built or submitted for iOS under the permanent identity. The only historical EAS iOS",
     "build (a54b5acd, 2026-06-17) was for the development-era bundle id com.securitymarketplace.mobile and",
     "is not an S4 release.",
-    "S4 1.2.3 (17 Nov 2026): the shared Expo marketing version moved to 1.2.3 for the Android 1.2.3 (27) update (the Guard Profile redesign, PR #123). The iOS build number stays 24 and no iOS build is made while the Apple account restriction is unresolved. Build 24 was already built once, as 1.2.2 (24) (EAS d7433bed, preparedArtefact, never submitted), so the build number for the next iOS build must be decided before that build; app.json 1.2.3 (24) is configuration only, not a built or submitted artefact."
+    "S4 1.2.3 (17 Nov 2026): the shared Expo marketing version moved to 1.2.3 for the Android 1.2.3 (27) update (the Guard Profile redesign, PR #123). The iOS build number stays 24 and no iOS build is made while the Apple account restriction is unresolved. Build 24 was already built once, as 1.2.2 (24) (EAS d7433bed, preparedArtefact, never submitted), so the build number for the next iOS build must be decided before that build; app.json 1.2.3 (24) is configuration only, not a built or submitted artefact.",
+    "S4 1.2.4 (21 Nov 2026): the shared Expo marketing version moved to 1.2.4 for the Android 1.2.4 (28) update (UX-02 Packages A and B, PR #125). The iOS build number stays 24 and no iOS build is made. Build 24 was already built once, as 1.2.2 (24) (EAS d7433bed, preparedArtefact, never submitted), so the build number for the next iOS build must be decided before that build (25 or higher; app.config.js refuses an iOS build otherwise); app.json 1.2.4 (24) is configuration only, not a built or submitted artefact."
   ],
   "bundleIdentifier": "com.sfour.s4",
   "displayName": "S4",
-  "marketingVersion": "1.2.3",
+  "marketingVersion": "1.2.4",
   "buildNumber": "24",
   "deploymentTarget": "15.1",
   "easBuildImage": "default for SDK 54: macos-sequoia-15.6-xcode-26.0 (Xcode 26.0, iOS 26 SDK)",
@@ -591,5 +592,5 @@
     "entitlement": "aps-environment production, from the expo-notifications config plugin",
     "provisioningProfile": "B7539588YY includes aps-environment production (verified 2026-10-24 from EAS and from the IPA). Made with the same distribution certificate."
   },
-  "buildNumberSafeguard": "An iOS EAS build of com.sfour.s4 refuses to start unless app.json ios.buildNumber is a whole number above every build number recorded here with an EAS build (app.config.js, assertIosBuildNumberUnused). Build 24 is used by the built, never submitted 1.2.2 (24) (EAS d7433bed), so app.json 1.2.3 (24) cannot be built for iOS; the next iOS build needs build number 25 or higher."
+  "buildNumberSafeguard": "An iOS EAS build of com.sfour.s4 refuses to start unless app.json ios.buildNumber is a whole number above every build number recorded here with an EAS build (app.config.js, assertIosBuildNumberUnused). Build 24 is used by the built, never submitted 1.2.2 (24) (EAS d7433bed), so app.json 1.2.4 (24) cannot be built for iOS; the next iOS build needs build number 25 or higher."
 }
