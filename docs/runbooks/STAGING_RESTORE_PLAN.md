@@ -163,7 +163,7 @@ Production mode (`NODE_ENV=production`) is kept so staging runs the same checks 
 | `EVIDENCE_STORAGE_*` (5) | A separate R2 bucket `s4-staging-evidence` with its own key, **or** a placeholder HTTPS endpoint (the app boots; evidence uploads fail). Never the production bucket |
 | `SENTRY_DSN` | Unset |
 | `ENABLE_SWAGGER` | `false` |
-| `TRUST_PROXY` | `1` |
+| `TRUST_PROXY` | `2` (measured 2026-11-22: Render edge behind Cloudflare; see DEPLOYMENT.md "Client IP verification") |
 | `DB_POOL_DIAGNOSTICS` | Unset |
 
 All existing variables on the staging service are deleted first.

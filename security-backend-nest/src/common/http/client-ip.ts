@@ -1,8 +1,8 @@
 /**
  * SEC-PUBLIC-02: the one place the API decides which IP address a request came from.
  *
- * It returns Express's `req.ip`, which honours the `trust proxy` setting (TRUST_PROXY, a hop count: 1 in production for
- * Render's edge proxy). With a hop count of N, Express walks X-Forwarded-For from the RIGHT and skips exactly N trusted
+ * It returns Express's `req.ip`, which honours the `trust proxy` setting (TRUST_PROXY, a hop count: 2 in production, Render's
+ * Cloudflare-fronted edge plus its load balancer, measured per docs/runbooks/DEPLOYMENT.md). With a hop count of N, Express walks X-Forwarded-For from the RIGHT and skips exactly N trusted
  * proxies, so the address it returns was appended by infrastructure S4 trusts. Entries a client writes into
  * X-Forwarded-For itself sit to the left of those and are never used.
  *

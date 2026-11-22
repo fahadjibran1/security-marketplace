@@ -89,11 +89,13 @@ test('MANIFEST-3 Guard data keys are secrets and production fails closed without
   throws(() => validateRuntimeEnv({ ...complete, GUARD_DATA_HMAC_KEY: complete.GUARD_DATA_ENCRYPTION_KEY }), /different/);
 });
 
-test('MANIFEST-4 UTC clock, no synchronize, single proxy hop', () => {
+test('MANIFEST-4 UTC clock, no synchronize, two measured proxy hops', () => {
   equal(env.get('TZ')?.value, 'UTC');
   equal(env.get('DATABASE_SYNCHRONIZE')?.value, 'false');
   equal(env.get('NODE_ENV')?.value, 'production');
-  equal(env.get('TRUST_PROXY')?.value, '1');
+  // Render edge (Cloudflare) + Render load balancer, measured on staging (DEPLOYMENT.md "Client IP verification").
+  // Never 'true' and never above the measured count: either would let a client-written X-Forwarded-For entry be trusted.
+  equal(env.get('TRUST_PROXY')?.value, '2');
   equal(env.get('DATABASE_SSL')?.value, 'true');
   equal(env.get('ENABLE_SWAGGER')?.value, 'false');
 });

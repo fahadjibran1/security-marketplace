@@ -27,8 +27,11 @@ services:
       - key: DATABASE_SSL
         value: "true"
       - key: TRUST_PROXY
-        # One Render edge proxy hop. Do not trust arbitrary X-Forwarded-For chains.
-        value: "1"
+        # Two trusted hops, measured on staging 2026-11-22 (docs/runbooks/DEPLOYMENT.md, "Client IP verification"):
+        # Render's onrender.com edge is fronted by Cloudflare, so X-Forwarded-For arrives as [client, Cloudflare]
+        # and the socket is Render's internal load balancer. With 1 the API saw the Cloudflare address as the client.
+        # Never `true`: entries a client writes into X-Forwarded-For must stay untrusted.
+        value: "2"
       - key: CORS_ORIGIN
         sync: false
       - key: DATABASE_URL

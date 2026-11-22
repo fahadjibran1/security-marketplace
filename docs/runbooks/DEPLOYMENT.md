@@ -33,14 +33,27 @@ Only deploy a commit that has:
 - `DATABASE_SSL=true` (mandatory in production).
 - `DATABASE_CA_CERT` set as a Render secret to the trusted CA PEM supplied by the PostgreSQL provider. Literal `\\n` newlines are supported; never commit the certificate.
 - `ENABLE_SWAGGER=false` unless temporarily enabled for an approved diagnostic purpose.
-- `TRUST_PROXY=1` behind the single Render edge-proxy hop. Do not use `true`, which trusts arbitrary forwarding chains.
+- `TRUST_PROXY=2` (set in the Blueprint): the measured Render path has two trusted hops, see "Client IP verification" below. Do not use `true`, which trusts arbitrary forwarding chains, and never set it above the measured count.
 - Authentication throttling uses the API instance's in-memory store. Keep `numInstances: 1` for the pilot; multi-instance deployment requires a distributed/shared rate-limit store.
 - The client IP (authentication limiter, audit records) is Express's `req.ip` under `TRUST_PROXY` (`src/common/http/client-ip.ts`): the address the trusted edge proxy appended to `X-Forwarded-For`, never the client-supplied first entry, which anyone can forge (SEC-PUBLIC-02).
 - Sign-in limits (`src/auth/login-attempt-limiter.ts`) count FAILED sign-ins only, per 15 minutes: 5 per (account, client IP), 30 per client IP, and 10 per account across all IPs. When the account-wide limit trips, only IPs that have not signed in to that account successfully in the last 30 days are refused, so an attacker cannot lock a user out from where they normally sign in; a completed password reset clears the account. The refusal is the same neutral `429` for existing and non-existent accounts. Separately, the per-IP request cap on `/auth/login` and `/auth/client-login` is 30 a minute, so many users behind one office or carrier address can sign in together.
 
 ### Client IP verification gate (before relying on the sign-in limits; repeat after any proxy, CDN or WAF change)
 
-The hop count Render puts in front of the API has not been verified from documentation (community reports differ on whether a Cloudflare layer adds a second hop). It must be measured on staging with the deployed build, not assumed:
+Render does not document the hop count in front of the API, so it is measured, not assumed.
+
+**Measured on staging, 2026-11-22 (build `7b01832`):**
+- The `onrender.com` edge (`Server: cloudflare`, `x-render-origin-server: Render`) is fronted by Cloudflare.
+- The API receives `X-Forwarded-For: [anything the client sent…, client IP, Cloudflare egress IP]` over a socket from Render's internal load balancer (a private `10.x` address).
+- With `TRUST_PROXY=1`, `req.ip` was the Cloudflare egress address. Every client reaching the same Cloudflare node shared one sign-in limit bucket, and the known-IP exemption was meaningless.
+- With `TRUST_PROXY=2`, `req.ip` is the client's real public IP. Forged `X-Forwarded-For` (one or two entries), `True-Client-IP` and `X-Real-IP` headers do not change it, and Cloudflare refuses a client-supplied `CF-Connecting-IP` (error 1000).
+- The production API host has identical edge headers (`Server: cloudflare`, `x-render-origin-server: Render`, the same London Cloudflare PoP), so production is expected to have the same two hops. This is confirmed by step 5 below after the release, not assumed.
+
+**Residual risk:** a request that reaches Render's load balancer WITHOUT passing through Cloudflare (for example from another service on the same Render private network) could have its last client-written entry trusted. No public path was found. A stricter alternative is a subnet list instead of a count (`uniquelocal` plus Cloudflare's published ranges), at the cost of maintaining that list.
+
+**Rollback of this setting:** set `TRUST_PROXY` back to `1` in `render.yaml` (and `deploy-manifest.spec.ts`), sync the Blueprint and redeploy the same build. Do that only if step 4 below shows a forged value being trusted; then treat the per-IP limits as unverified again. A value that is too LOW (shared buckets) is a weaker failure than one that is too HIGH (forgeable), so when in doubt choose the lower value.
+
+Validation procedure (repeat after any proxy, CDN, WAF or custom-domain change; a custom domain behind the owner's own Cloudflare zone adds a hop and must be re-measured):
 
 1. Sign in to the staging portal as the platform administrator and call `GET /admin/diagnostics/client-ip` (admin-only, read-only) from a network whose public IP you know (check it at any "what is my IP" page).
 2. PASS when `resolvedClientIp` equals your public IP. Record `trustProxy`, `forwardedForEntries` and `cdnHeadersPresent` in the release record.
@@ -56,7 +69,7 @@ Never place production secrets in GitHub, Blueprint files, screenshots or suppor
 
 The Nest application applies Helmet centrally before route handling. Production responses, including health endpoints, use one-year HSTS (`max-age=31536000`) without `includeSubDomains` or `preload`, deny framing, disable MIME sniffing, use `Referrer-Policy: no-referrer`, and apply a minimal API CSP (`default-src 'none'; frame-ancestors 'none'`). Helmet also supplies the COOP, CORP, Origin-Agent-Cluster, DNS-prefetch, download and cross-domain policies; `X-Powered-By` is disabled. The restrictive camera/microphone/geolocation `Permissions-Policy` remains application-specific.
 
-HSTS assumes HTTPS termination at Render and `TRUST_PROXY=1` for the single trusted edge hop. The application does not add an HTTPS redirect. Helmet does not replace CORS: production origins remain explicitly controlled by `CORS_ORIGIN`, with credentials enabled and no wildcard. Non-production disables HSTS and CSP so localhost and Swagger remain usable; the remaining safe headers still apply.
+HSTS assumes HTTPS termination at Render's edge, with `TRUST_PROXY=2` for the two measured trusted hops. The application does not add an HTTPS redirect. Helmet does not replace CORS: production origins remain explicitly controlled by `CORS_ORIGIN`, with credentials enabled and no wildcard. Non-production disables HSTS and CSP so localhost and Swagger remain usable; the remaining safe headers still apply.
 
 After deployment, inspect both normal authenticated API responses and health endpoints, for example `curl -sS -D - -o /dev/null https://<approved-api-host>/health/ready`. Require HSTS, `nosniff`, frame protection, referrer policy and the production CSP, and confirm that no `X-Powered-By` header appears. Repeat with an approved and an unapproved `Origin` header to verify CORS independently. This verifies application output only; record any additional Render edge headers separately.
 
