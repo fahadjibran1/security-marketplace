@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { AuditLog } from '../../audit-log/entities/audit-log.entity';
 import { Company } from '../entities/company.entity';
 import { AuditLogService } from '../../audit-log/audit-log.service';
 import { JwtPayload } from '../../auth/types/jwt-payload.type';
@@ -20,8 +21,29 @@ export interface CompanyVerificationAdminView {
   verificationStatus: CompanyVerificationStatus;
   verificationNote: string | null;
   verificationDecidedAt: Date | null;
+  /** When the owner account was created: the company's self-registration date. */
+  registeredAt: Date | null;
   owner: { id: number; email: string; phone: string | null } | null;
 }
+
+/** The verification actions kept in the audit log; the history shows nothing else from it. */
+export const COMPANY_VERIFICATION_AUDIT_ACTIONS = ['company.verification_changed', 'company.verification_reconsideration_requested'] as const;
+
+/** One verification decision or request, as the administrator sees it in the company's history. */
+export interface CompanyVerificationHistoryEntry {
+  id: number;
+  action: (typeof COMPANY_VERIFICATION_AUDIT_ACTIONS)[number];
+  at: Date;
+  actor: { id: number; email: string; role: string } | null;
+  fromStatus: CompanyVerificationStatus | null;
+  toStatus: CompanyVerificationStatus | null;
+  /** The administrator's reason (decisions) or the company's message (reconsideration requests). */
+  note: string | null;
+}
+
+const asStatus = (value: unknown): CompanyVerificationStatus | null =>
+  typeof value === 'string' && (Object.values(CompanyVerificationStatus) as string[]).includes(value) ? (value as CompanyVerificationStatus) : null;
+const asText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
 
 function adminView(company: Company): CompanyVerificationAdminView {
   return {
@@ -33,6 +55,7 @@ function adminView(company: Company): CompanyVerificationAdminView {
     verificationStatus: company.verificationStatus,
     verificationNote: company.verificationNote ?? null,
     verificationDecidedAt: company.verificationDecidedAt ?? null,
+    registeredAt: company.user?.createdAt ?? null,
     owner: company.user ? { id: company.user.id, email: company.user.email, phone: company.user.phone ?? null } : null,
   };
 }
@@ -47,6 +70,7 @@ function adminView(company: Company): CompanyVerificationAdminView {
 export class CompanyVerificationService {
   constructor(
     @InjectRepository(Company) private readonly companies: Repository<Company>,
+    @InjectRepository(AuditLog) private readonly auditLogs: Repository<AuditLog>,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -62,6 +86,34 @@ export class CompanyVerificationService {
     const company = await this.companies.findOne({ where: { id: companyId } });
     if (!company) throw new NotFoundException('Company not found');
     return adminView(company);
+  }
+
+  /**
+   * The company's verification history, newest first, read from the audit log (the record every decision and
+   * reconsideration request already writes). Only the verification fields of each entry are returned.
+   */
+  async history(companyId: number): Promise<CompanyVerificationHistoryEntry[]> {
+    const company = await this.companies.findOne({ where: { id: companyId } });
+    if (!company) throw new NotFoundException('Company not found');
+    const rows = await this.auditLogs.find({
+      where: { company: { id: companyId }, entityType: 'company', action: In([...COMPANY_VERIFICATION_AUDIT_ACTIONS]) },
+      order: { createdAt: 'DESC', id: 'DESC' },
+      take: 100,
+    });
+    return rows.map((row) => {
+      const before = (row.beforeData ?? {}) as Record<string, unknown>;
+      const after = (row.afterData ?? {}) as Record<string, unknown>;
+      const reconsideration = row.action === 'company.verification_reconsideration_requested';
+      return {
+        id: row.id,
+        action: row.action as CompanyVerificationHistoryEntry['action'],
+        at: row.createdAt,
+        actor: row.user ? { id: row.user.id, email: row.user.email, role: String(row.user.role) } : null,
+        fromStatus: asStatus(before.verificationStatus),
+        toStatus: asStatus(after.verificationStatus),
+        note: reconsideration ? asText(after.message) : asText(after.verificationNote),
+      };
+    });
   }
 
   async decide(

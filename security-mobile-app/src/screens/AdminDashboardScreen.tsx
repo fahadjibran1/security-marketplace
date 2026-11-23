@@ -14,6 +14,8 @@ import type { GuardScreening, ScreeningQueueFilter, ScreeningQueueResponse, Scre
 // the transport format, and the two sides of the product should not disagree about what a date is.
 import { formatScreeningDate, screeningDateToIso } from '../components/guard/screening-format';
 import { colors } from '../theme';
+import { CompanyVerificationPanel } from '../components/admin/CompanyVerificationPanel';
+import { listCompanyVerification } from '../services/api';
 
 // The reviewer workload. "Needs review" is the default: everything that can actually be progressed
 // right now, which is why it spans three derived buckets.
@@ -40,6 +42,8 @@ const loaders: Record<Exclude<AdminSection, 'overview'>, Loader> = {
   // Screening has its own compact queue endpoint and never goes through this generic loader; the
   // key exists only to satisfy the section map. Calling it would fetch every full application.
   screening: async () => [],
+  // S4-CV-01: the verification page loads itself; the overview counts the companies waiting for a decision.
+  verification: () => listCompanyVerification('pending_verification'),
   notifications: listCompanyNotifications,
   health: async () => [{ id: 'live', name: 'Liveness', ...(await getHealthLive()) }, { id: 'ready', name: 'Readiness', ...(await getHealthReady()) }],
 };
@@ -48,6 +52,7 @@ function displayRow(section: Exclude<AdminSection, 'overview'>, value: unknown, 
   const row = value as Record<string, any>;
   const id = text(row.id, String(index + 1));
   switch (section) {
+    case 'verification': return { id, title: text(row.name), detail: text(row.verificationStatus) };
     case 'companies': return { id, title: text(row.name), detail: `Company no. ${text(row.companyNumber)} · ${text(row.address)}` };
     case 'guards': return { id, title: text(row.fullName), detail: `Account: ${text(row.user?.status, 'unknown')} · Profile: ${isGuardProfileComplete(row) ? 'Complete' : 'Incomplete'} · Vetting: company review required · Work eligibility: assessed per company`, status: `Account ${text(row.user?.status, 'unknown')}` };
     case 'sites': return { id, title: text(row.name), detail: `${text(row.address)} · ${text(row.company?.name, 'Company not linked')}`, status: text(row.status) };
@@ -109,9 +114,12 @@ export function AdminDashboardScreen() {
     setLoading(true); setError(null);
     try {
       if (section === 'overview') {
-        const keys: Exclude<AdminSection, 'overview'>[] = ['companies', 'guards', 'sites', 'jobs', 'shifts', 'incidents', 'alerts', 'audit'];
+        const keys: Exclude<AdminSection, 'overview'>[] = ['verification', 'companies', 'guards', 'sites', 'jobs', 'shifts', 'incidents', 'alerts', 'audit'];
         const results = await Promise.all(keys.map((key) => loaders[key]()));
         setOverview(keys.map((key, index) => ({ section: key, count: results[index].length })));
+      } else if (section === 'verification') {
+        // CompanyVerificationPanel owns its own loading, filtering and decisions.
+        setRows([]);
       } else if (section === 'screening') {
         // The reviewer queue has its own compact endpoint and its own effect; never load the full
         // screening applications here.
@@ -241,7 +249,8 @@ export function AdminDashboardScreen() {
   </ScrollView>;
 
   return <View style={[styles.shell, compact && styles.shellCompact]}>{imageViewer?<Modal transparent animationType="fade" onRequestClose={()=>setImageViewer(null)}><View style={styles.modalBackdrop}><View style={styles.imageModal}><Text style={styles.detailHeading}>{imageViewer.label}</Text><Image source={{uri:imageViewer.url}} resizeMode="contain" style={styles.evidenceImage}/><Text style={styles.rowDetail}>This short-lived private preview does not change verification state.</Text><Pressable style={styles.approveButton} onPress={()=>setImageViewer(null)}><Text style={styles.approveText}>Close preview</Text></Pressable></View></View></Modal>:null}{navigation}<ScrollView ref={contentScroll} style={styles.content} contentContainerStyle={styles.contentInner}>
-    <View style={styles.headingRow}><View style={styles.headingCopy}><Text style={styles.title}>{current.label}</Text><Text style={styles.subtitle}>Global Platform Admin view · RC1 authorized capability</Text></View><Pressable style={styles.refreshButton} onPress={load} disabled={loading}><Text style={styles.refreshText}>{loading ? 'Loading…' : 'Refresh'}</Text></Pressable></View>
+    <View style={styles.headingRow}><View style={styles.headingCopy}><Text style={styles.title}>{current.label}</Text><Text style={styles.subtitle}>Global Platform Admin view · RC1 authorized capability</Text></View>{section !== 'verification' ? <Pressable style={styles.refreshButton} onPress={load} disabled={loading}><Text style={styles.refreshText}>{loading ? 'Loading…' : 'Refresh'}</Text></Pressable> : null}</View>
+    {section === 'verification' ? <CompanyVerificationPanel /> : <>
     {section !== 'overview' && !(section === 'screening' && selected) ? <TextInput accessibilityLabel={section === 'screening' ? 'Search Guards' : 'Search current admin view'} value={query} onChangeText={setQuery} placeholder={section === 'screening' ? 'Search Guards…' : 'Search this view'} style={styles.search} /> : null}
     {section === 'screening' && !selected ? <>
       <View style={styles.grid}>
@@ -269,7 +278,7 @@ export function AdminDashboardScreen() {
     </> : null}
     {error ? <View style={styles.errorBox}><Text style={styles.error}>{error}</Text><Pressable onPress={load}><Text style={styles.retry}>Retry</Text></Pressable></View> : null}
     {section === 'overview' && loading ? <Text style={styles.loading}>Loading Platform Admin overview…</Text> : null}
-    {section === 'overview' && !error ? <View style={styles.grid}>{overview.map((metric) => { const item = ADMIN_NAV_ITEMS.find((entry) => entry.key === metric.section)!; return <Pressable key={metric.section} onPress={() => setSection(metric.section)} style={styles.metricCard}><Text style={styles.cardLabel}>{item.label}</Text><Text style={styles.cardValue}>{loading ? '—' : metric.count}</Text><Text style={styles.link}>Open view →</Text></Pressable>; })}</View> : null}
+    {section === 'overview' && !error ? <View style={styles.grid}>{overview.map((metric) => { const item = ADMIN_NAV_ITEMS.find((entry) => entry.key === metric.section)!; return <Pressable key={metric.section} onPress={() => setSection(metric.section)} style={styles.metricCard}><Text style={styles.cardLabel}>{item.key === 'verification' ? 'Companies awaiting verification' : item.label}</Text><Text style={styles.cardValue}>{loading ? '—' : metric.count}</Text><Text style={styles.link}>Open view →</Text></Pressable>; })}</View> : null}
     {section !== 'overview' && section !== 'screening' && !loading && !error && visibleRows.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>{query ? 'No matching records' : current.emptyLabel}</Text><Text style={styles.emptyText}>{query ? 'Clear or change the search term.' : 'This is expected for a freshly provisioned pilot database.'}</Text></View> : null}
     {section !== 'overview' && loading ? <Text style={styles.loading}>Loading {current.label.toLocaleLowerCase()}…</Text> : null}
     {selected ? <View style={styles.detailPanel}>{section==='screening'?<Pressable accessibilityRole="button" onPress={backToQueue}><Text style={styles.backToQueue}>← Back to Screening Review</Text></Pressable>:null}<Text style={styles.detailHeading}>{selected.title}</Text><Text style={styles.rowDetail}>{selected.detail}</Text>{selected.status ? <Text style={styles.status}>{selected.status}</Text> : null}
@@ -368,6 +377,7 @@ export function AdminDashboardScreen() {
         {selected.status==='VETTED'?<Pressable disabled={!!reviewAction} style={[styles.approveButton,reviewAction&&styles.disabledButton]} onPress={()=>{setReviewReasonAction('expire');setReviewReason('');setReviewFeedback(null);}}><Text style={styles.approveText}>Mark expired</Text></Pressable>:null}
       </View></>:null}<Pressable onPress={() => { if(section==='screening')backToQueue(); else setSelected(null); }}><Text style={styles.retry}>{section==='screening'?'Back to Screening Review':'Close detail'}</Text></Pressable></View> : null}
     {section !== 'overview' && section !== 'screening' && !loading && !error ? <View style={styles.list}>{visibleRows.map((row) => <Pressable accessibilityRole="button" accessibilityLabel={`Open ${row.title} detail`} onPress={() => {setSelected(row);setReviewReason('');setReviewReasonAction(null);setReviewFeedback(null);setReviewCategory(null);setInspectedEvidenceId(null);setVerificationConfirm(false);}} key={row.id} style={styles.row}><View style={styles.rowCopy}><Text style={styles.rowTitle}>{row.title}</Text><Text style={styles.rowDetail}>{row.detail}</Text></View>{row.status ? <Text style={styles.status}>{row.status}</Text> : null}</Pressable>)}</View> : null}
+    </>}
   </ScrollView></View>;
 }
 

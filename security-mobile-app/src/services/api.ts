@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { isUatBuild, resolveApiBaseUrl, resolveUatApiBaseUrl } from './api-base-url';
 import type { TimesheetHistoryItem } from './timesheetReview';
+import type { AdminVerificationCompany, CompanyVerificationStatus, VerificationHistoryEntry } from '../navigation/company-verification';
 import {
   Attachment,
   AuditLog,
@@ -257,6 +258,44 @@ export function setUnauthorizedHandler(handler: ((message: string) => void | Pro
   unauthorizedHandler = handler;
 }
 
+/**
+ * S4-CV-01: every 403 COMPANY_NOT_APPROVED refusal, wherever it happens, is announced here so the company portal can
+ * refresh its verification banner. The request still fails exactly as before; listeners only observe it.
+ */
+export const COMPANY_NOT_APPROVED_CODE = 'COMPANY_NOT_APPROVED';
+
+/** True for the backend's 403 COMPANY_NOT_APPROVED refusal (an ApiError body or the body itself). */
+export function isCompanyNotApprovedBody(body: unknown): body is { code: string; verificationStatus?: string; message?: string; capability?: string } {
+  return !!body && typeof body === 'object' && (body as { code?: unknown }).code === COMPANY_NOT_APPROVED_CODE;
+}
+
+/**
+ * The words for a refused action, the same wherever it happens: the backend's own message (which names the state and
+ * what to do), or a fallback by state if it is missing.
+ */
+export function companyNotApprovedMessage(body: { verificationStatus?: string; message?: string } | null | undefined): string {
+  if (body?.message && body.message.trim()) return body.message;
+  switch (body?.verificationStatus) {
+    case 'pending_verification': return 'Your company is awaiting verification by S4. This action becomes available once S4 has approved your company.';
+    case 'rejected': return 'Your company was not approved by S4, so this action is not available. See the verification notice at the top of the page.';
+    case 'suspended': return 'Your company has been suspended by S4, so this action is not available. Safety alerts and existing work continue.';
+    default: return 'Your company is not approved by S4 for this action.';
+  }
+}
+
+type CompanyNotApprovedListener = (refusal: { verificationStatus?: string; message?: string; capability?: string }) => void;
+const companyNotApprovedListeners = new Set<CompanyNotApprovedListener>();
+export function onCompanyNotApproved(listener: CompanyNotApprovedListener): () => void {
+  companyNotApprovedListeners.add(listener);
+  return () => { companyNotApprovedListeners.delete(listener); };
+}
+function announceCompanyNotApproved(body: unknown) {
+  if (!isCompanyNotApprovedBody(body)) return;
+  for (const listener of [...companyNotApprovedListeners]) {
+    try { listener({ verificationStatus: body.verificationStatus, message: body.message, capability: body.capability }); } catch { /* a listener never breaks the request */ }
+  }
+}
+
 async function parseResponseBody(response: Response) {
   const contentType = response.headers.get('content-type') || '';
   const raw = await response.text();
@@ -365,6 +404,7 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
       }
     }
 
+    if (response.status === 403) announceCompanyNotApproved(body);
     throw new ApiError(response.status, response.statusText, body);
   }
 
@@ -386,6 +426,11 @@ export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
     }
 
     if (error.status === 403) {
+      // S4-CV-01: a refusal because the company is not approved always reads the same, wherever it happens.
+      if (isCompanyNotApprovedBody(error.body)) {
+        return companyNotApprovedMessage(error.body);
+      }
+
       if (typeof error.body === 'string' && error.body.trim()) {
         return error.body;
       }
@@ -660,6 +705,49 @@ export async function logout() {
 
 export function listCompanies() {
   return request<CompanyProfile[]>('/companies');
+}
+
+// ─── S4-CV-01 company verification ──────────────────────────────────────────
+export interface OwnCompanyVerification {
+  verificationStatus: CompanyVerificationStatus;
+  verificationNote: string | null;
+  verificationDecidedAt: string | null;
+}
+
+/** Platform Admin: every company's verification, or one state's. */
+export function listCompanyVerification(status?: CompanyVerificationStatus) {
+  return request<AdminVerificationCompany[]>(`/admin/companies/verification${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+}
+
+export function getCompanyVerification(companyId: number) {
+  return request<AdminVerificationCompany>(`/admin/companies/${companyId}/verification`);
+}
+
+export function getCompanyVerificationHistory(companyId: number) {
+  return request<VerificationHistoryEntry[]>(`/admin/companies/${companyId}/verification/history`);
+}
+
+/** Platform Admin decision. A reason is required to reject or suspend (the company is shown it). */
+export function decideCompanyVerification(companyId: number, status: CompanyVerificationStatus, reason?: string) {
+  const trimmed = reason?.trim();
+  return request<AdminVerificationCompany>(`/admin/companies/${companyId}/verification`, {
+    method: 'PUT',
+    body: JSON.stringify(trimmed ? { status, reason: trimmed } : { status }),
+  });
+}
+
+/** The signed-in company user's own company verification. */
+export function getMyCompanyVerification() {
+  return request<OwnCompanyVerification>('/companies/me/verification');
+}
+
+/** A rejected company asks S4 to look again (owner / admin). */
+export function requestCompanyReconsideration(message?: string) {
+  const trimmed = message?.trim();
+  return request<OwnCompanyVerification>('/companies/me/verification/reconsideration', {
+    method: 'POST',
+    body: JSON.stringify(trimmed ? { message: trimmed } : {}),
+  });
 }
 
 export function getMyCompany() {

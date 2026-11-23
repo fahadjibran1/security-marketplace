@@ -49,6 +49,11 @@ export class CompanyVerificationController {
     return this.verification.get(companyId);
   }
 
+  @Get(':companyId/verification/history')
+  history(@Param('companyId', ParseIntPipe) companyId: number) {
+    return this.verification.history(companyId);
+  }
+
   @Put(':companyId/verification')
   decide(
     @CurrentUser() user: JwtPayload,

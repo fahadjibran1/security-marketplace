@@ -243,6 +243,7 @@ import {
 } from '../types/models';
 import { CompanySidebar } from '../components/company/CompanySidebar';
 import { CompanyTopBar } from '../components/company/CompanyTopBar';
+import { CompanyVerificationBanner } from '../components/company/CompanyVerificationBanner';
 import { CompanyWeeklyApprovalsScreen } from './CompanyWeeklyApprovalsScreen';
 import { AppBuildFooter } from '../components/ui/AppBuildFooter';
 import { Card } from '../components/ui/Card';
@@ -1346,6 +1347,13 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
    */
   const canManageAttendance = React.useMemo(
     () => canManageAttendanceFromSession(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
+  /** company.manage (owner / admin): correct registration details and ask S4 to reconsider (S4-CV-01). Display only. */
+  const canManageCompany = React.useMemo(
+    () => (user?.companyPermissions
+      ? user.companyPermissions.includes("company.manage")
+      : (user?.role === "company_admin" || user?.role === "company")),
     [user?.companyPermissions, user?.role],
   );
   const canManageShifts = React.useMemo(
@@ -5884,6 +5892,9 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
             title={activeNavItem?.label ?? 'Dashboard'}
             description={activeNavItem?.caption}
           />
+
+          {/* S4-CV-01: shown on every page until S4 approves the company; never blocks safety or existing work. */}
+          <CompanyVerificationBanner canManageCompany={canManageCompany} />
 
           {error ? (
             <View style={styles.errorCard}>

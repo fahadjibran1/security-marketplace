@@ -1,7 +1,7 @@
 import type { AppRole } from '../types/models';
 
 export type AdminSection =
-  | 'overview' | 'companies' | 'guards' | 'sites' | 'jobs' | 'applications'
+  | 'overview' | 'companies' | 'verification' | 'guards' | 'sites' | 'jobs' | 'applications'
   | 'assignments' | 'shifts' | 'attendance' | 'timesheets' | 'incidents'
   | 'alerts' | 'dailyLogs' | 'screening' | 'audit' | 'notifications' | 'health';
 
@@ -15,6 +15,7 @@ export interface AdminNavItem {
 export const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { key: 'overview', label: 'Dashboard', group: 'Overview', emptyLabel: 'No platform data is available yet.' },
   { key: 'companies', label: 'Companies', group: 'Directory', emptyLabel: 'No companies have been created yet.' },
+  { key: 'verification', label: 'Company verification', group: 'Directory', emptyLabel: 'No companies are waiting for verification.' },
   { key: 'guards', label: 'Guard access & status', group: 'Directory', emptyLabel: 'No guards have been created yet.' },
   { key: 'sites', label: 'Sites', group: 'Directory', emptyLabel: 'No sites have been created yet.' },
   { key: 'jobs', label: 'Jobs', group: 'Operations', emptyLabel: 'No jobs have been created yet.' },

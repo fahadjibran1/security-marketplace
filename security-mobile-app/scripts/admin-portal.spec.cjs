@@ -20,7 +20,7 @@ assert.equal(canAccessAdminPortal('admin'), true);
 for (const role of ['company', 'company_admin', 'company_staff', 'guard', 'client_admin', 'client_viewer', 'unknown', undefined]) assert.equal(canAccessAdminPortal(role), false);
 assert.equal(getAppSurface('admin'), 'admin');
 assert.equal(getAppSurface('unknown'), 'denied');
-for (const required of ['overview', 'companies', 'guards', 'sites', 'jobs', 'applications', 'assignments', 'shifts', 'attendance', 'timesheets', 'incidents', 'alerts', 'dailyLogs', 'audit', 'notifications', 'health']) assert.ok(keys.includes(required), `${required} must be navigable`);
+for (const required of ['overview', 'companies', 'verification', 'guards', 'sites', 'jobs', 'applications', 'assignments', 'shifts', 'attendance', 'timesheets', 'incidents', 'alerts', 'dailyLogs', 'audit', 'notifications', 'health']) assert.ok(keys.includes(required), `${required} must be navigable`);
 assert.ok(ADMIN_NAV_ITEMS.every((item) => item.emptyLabel.length > 10));
 assert.match(adminPortalError(403), /Access denied/);
 assert.match(adminPortalError(404), /not available/);

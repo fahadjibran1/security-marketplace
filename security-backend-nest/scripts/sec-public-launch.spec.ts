@@ -238,6 +238,7 @@ async function main() {
       assert.equal((await decide(alphaId, 'approved', undefined, token)).status, 403, `${who}: decide`);
       assert.equal((await api('GET', '/admin/companies/verification', token)).status, 403, `${who}: list`);
       assert.equal((await api('GET', `/admin/companies/${alphaId}/verification`, token)).status, 403, `${who}: read`);
+      assert.equal((await api('GET', `/admin/companies/${alphaId}/verification/history`, token)).status, 403, `${who}: history`);
     }
     assert.equal((await decide(alphaId, 'approved', undefined, '')).status, 401, 'anonymous');
     assert.equal(await verificationOf(alphaId), 'pending_verification');
@@ -552,6 +553,25 @@ async function main() {
       [['pending_verification', 'rejected'], ['pending_verification', 'approved'], ['approved', 'suspended'], ['suspended', 'approved']]);
     assert.ok(audit.every((a: any) => Number(a.userId) === admin.userId), 'every decision is attributed to the administrator');
     pass('S03-AUDIT: every verification decision is audited with before and after');
+
+    // S4-CV-01: the admin page's verification history, read from the audit log (newest first, verification fields only).
+    const history = await api('GET', `/admin/companies/${alphaId}/verification/history`, admin.token);
+    assert.equal(history.status, 200, errText(history));
+    const steps = history.body.map((e: any) => `${e.fromStatus}>${e.toStatus}`).reverse();
+    assert.deepEqual(steps.slice(0, 3), ['pending_verification>rejected', 'rejected>pending_verification', 'pending_verification>approved'],
+      'reject, reconsideration request and approval, in order');
+    const recon = history.body.find((e: any) => e.action === 'company.verification_reconsideration_requested');
+    assert.equal(recon.note, 'Companies House number corrected.', "the company's message is shown on its request");
+    assert.equal(recon.actor.id, alpha.userId);
+    const rejection = history.body.find((e: any) => e.toStatus === 'rejected');
+    assert.equal(rejection.note, 'Companies House number does not match the company name.');
+    assert.equal(rejection.actor.role, 'admin');
+    assert.deepEqual(Object.keys(history.body[0]).sort(), ['action', 'actor', 'at', 'fromStatus', 'id', 'note', 'toStatus']);
+    assert.deepEqual(Object.keys(history.body[0].actor).sort(), ['email', 'id', 'role'], 'no password hash or other user field');
+    assert.equal((await api('GET', '/admin/companies/999999/verification/history', admin.token)).status, 404);
+    const detail = await api('GET', `/admin/companies/${alphaId}/verification`, admin.token);
+    assert.ok(detail.body.registeredAt && !Number.isNaN(Date.parse(detail.body.registeredAt)), 'registration date shown');
+    pass("CV01-HISTORY: an administrator reads one company's verification history and registration date");
 
     const listPending = await api('GET', '/admin/companies/verification?status=pending_verification', admin.token);
     assert.equal(listPending.status, 200, errText(listPending));
