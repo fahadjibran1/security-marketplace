@@ -83,6 +83,11 @@ jobs:
       - name: Verify admin portal role boundary
         run: npm run test:admin-portal
 
+      # S4-CV-01: the company verification page offers only the backend's transitions, requires reasons to reject or
+      # suspend, and every 403 COMPANY_NOT_APPROVED is announced and worded the same in the company portal.
+      - name: Verify company verification UI
+        run: npm run test:company-verification-ui
+
       # ── Workforce and compliance ──────────────────────────────────────────────
       # Option 3 is core pilot functionality: the pilot literally begins with a company inviting a guard.
       - name: Verify workforce invitation UI

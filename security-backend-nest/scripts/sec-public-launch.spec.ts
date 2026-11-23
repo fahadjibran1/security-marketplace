@@ -573,6 +573,38 @@ async function main() {
     assert.ok(detail.body.registeredAt && !Number.isNaN(Date.parse(detail.body.registeredAt)), 'registration date shown');
     pass("CV01-HISTORY: an administrator reads one company's verification history and registration date");
 
+    // S4-CV-01: tenant isolation of verification notes and history.
+    const historyRowsOutside = await q(
+      `SELECT count(*)::int n FROM audit_logs WHERE id = ANY($1::int[]) AND ("companyId" IS DISTINCT FROM $2)`,
+      [history.body.map((e: any) => e.id), alphaId]);
+    assert.equal(historyRowsOutside[0].n, 0, 'every history entry belongs to the requested company');
+    const gammaOwn = await api('GET', '/companies/me/verification', pendingCo.token);
+    assert.equal(gammaOwn.body.verificationStatus, 'pending_verification', 'a company reads only its own state');
+    assert.equal(gammaOwn.body.verificationNote, null, "and never another company's reason");
+    assert.equal((await api('GET', `/admin/companies/${alphaId}/verification/history`, pendingCo.token)).status, 403, 'a company cannot read any history');
+    pass('CV01-TENANT: verification history and notes never cross companies');
+
+    // S4-CV-01: two administrators deciding at once. Exactly one decision applies; the other gets a 409 and changes nothing.
+    const raceCo = await registerCompany('race');
+    const raceId = raceCo.companyId!;
+    const [first, second] = await Promise.all([
+      decide(raceId, 'approved'),
+      decide(raceId, 'rejected', 'Concurrent decision test'),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    assert.deepEqual(statuses, [200, 409], `one decision wins, the other conflicts (${first.status}/${second.status})`);
+    const loser = first.status === 409 ? first : second;
+    const winner = first.status === 200 ? first : second;
+    assert.ok(['COMPANY_VERIFICATION_CHANGED', 'COMPANY_VERIFICATION_TRANSITION_NOT_ALLOWED'].includes(loser.body.code), `conflict code ${loser.body.code}`);
+    assert.equal(await verificationOf(raceId), winner.body.verificationStatus, "the stored state is the winner's");
+    const raceAudit = await q(`SELECT count(*)::int n FROM audit_logs WHERE action = 'company.verification_changed' AND "entityId" = $1`, [raceId]);
+    assert.equal(raceAudit[0].n, 1, 'only the applied decision is audited');
+    // Replaying the winner's own decision (what the losing admin's screen still offers from its stale view) is refused.
+    const stale = await decide(raceId, winner.body.verificationStatus, 'Stale view');
+    assert.equal(stale.status, 409, 'a decision from a stale view is refused');
+    assert.equal(await verificationOf(raceId), winner.body.verificationStatus);
+    pass('CV01-CONCURRENCY: simultaneous decisions apply exactly one, audit one, and conflict the other with 409');
+
     const listPending = await api('GET', '/admin/companies/verification?status=pending_verification', admin.token);
     assert.equal(listPending.status, 200, errText(listPending));
     assert.ok(listPending.body.some((c: any) => c.id === pendingCo.companyId) && !listPending.body.some((c: any) => c.id === alphaId));
