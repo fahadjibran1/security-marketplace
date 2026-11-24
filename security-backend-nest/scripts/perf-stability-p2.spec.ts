@@ -610,11 +610,18 @@ async function main() {
       'src/guard-notification/guard-notification.service.ts',
       'src/patrol/evidence/patrol-evidence-maintenance.service.ts',
       'src/patrol/patrol-sweep.service.ts',
+      'src/safety-alert/emergency-push.service.ts',
       'src/safety-alert/safety-alert.service.ts',
       'src/scheduler/scheduler.service.ts',
       'src/shift-amendment/shift-amendment.service.ts',
       'src/welfare-push/welfare-push.service.ts',
     ]);
+    // S4-EM-01 owed-push recovery: single-flight, every minute, the timer only ticks the job (and never holds the process).
+    const eps = src('../src/safety-alert/emergency-push.service.ts');
+    const epsInit = eps.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
+    assert.match(epsInit, /new SingleFlightJob\('emergency-push-recovery'/);
+    assert.match(epsInit, /setInterval\(\(\) => void this\.recoveryJob\?\.tick\(\), EMERGENCY_PUSH_RECOVERY_INTERVAL_MS\)/);
+    assert.match(epsInit, /unref/);
     // Patrols P1-B sweep: single-flight, every five minutes, and the timer only ticks the job.
     const pss = src('../src/patrol/patrol-sweep.service.ts');
     const pssInit = pss.split('onModuleInit() {')[1].split('onModuleDestroy()')[0];
