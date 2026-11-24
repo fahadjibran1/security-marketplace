@@ -4,12 +4,15 @@
  *   EM-M01  one press sends exactly one request: type panic, critical, the Guard's live shift, the standard body
  *   EM-M02  no live shift: nothing is sent, and the Guard is told why
  *   EM-M03  the receipt: received / duplicate / an older backend without a receipt; a 2xx without an id is NOT received
- *   EM-M04  failures: offline, session ended, refused (S4's own words), server error — each says NOT sent and 999
+ *   EM-M04  only an answer from S4 says NOT SENT (session ended, refused in S4's own words, throttled); no answer,
+ *           a timeout or a 408/5xx is NOT CONFIRMED — never "not sent" — and every one gives the 999 advice
  *   EM-M05  nothing ever claims the Control Room received or acknowledged it; acknowledgement only from the alert itself
  *   EM-M06  layout: SEND is a large target on small and large phones; nothing needs scrolling
- *   EM-M07  rendered: full screen, no ScrollView, no text input, SEND + separate Cancel, 999 notice, accessible labels
+ *   EM-M07  rendered: full screen, no text input, SEND + separate Cancel, 999 notice, accessible labels; instructions
+ *           are never capped in size, and only the screen itself may scroll (very large text), nothing else
  *   EM-M08  rendered: a fast double tap sends once; the received screen; Cancel sends nothing
- *   EM-M09  rendered: offline → NOT sent → TRY AGAIN sends again; the follow-up read shows a real acknowledgement
+ *   EM-M09  rendered: no answer → NOT CONFIRMED → TRY AGAIN sends again; the follow-up read shows a real acknowledgement
+ *   EM-M13  rendered: NOT CONFIRMED, then the Guard's own alerts show S4 has it → received, with no second request
  *   EM-M10  the action-form model: Emergency needs no words and no confirmation word anywhere
  *   EM-M11  Live Operations: active Emergencies first (unacknowledged, then acknowledged), the rest newest first
  *   EM-M12  the dashboard opens the full-screen confirmation; the typed SOS form is gone
@@ -125,23 +128,37 @@ test('EM-M03-THE-RECEIPT', async () => {
   assert.equal(older.receipt.responsiblePeopleNotified, null);
   assert.equal(older.receipt.receivedAt, '2026-11-24T14:05:00.000Z');
   const noId = await em.sendGuardEmergency(LIVE, recorder(() => ({})).api);
-  assert.equal(noId.kind, 'failed', 'a 2xx without an alert id is not proof S4 recorded it');
+  assert.equal(noId.kind, 'uncertain', 'a 2xx without an alert id proves neither way');
 });
 
-test('EM-M04-FAILURES-SAY-NOT-SENT-AND-999', async () => {
+test('EM-M04-ONLY-S4-SAYING-NO-IS-NOT-SENT-EVERYTHING-ELSE-IS-NOT-CONFIRMED', async () => {
   const cases = [
-    [new NetworkError('Request timed out. Check your connection and try again.'), 'offline', true],
-    [new TypeError('Network request failed'), 'offline', true],
+    [new NetworkError('Request timed out. Check your connection and try again.'), 'uncertain', true],
+    [new TypeError('Network request failed'), 'uncertain', true],
+    [new Error('socket hang up'), 'uncertain', true],
+    [new ApiError(408, {}), 'uncertain', true],
+    [new ApiError(500, { message: 'Internal' }), 'uncertain', true],
+    [new ApiError(502, {}), 'uncertain', true],
+    [new ApiError(504, {}), 'uncertain', true],
     [new ApiError(401, { message: 'Unauthorized' }), 'session_ended', false],
     [new ApiError(400, { message: 'This shift is not assigned to the current guard' }), 'refused', false],
-    [new ApiError(500, { message: 'Internal' }), 'failed', true],
-    [new ApiError(503, {}), 'failed', true],
+    [new ApiError(403, { message: 'Forbidden resource' }), 'refused', false],
+    [new ApiError(429, { message: 'Too Many Requests' }), 'failed', true],
   ];
   for (const [error, kind, canRetry] of cases) {
     const out = await em.sendGuardEmergency(LIVE, { createSafetyAlert: async () => { throw error; } });
     assert.equal(out.kind, kind, error.message);
     const view = em.emergencyFailureView(out);
-    assert.equal(view.title, 'Emergency NOT sent');
+    if (kind === 'uncertain') {
+      assert.equal(view.title, 'Emergency NOT confirmed');
+      assert.equal(view.badge, 'NOT CONFIRMED');
+      assert.doesNotMatch(`${view.title} ${view.message}`, /NOT sent|was not sent|could not reach/i, 'never claims it was not sent');
+      assert.match(view.message, /may not have been sent/);
+      assert.match(view.message, /will not be sent twice/);
+    } else {
+      assert.equal(view.title, 'Emergency NOT sent');
+      assert.equal(view.badge, 'NOT SENT');
+    }
     assert.match(view.message, /call 999/i, kind);
     assert.equal(view.canRetry, canRetry, kind);
     assert.doesNotMatch(view.message, /\{|\}|400 |Bad Request/, 'no raw client error text');
@@ -168,7 +185,7 @@ test('EM-M05-NOTHING-OVERCLAIMS-AND-ACKNOWLEDGEMENT-COMES-ONLY-FROM-THE-ALERT', 
   const all = [
     ...Object.values(em.EMERGENCY_COPY), em.EMERGENCY_999_NOTICE,
     ...waiting.lines, ...ack.lines, ...resolved.lines, ...dup.lines, waiting.notice,
-    ...['offline', 'session_ended', 'failed'].map((kind) => em.emergencyFailureView({ kind }).message),
+    ...['uncertain', 'session_ended', 'failed'].map((kind) => em.emergencyFailureView({ kind }).message),
   ];
   for (const text of all) assert.doesNotMatch(text, OVERCLAIM, text);
   assert.match(em.EMERGENCY_999_NOTICE, /does not contact the emergency services/);
@@ -206,14 +223,28 @@ async function mount(api, { shift = LIVE } = {}) {
 }
 const press = async (node) => { await act(async () => { node.props.onPress(); }); await act(async () => { await settle(); }); };
 
-test('EM-M07-FULL-SCREEN-NO-SCROLL-NO-TYPING', async () => {
+test('EM-M07-FULL-SCREEN-NO-TYPING-AND-INSTRUCTIONS-NEVER-CAPPED', async () => {
   const api = { createSafetyAlert: async () => receiptBody(), listMySafetyAlerts: async () => [] };
   const { renderer, root } = await mount(api);
   const modal = root.findAll((n) => n.type === 'test-modal');
   assert.equal(modal.length, 1);
   assert.equal(modal[0].props.presentationStyle, 'fullScreen');
-  assert.equal(root.findAll((n) => n.type === RNW.ScrollView).length, 0, 'no ScrollView');
+  // Only the screen itself scrolls, and only when very large accessibility text no longer fits; at the standard size
+  // its content is exactly the screen (flexGrow, EM-M06).
+  const scrolls = root.findAll((n) => n.type === RNW.ScrollView);
+  assert.equal(scrolls.length, 1, 'one ScrollView: the screen');
+  assert.equal(scrolls[0].props.testID, 'guard-emergency-scroll');
+  assert.equal(RNW.StyleSheet.flatten(scrolls[0].props.contentContainerStyle).flexGrow, 1, 'content fills the screen');
   assert.equal(root.findAll((n) => n.type === 'test-text-input').length, 0, 'nothing to type');
+  // Instructions follow the phone's text size, uncapped. Only the title and the big button labels are capped.
+  const capped = root.findAll((n) => n.type === RNW.Text && n.props.maxFontSizeMultiplier != null)
+    .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)));
+  assert.deepEqual(capped.sort(), ['Emergency', 'SEND EMERGENCY'].sort(), `capped: ${JSON.stringify(capped)}`);
+  for (const essential of ['Send an Emergency alert to your company?', em.EMERGENCY_999_NOTICE, 'Cancel']) {
+    const node = root.findAll((n) => n.type === RNW.Text && n.props.children === essential)[0];
+    assert.ok(node, essential);
+    assert.equal(node.props.maxFontSizeMultiplier, undefined, `"${essential}" is not capped`);
+  }
   const [send] = byTestId(root, 'guard-emergency-send');
   const [cancel] = byTestId(root, 'guard-emergency-cancel');
   assert.ok(send && cancel, 'SEND and a separate Cancel');
@@ -257,7 +288,7 @@ test('EM-M08-A-DOUBLE-TAP-SENDS-ONCE-AND-CANCEL-SENDS-NOTHING', async () => {
   await act(async () => m2.renderer.unmount());
 });
 
-test('EM-M09-OFFLINE-THEN-RETRY-AND-A-REAL-ACKNOWLEDGEMENT', async () => {
+test('EM-M09-NOT-CONFIRMED-THEN-RETRY-AND-A-REAL-ACKNOWLEDGEMENT', async () => {
   let attempt = 0;
   let mine = [{ id: 7, status: 'open' }];
   const api = {
@@ -266,10 +297,11 @@ test('EM-M09-OFFLINE-THEN-RETRY-AND-A-REAL-ACKNOWLEDGEMENT', async () => {
   };
   const { renderer, root } = await mount(api);
   await press(byTestId(root, 'guard-emergency-send')[0]);
-  assert.equal(byTestId(root, 'guard-emergency-not-sent').length, 1);
+  assert.equal(byTestId(root, 'guard-emergency-not-confirmed').length, 1);
+  assert.equal(byTestId(root, 'guard-emergency-not-sent').length, 0, 'unknown is never shown as not sent');
   let blob = textBlob(root);
-  assert.ok(blob.includes('Emergency NOT sent'));
-  assert.match(blob, /could not reach S4/);
+  assert.ok(blob.includes('Emergency NOT confirmed'));
+  assert.ok(blob.includes('NOT CONFIRMED'));
   assert.match(blob, /call 999/);
   // Meanwhile a Control Room operator acknowledges it: the received screen reads the alert back and shows exactly that.
   mine = [{ id: 7, status: 'acknowledged', acknowledgedAt: '2026-11-24T14:04:00.000Z' }];
@@ -286,6 +318,44 @@ test('EM-M09-OFFLINE-THEN-RETRY-AND-A-REAL-ACKNOWLEDGEMENT', async () => {
   await act(async () => { await settle(); });
   assert.ok(textBlob(root).includes('SEND EMERGENCY'));
   await act(async () => renderer.unmount());
+});
+
+test('EM-M13-NOT-CONFIRMED-BECOMES-RECEIVED-WHEN-S4-HAS-IT-WITH-NO-SECOND-REQUEST', async () => {
+  // The request reached S4 and committed, but the answer was lost on the way back.
+  const calls = [];
+  let reads = 0;
+  const api = {
+    createSafetyAlert: async (p) => { calls.push(p); throw new NetworkError('Request timed out. Check your connection and try again.'); },
+    listMySafetyAlerts: async () => {
+      reads += 1;
+      return [
+        { id: 3, type: 'panic', status: 'closed', createdAt: '2026-11-24T10:00:00.000Z', shift: { id: 42 } },
+        { id: 5, type: 'panic', status: 'open', createdAt: '2026-11-24T14:02:00.000Z', shift: { id: 99 } },
+        { id: 8, type: 'site_request', status: 'open', createdAt: '2026-11-24T14:02:00.000Z', shift: { id: 42 } },
+        { id: 7, type: 'panic', status: 'open', createdAt: '2026-11-24T14:02:00.000Z', shift: { id: 42 } },
+      ];
+    },
+  };
+  const { renderer, root, events } = await mount(api);
+  await press(byTestId(root, 'guard-emergency-send')[0]);
+  await act(async () => { await settle(); });
+  assert.ok(reads >= 1, 'it checked the Guard’s own alerts');
+  assert.equal(calls.length, 1, 'no second request');
+  assert.equal(byTestId(root, 'guard-emergency-received').length, 1, 'S4 has it, and the Guard is told so');
+  const blob = textBlob(root);
+  assert.ok(blob.includes('S4 received your Emergency'));
+  assert.ok(blob.includes('S4 is alerting your company.'), 'no number it does not know');
+  assert.ok(blob.includes('Nobody has confirmed they have seen it yet.'));
+  assert.equal(events.received.length, 1);
+  assert.equal(events.received[0].alertId, 7, 'the active Emergency on THIS shift, not a closed one or another shift');
+  await act(async () => renderer.unmount());
+  // And when S4 does not have it, the screen stays NOT CONFIRMED.
+  const none = await mount({ createSafetyAlert: async () => { throw new NetworkError('x'); }, listMySafetyAlerts: async () => [] });
+  await press(byTestId(none.root, 'guard-emergency-send')[0]);
+  assert.equal(byTestId(none.root, 'guard-emergency-not-confirmed').length, 1);
+  assert.equal(none.events.received.length, 0);
+  await act(async () => none.renderer.unmount());
+  assert.equal(em.activeEmergencyReceipt([{ id: 1, type: 'panic', status: 'open', createdAt: 'x', shift: { id: 42 } }], null), null, 'no shift, no match');
 });
 
 // ═══════════════════ the action-form model and the dashboard ═══════════════════

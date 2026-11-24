@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { revokeDeadPushDevice } from '../welfare-push/push-device-lifecycle';
 import { ExpoPushClient, ExpoPushMessage } from '../welfare-push/expo-push.client';
@@ -48,9 +48,12 @@ export class EmergencyPushService {
   }
 
   /** Active push devices of these users: the count the Guard is told will be attempted. */
-  async activeDevices(userIds: number[]): Promise<Array<{ id: number; token: string; userId: number }>> {
+  async activeDevices(
+    userIds: number[],
+    runner: Pick<EntityManager, 'query'> = this.dataSource,
+  ): Promise<Array<{ id: number; token: string; userId: number }>> {
     if (!userIds.length || !this.enabled()) return [];
-    const rows = await this.dataSource.query(
+    const rows = await runner.query(
       `SELECT id, token, "userId" FROM push_devices WHERE "userId" = ANY($1::int[]) AND "revokedAt" IS NULL ORDER BY id`,
       [userIds],
     );

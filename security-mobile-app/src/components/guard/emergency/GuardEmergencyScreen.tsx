@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../../../theme';
 import { guardColors, guardFontFamily, guardShape } from '../../../theme/guard';
@@ -8,6 +8,7 @@ import {
   EMERGENCY_999_NOTICE,
   EMERGENCY_COPY,
   EMERGENCY_MAX_FONT_MULTIPLIER,
+  activeEmergencyReceipt,
   emergencyFailureView,
   emergencyFollowUp,
   emergencyReceivedView,
@@ -23,15 +24,21 @@ import {
 /**
  * S4-EM-01 — the full-screen Emergency confirmation (two taps: the Emergency launcher, then SEND EMERGENCY).
  *
- * No typing, no description and no ScrollView: the whole screen is laid out to fit, with SEND EMERGENCY taking the space
- * that is left (never less than EMERGENCY_MIN_SEND_HEIGHT) and Cancel a separate full-width control at the bottom, in
- * thumb reach. All rules and words live in guardEmergency.ts.
+ * No typing and no description. At the standard text size the whole screen fits without scrolling, with SEND EMERGENCY
+ * taking the space that is left (never less than EMERGENCY_MIN_SEND_HEIGHT) and Cancel a separate full-width control at
+ * the bottom, in thumb reach. Instructions are never capped in size; at very large accessibility sizes the screen
+ * scrolls instead of cutting them off. All rules and words live in guardEmergency.ts.
  */
 export interface GuardEmergencyScreenProps {
   visible: boolean;
   shift: EmergencyShift;
   timeZone?: string | null;
-  api: EmergencyApi & { listMySafetyAlerts: () => Promise<Array<{ id: number; status?: string | null; acknowledgedAt?: string | null; closedAt?: string | null }>> };
+  api: EmergencyApi & {
+    listMySafetyAlerts: () => Promise<Array<{
+      id: number; type?: string | null; status?: string | null; createdAt?: string | null;
+      acknowledgedAt?: string | null; closedAt?: string | null; shift?: { id?: number | null } | null;
+    }>>;
+  };
   onClose: () => void;
   /** After S4 has received it: the dashboard records it on the Guard's timeline and refreshes. */
   onReceived?: (receipt: EmergencyReceipt) => void;
@@ -39,11 +46,18 @@ export interface GuardEmergencyScreenProps {
 
 /** How often the received screen re-reads the alert to learn whether a person has acknowledged it. */
 export const EMERGENCY_FOLLOW_UP_POLL_MS = 15_000;
+/** How often a NOT CONFIRMED screen checks whether S4 has the Emergency after all. */
+export const EMERGENCY_UNCERTAIN_CHECK_MS = 5_000;
 
 type Phase = 'confirm' | 'sending' | 'result';
 
-/** Text capped at EMERGENCY_MAX_FONT_MULTIPLIER, so the largest accessibility size still fits without scrolling. */
-function T(props: { children?: React.ReactNode; style?: unknown; accessibilityRole?: string; accessibilityLiveRegion?: 'none' | 'polite' | 'assertive' }) {
+type TextProps = { children?: React.ReactNode; style?: unknown; accessibilityRole?: string; accessibilityLiveRegion?: 'none' | 'polite' | 'assertive' };
+/** Instructions: the phone's text size, uncapped. */
+function T(props: TextProps) {
+  return <Text {...props} />;
+}
+/** The already-large title and button labels only: capped, so SEND stays one big target. */
+function Big(props: TextProps) {
   return <Text maxFontSizeMultiplier={EMERGENCY_MAX_FONT_MULTIPLIER} {...props} />;
 }
 
@@ -80,6 +94,30 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
   }, [api, onReceived, shift]);
 
   const receipt = result?.kind === 'received' ? result.receipt : null;
+  const uncertain = result?.kind === 'uncertain';
+  const shiftId = shift?.id ?? null;
+
+  // Not confirmed: S4 may have it. Check the Guard's own alerts now and while this screen shows; an active Emergency on
+  // this shift means S4 has it, and the screen says so. A failed read changes nothing on screen.
+  useEffect(() => {
+    if (!visible || !uncertain) return undefined;
+    let cancelled = false;
+    const check = async () => {
+      if (inFlight.current) return;
+      try {
+        const found = activeEmergencyReceipt(await api.listMySafetyAlerts(), shiftId);
+        if (!cancelled && found && !inFlight.current) {
+          setResult({ kind: 'received', receipt: found });
+          onReceived?.(found);
+        }
+      } catch {
+        // Still unknown.
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), EMERGENCY_UNCERTAIN_CHECK_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, onReceived, shiftId, uncertain, visible]);
 
   // While the received screen is open, read the alert back so a real acknowledgement is shown when, and only when, it
   // happens. A failed read changes nothing on screen.
@@ -115,7 +153,7 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
     body = (
       <>
         <View style={styles.head}>
-          <T accessibilityRole="header" style={[styles.title, { fontSize: layout.titleSize, lineHeight: layout.titleSize + 6 }]}>{EMERGENCY_COPY.title}</T>
+          <Big accessibilityRole="header" style={[styles.title, { fontSize: layout.titleSize, lineHeight: layout.titleSize + 6 }]}>{EMERGENCY_COPY.title}</Big>
           <T style={styles.lead}>{EMERGENCY_COPY.confirmLead}</T>
           {!layout.compact ? <T style={styles.detail}>{EMERGENCY_COPY.confirmDetail}</T> : null}
         </View>
@@ -130,9 +168,9 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
           style={({ pressed }: { pressed: boolean }) => [styles.send, { minHeight: layout.sendMinHeight }, (pressed || sending) && styles.sendPressed]}
         >
           {sending ? <ActivityIndicator color="#FFFFFF" size="large" /> : null}
-          <T style={[styles.sendText, { fontSize: layout.sendTextSize, lineHeight: layout.sendTextSize + 6 }]}>
+          <Big style={[styles.sendText, { fontSize: layout.sendTextSize, lineHeight: layout.sendTextSize + 6 }]}>
             {sending ? EMERGENCY_COPY.sending : EMERGENCY_COPY.send}
-          </T>
+          </Big>
         </Pressable>
         <T style={styles.notice} accessibilityRole="text">{EMERGENCY_999_NOTICE}</T>
         <Pressable
@@ -156,9 +194,9 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
           <View style={[styles.badge, view.acknowledged ? styles.badgeAck : styles.badgeReceived]}>
             <T style={styles.badgeText}>{view.acknowledged ? 'ACKNOWLEDGED' : 'RECEIVED BY S4'}</T>
           </View>
-          <T accessibilityRole="header" style={[styles.title, { fontSize: layout.titleSize, lineHeight: layout.titleSize + 6 }]}>{view.title}</T>
+          <Big accessibilityRole="header" style={[styles.title, { fontSize: layout.titleSize, lineHeight: layout.titleSize + 6 }]}>{view.title}</Big>
           <View accessibilityLiveRegion="assertive">
-            {view.lines.map((line) => <Text key={line} maxFontSizeMultiplier={EMERGENCY_MAX_FONT_MULTIPLIER} style={styles.lead}>{line}</Text>)}
+            {view.lines.map((line) => <Text key={line} style={styles.lead}>{line}</Text>)}
           </View>
         </View>
         <T style={styles.notice}>{view.notice}</T>
@@ -177,9 +215,9 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
     const view = emergencyFailureView(result);
     body = (
       <>
-        <View style={[styles.head, styles.flexHead]} testID="guard-emergency-not-sent">
-          <View style={[styles.badge, styles.badgeFailed]}><T style={styles.badgeText}>NOT SENT</T></View>
-          <T accessibilityRole="header" style={[styles.title, { fontSize: layout.titleSize, lineHeight: layout.titleSize + 6 }]}>{view.title}</T>
+        <View style={[styles.head, styles.flexHead]} testID={view.badge === 'NOT CONFIRMED' ? 'guard-emergency-not-confirmed' : 'guard-emergency-not-sent'}>
+          <View style={[styles.badge, styles.badgeFailed]}><T style={styles.badgeText}>{view.badge}</T></View>
+          <Big accessibilityRole="header" style={[styles.title, { fontSize: layout.titleSize, lineHeight: layout.titleSize + 6 }]}>{view.title}</Big>
           <T style={styles.lead} accessibilityLiveRegion="assertive">{view.message}</T>
         </View>
         {view.canRetry ? (
@@ -190,7 +228,7 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
             onPress={send}
             style={({ pressed }: { pressed: boolean }) => [styles.send, { minHeight: Math.round(layout.sendMinHeight * 0.75) }, pressed && styles.sendPressed]}
           >
-            <T style={[styles.sendText, { fontSize: layout.sendTextSize, lineHeight: layout.sendTextSize + 6 }]}>{EMERGENCY_COPY.tryAgain}</T>
+            <Big style={[styles.sendText, { fontSize: layout.sendTextSize, lineHeight: layout.sendTextSize + 6 }]}>{EMERGENCY_COPY.tryAgain}</Big>
           </Pressable>
         ) : null}
         <Pressable
@@ -208,15 +246,20 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
 
   return (
     <Modal visible={visible} animationType="fade" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={close}>
-      <View style={[styles.root, pad]} testID="guard-emergency-screen" accessibilityViewIsModal>
-        {body}
+      <View style={styles.fill} testID="guard-emergency-screen" accessibilityViewIsModal>
+        {/* At the standard text size the content exactly fills the screen and nothing scrolls; only very large
+            accessibility text makes it taller than the screen, and then it scrolls instead of being cut off. */}
+        <ScrollView testID="guard-emergency-scroll" style={styles.fill} contentContainerStyle={[styles.root, pad]} bounces={false}>
+          {body}
+        </ScrollView>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: guardColors.surface, gap: 16 },
+  fill: { flex: 1, backgroundColor: guardColors.surface },
+  root: { flexGrow: 1, backgroundColor: guardColors.surface, gap: 16 },
   head: { gap: 8 },
   flexHead: { flexGrow: 1, flexShrink: 1, justifyContent: 'center' },
   title: { color: guardColors.emergency, fontFamily: guardFontFamily.bold },

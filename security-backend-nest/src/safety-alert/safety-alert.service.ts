@@ -375,7 +375,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
           company, user: { id: userId }, action: 'safety_alert.emergency_repeat_press',
           entityType: 'safety_alert', entityId: alert.id, afterData: { type: alert.type, status: alert.status },
         });
-        return { alert, duplicate: true, recipients };
+        return { alert, duplicate: true, recipients, devices: undefined };
       }
 
       const repo = manager.getRepository(SafetyAlert);
@@ -393,10 +393,18 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
           title: text.title, message: text.message,
         }));
       }
-      return { alert, duplicate: false, recipients };
+      // The push is owed from the moment this commits. Recorded in the same transaction, so if the process stops
+      // between the commit and the dispatch below, the audit trail shows a push that was owed and never attempted
+      // ('emergency_push_pending' with no matching 'emergency_push_attempted'), not silence.
+      const devices = await this.emergencyPush.activeDevices(recipients, manager);
+      await this.auditLogService.logInTransaction(manager, {
+        company, user: { id: userId }, action: 'safety_alert.emergency_push_pending', entityType: 'safety_alert',
+        entityId: alert.id, afterData: { devices: devices.length, enabled: this.emergencyPush.enabled() },
+      });
+      return { alert, duplicate: false, recipients, devices };
     });
 
-    const devices = result.duplicate ? [] : await this.emergencyPush.activeDevices(result.recipients).catch(() => []);
+    const devices = result.duplicate ? [] : result.devices ?? [];
     if (!result.duplicate) {
       // After the commit, never awaited by the Guard's request: a slow or failed provider cannot delay the receipt.
       void this.emergencyPush

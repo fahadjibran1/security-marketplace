@@ -83,7 +83,7 @@ async function main() {
     new AuditLogService(repo(AuditLog), {} as never),
     { createForUser: async () => undefined, createForUserUnlessRecentDuplicate: async () => undefined } as never,
     welfare, windowEngine, ds,
-    { getGuardSummary: async () => { throw new Error('not exercised'); } } as never, { activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
+    { getGuardSummary: async () => { throw new Error('not exercised'); } } as never, { enabled: () => false, activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
   );
   sweep.onModuleDestroy();
 

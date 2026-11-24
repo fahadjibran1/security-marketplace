@@ -58,6 +58,8 @@ export type EmergencyReceipt = {
  * Who is responsible for responding to a company's Emergency: the company owner account, and every ACTIVE company member
  * whose role holds alerts.manage (Owner, Admin, Operations and Control Room memberships). Never another company's people,
  * never a suspended or removed member, never HR / Compliance, Finance or Viewer, never Guards. Sorted, de-duplicated.
+ * The person's own account must also be able to sign in (status active, never deleted) — the same rule login applies —
+ * so a suspended, inactive or deleted account is neither notified nor pushed, whatever its membership row says.
  *
  * Memberships carry no site restriction in S4 today, so "site access" is the company: everyone responsible for the
  * company's live operations is responsible for every one of its sites.
@@ -72,7 +74,12 @@ export async function emergencyRecipientUserIds(manager: EntityManager, companyI
   for (const member of members) {
     if (hasPermission(member.membershipRole, CompanyPermission.ALERTS_MANAGE)) out.add(Number(member.userId));
   }
-  return [...out].sort((a, b) => a - b);
+  if (!out.size) return [];
+  const usable = await manager.query(
+    `SELECT id FROM "users" WHERE id = ANY($1::int[]) AND status = 'active' AND "deletionCompletedAt" IS NULL`,
+    [[...out]],
+  );
+  return usable.map((row: { id: number | string }) => Number(row.id)).sort((a: number, b: number) => a - b);
 }
 
 /** May this company member see and act on its own company's Emergencies? Owner, Admin, Operations, Control Room. */

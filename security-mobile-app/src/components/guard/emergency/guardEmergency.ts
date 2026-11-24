@@ -7,7 +7,11 @@
 //   3. SEND EMERGENCY submits immediately.                                          → phase 'sending'
 //   4. The Guard is told exactly what is true:
 //        'received'   S4's server committed the alert (and the in-app notifications to the responsible people).
-//        'offline' / 'failed' / 'session_ended' / 'refused'   it was NOT sent, what to do now, and Try Again.
+//        'uncertain'  S4 did not answer (no connection, timeout, a dropped response, a server or gateway error): the
+//                     request may or may not have arrived. The Guard is told it is NOT CONFIRMED — never "not sent" —
+//                     with the 999 advice and TRY AGAIN, and the screen keeps checking the Guard's own alerts: an active
+//                     Emergency on this shift turns it into 'received'. A retry is safe: S4 will not raise it twice.
+//        'session_ended' / 'refused' / 'failed'   S4 answered and did NOT record it: it was NOT sent, what to do now.
 //
 // WHAT IS NEVER CLAIMED
 // That the Control Room received, saw or acknowledged it. "Received" means S4 received it. A human acknowledgement is
@@ -42,6 +46,7 @@ export const EMERGENCY_COPY = {
   tryAgain: 'TRY AGAIN',
   tryAgainAccessibility: 'Try sending the Emergency again',
   notSentTitle: 'Emergency NOT sent',
+  notConfirmedTitle: 'Emergency NOT confirmed',
   receivedTitle: 'S4 received your Emergency',
   duplicateTitle: 'S4 already has your Emergency',
 } as const;
@@ -58,7 +63,7 @@ export type EmergencyReceipt = {
 export type EmergencySubmitResult =
   | { kind: 'received'; receipt: EmergencyReceipt }
   | { kind: 'not_available'; message: string }
-  | { kind: 'offline' }
+  | { kind: 'uncertain' }
   | { kind: 'session_ended' }
   | { kind: 'refused'; message: string }
   | { kind: 'failed' };
@@ -91,16 +96,17 @@ export function readEmergencyReceipt(response: unknown, now: Date = new Date()):
 }
 
 /**
- * What went wrong, from the API client's error. A request that never reached S4 (no status) is offline; 401 is a
- * session that ended; any other 4xx is S4 refusing it, with S4's own words; everything else is a failure.
+ * What went wrong, from the API client's error. Only an answer FROM S4 proves it was not recorded: 401 (the session
+ * ended), another 4xx (S4 refused it, in S4's own words) or 429 (S4 turned it away). No answer at all — no connection,
+ * a timeout, a dropped response — and 408 / 5xx (a gateway or the server failing, possibly after the commit) leave the
+ * outcome unknown: 'uncertain', never "not sent".
  */
 export function classifyEmergencyError(error: unknown): EmergencySubmitResult {
   const e = error as { name?: string; status?: unknown; message?: string } | null;
   const status = asNumber(e?.status);
-  if (e?.name === 'NetworkError' || (status == null && (e?.name === 'TypeError' || /network|fetch|timed? ?out|offline/i.test(e?.message ?? '')))) {
-    return { kind: 'offline' };
-  }
+  if (status == null || e?.name === 'NetworkError') return { kind: 'uncertain' };
   if (status === 401) return { kind: 'session_ended' };
+  if (status === 429) return { kind: 'failed' };
   if (status != null && status >= 400 && status < 500 && status !== 408 && status !== 429) {
     // S4's own sentence from the response body, never the raw "400 Bad Request - {json}" of the client error.
     const body = (error as { body?: { message?: unknown } } | null)?.body;
@@ -108,8 +114,7 @@ export function classifyEmergencyError(error: unknown): EmergencySubmitResult {
     const message = typeof raw === 'string' ? raw.trim() : '';
     return { kind: 'refused', message: message ? (/[.!?]$/.test(message) ? message : `${message}.`) : 'S4 could not accept this Emergency.' };
   }
-  if (status == null) return { kind: 'offline' };
-  return { kind: 'failed' };
+  return { kind: 'uncertain' };
 }
 
 /**
@@ -123,28 +128,51 @@ export async function sendGuardEmergency(shift: EmergencyShift, api: EmergencyAp
   try {
     const response = await api.createSafetyAlert({ shiftId: shift.id, type: 'panic', priority: 'critical', message: EMERGENCY_APP_MESSAGE });
     const receipt = readEmergencyReceipt(response, now());
-    // A 2xx without an alert id is not proof S4 recorded it: say so rather than claim it.
-    return receipt ? { kind: 'received', receipt } : { kind: 'failed' };
+    // A 2xx without an alert id is not proof S4 recorded it, nor proof it did not: unknown.
+    return receipt ? { kind: 'received', receipt } : { kind: 'uncertain' };
   } catch (error) {
     return classifyEmergencyError(error);
   }
 }
 
-/** The words for a failure. Every one says it was NOT sent, what to do now, and the 999 advice. */
-export function emergencyFailureView(result: Exclude<EmergencySubmitResult, { kind: 'received' }>): { title: string; message: string; canRetry: boolean } {
+/**
+ * The words when S4 has not confirmed it. 'uncertain' says NOT CONFIRMED (it may have arrived); every other case is an
+ * answer from S4 that it was not recorded, and says NOT SENT. Every one says what to do now, with the 999 advice.
+ */
+export function emergencyFailureView(result: Exclude<EmergencySubmitResult, { kind: 'received' }>): { title: string; badge: 'NOT SENT' | 'NOT CONFIRMED'; message: string; canRetry: boolean } {
   const call = 'If you are in immediate danger, call 999 now. Then phone your control room.';
+  const notSent = { title: EMERGENCY_COPY.notSentTitle, badge: 'NOT SENT' as const };
   switch (result.kind) {
-    case 'offline':
-      return { title: EMERGENCY_COPY.notSentTitle, message: `Your phone could not reach S4. ${call} Try again when you have signal.`, canRetry: true };
+    case 'uncertain':
+      return {
+        title: EMERGENCY_COPY.notConfirmedTitle,
+        badge: 'NOT CONFIRMED',
+        message: `S4 has not confirmed it received your Emergency. It may not have been sent. ${call} Press TRY AGAIN: if S4 already has it, it will not be sent twice.`,
+        canRetry: true,
+      };
     case 'session_ended':
-      return { title: EMERGENCY_COPY.notSentTitle, message: `Your S4 session has ended. ${call} Then sign in again and press Emergency.`, canRetry: false };
+      return { ...notSent, message: `Your S4 session has ended. ${call} Then sign in again and press Emergency.`, canRetry: false };
     case 'refused':
-      return { title: EMERGENCY_COPY.notSentTitle, message: `${result.message} ${call}`, canRetry: false };
+      return { ...notSent, message: `${result.message} ${call}`, canRetry: false };
     case 'not_available':
-      return { title: EMERGENCY_COPY.notSentTitle, message: `${result.message} ${call}`, canRetry: false };
+      return { ...notSent, message: `${result.message} ${call}`, canRetry: false };
     default:
-      return { title: EMERGENCY_COPY.notSentTitle, message: `S4 could not record your Emergency. ${call} Then try again.`, canRetry: true };
+      return { ...notSent, message: `S4 could not accept your Emergency just now. ${call} Then try again.`, canRetry: true };
   }
+}
+
+/**
+ * After an uncertain outcome: does S4 already hold an active Emergency from this Guard on this shift? Read from the
+ * Guard's own alerts. If so, that is the receipt — S4 has it — without claiming anything about who was alerted.
+ */
+export function activeEmergencyReceipt(
+  mine: Array<{ id: number; type?: string | null; status?: string | null; createdAt?: string | null; shift?: { id?: number | null } | null }>,
+  shiftId: number | null | undefined,
+): EmergencyReceipt | null {
+  if (shiftId == null) return null;
+  const alert = mine.find((a) => a.type === 'panic' && (a.status ?? '').toLowerCase() !== 'closed' && a.shift?.id === shiftId && typeof a.createdAt === 'string');
+  if (!alert || typeof alert.createdAt !== 'string') return null;
+  return { alertId: alert.id, receivedAt: alert.createdAt, duplicate: false, responsiblePeopleNotified: null, pushDevicesTargeted: null };
 }
 
 /** The Guard's view of their alert as S4 currently has it. Only the alert's own status ever says a person acted. */
@@ -189,9 +217,11 @@ export function emergencyReceivedView(receipt: EmergencyReceipt, followUp: Emerg
 }
 
 /**
- * The confirmation's layout, from the window. Everything fits without scrolling: the SEND button takes the space that
- * is left, never less than a large thumb target, and text is capped at 1.6× so a large accessibility size cannot push
- * Cancel off a small phone.
+ * The confirmation's layout, from the window. At the phone's standard text size everything fits without scrolling: the
+ * SEND button takes the space that is left, never less than a large thumb target. Instructions (the question, the 999
+ * notice, every result line) follow the phone's text size with NO cap, so they stay readable at any accessibility size;
+ * if very large text no longer fits, the screen scrolls rather than cutting anything off. Only the already-large title
+ * and button labels (26–32pt) are capped, at EMERGENCY_MAX_FONT_MULTIPLIER, so SEND stays one big target.
  */
 export const EMERGENCY_MIN_SEND_HEIGHT = 96;
 export const EMERGENCY_CANCEL_HEIGHT = 56;

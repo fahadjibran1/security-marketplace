@@ -19,6 +19,10 @@
  *   EM-12  availability is unchanged: no live shift, another Guard's shift, or a company account: refused, nothing written
  *   EM-13  every other Guard-raised type still requires words; an older app's typed message is still accepted
  *   EM-14  the receipt never claims the Control Room received or acknowledged it, or that 999 was called
+ *   EM-15  a process stop between the commit and the push: the alert and in-app notifications survive, and the owed
+ *          push is visible in the audit trail as pending with no attempt
+ *   EM-16  an ACTIVE Control Room membership whose own account is suspended, inactive or deleted is neither notified
+ *          nor pushed (the same rule as sign-in)
  *
  * Needs EMERGENCY_SPEC_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -101,6 +105,7 @@ async function main() {
   const { WelfarePushService } = await import('../src/welfare-push/welfare-push.service');
   const { AuthService } = await import('../src/auth/auth.service');
   const { EMERGENCY_DEFAULT_MESSAGE } = await import('../src/safety-alert/emergency-alert');
+  const { EmergencyPushService } = await import('../src/safety-alert/emergency-push.service');
   const app = await NestFactory.create(AppModule, { logger: false });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   await app.listen(0, '127.0.0.1');
@@ -305,7 +310,7 @@ async function main() {
       assert.equal(closed.body.closedByUserId, A.staff.operations.userId);
       assert.equal(closed.body.acknowledgedByUserId, A.staff.control_room.userId, 'acknowledgement kept');
       const audits = await q(`SELECT action FROM audit_logs WHERE "entityType" = 'safety_alert' AND "entityId" = $1 AND action LIKE 'safety_alert.%' ORDER BY id`, [first.id]);
-      assert.deepEqual(audits.map((a: any) => a.action).filter((a: string) => a !== 'safety_alert.emergency_push_attempted'),
+      assert.deepEqual(audits.map((a: any) => a.action).filter((a: string) => !a.startsWith('safety_alert.emergency_push_')),
         ['safety_alert.created', 'safety_alert.emergency_repeat_press', 'safety_alert.acknowledged', 'safety_alert.closed']);
     });
 
@@ -364,6 +369,7 @@ async function main() {
       assert.equal(await panicsOn(s11), 1);
       const outcome = await pushAudit(r.body.id);
       assert.equal(outcome.transportFailed, true, 'the failure is recorded');
+      assert.ok(await one(`SELECT 1 FROM audit_logs WHERE action = 'safety_alert.emergency_push_pending' AND "entityId" = $1`, [r.body.id]), 'owed before it was attempted');
       assert.equal((await notesFor('EMERGENCY%')).filter((x: any) => x.message.includes('emg11')).length, 4, 'in-app notifications committed regardless');
       fake.mode = 'ok';
     });
@@ -403,6 +409,53 @@ async function main() {
       const text = JSON.stringify(r.body.emergencyReceipt);
       assert.doesNotMatch(text, /control room|acknowledged":true|999|police|ambulance|emergency services/i);
       assert.deepEqual(Object.keys(r.body.emergencyReceipt).sort(), ['acknowledged', 'duplicate', 'pushDevicesTargeted', 'receivedAt', 'responsiblePeopleNotified']);
+    });
+
+    await test('EM-15-A-PROCESS-STOP-AFTER-COMMIT-LOSES-NOTHING-AND-THE-OWED-PUSH-IS-VISIBLE', async () => {
+      // Simulated: the dispatch after the commit never runs (the process stopped). Nothing in the request waits for it.
+      const push = app.get(EmergencyPushService);
+      const realDispatch = push.dispatch.bind(push);
+      (push as any).dispatch = async () => undefined;
+      try {
+        const g15 = await guard('emg15', A);
+        const s15 = await shift(A, g15);
+        const r = await emergency(g15, s15);
+        assert.equal(r.status, 201);
+        assert.equal(await panicsOn(s15), 1, 'the alert is committed');
+        assert.equal((await notesFor('EMERGENCY%')).filter((x: any) => x.message.includes('emg15')).length, 4, 'in-app notifications committed');
+        const pending = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'safety_alert.emergency_push_pending' AND "entityId" = $1`, [r.body.id]);
+        assert.ok(pending, 'the owed push is recorded in the same transaction');
+        assert.equal(pending.afterData.devices, r.body.emergencyReceipt.pushDevicesTargeted);
+        await sleep(300);
+        assert.equal(await count(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'safety_alert.emergency_push_attempted' AND "entityId" = $1`, [r.body.id]), 0,
+          'pending with no attempt: detectable, not silent');
+      } finally {
+        (push as any).dispatch = realDispatch;
+      }
+    });
+
+    await test('EM-16-AN-ACCOUNT-THAT-CANNOT-SIGN-IN-IS-NEVER-A-RECIPIENT', async () => {
+      const C = await company('emgamma', '83333333');
+      const blocked: number[] = [];
+      for (const [label, sql] of [
+        ['suspended', `UPDATE users SET status = 'suspended' WHERE id = $1`],
+        ['inactive', `UPDATE users SET status = 'inactive' WHERE id = $1`],
+        ['deleted', `UPDATE users SET "deletionCompletedAt" = now() WHERE id = $1`],
+      ] as const) {
+        const id = await user(`emgamma.${label}.cr@example.invalid`, 'company_staff');
+        await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'control_room','active')`, [id, C.id]);
+        await q(`INSERT INTO push_devices ("userId",token,platform) VALUES ($1,$2,'android')`, [id, `ExponentPushToken[emgamma-${label}]`]);
+        await q(sql, [id]);
+        blocked.push(id);
+      }
+      const g16 = await guard('emg16', C);
+      const s16 = await shift(C, g16);
+      const r = await emergency(g16, s16);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.emergencyReceipt.responsiblePeopleNotified, 4, 'owner, admin, operations, control room only');
+      assert.equal(r.body.emergencyReceipt.pushDevicesTargeted, 0, 'no blocked account’s phone is targeted');
+      const got = (await q(`SELECT "userId" FROM notifications WHERE "companyId" = $1 AND title LIKE 'EMERGENCY%'`, [C.id])).map((x: any) => Number(x.userId));
+      for (const id of blocked) assert.ok(!got.includes(id), `account ${id} cannot sign in, so is not notified`);
     });
   } finally {
     await app.close();
