@@ -21,6 +21,7 @@
     "test:role-routing": "node scripts/role-routing.spec.cjs",
     "test:admin-portal": "node scripts/admin-portal.spec.cjs",
     "test:company-verification-ui": "node scripts/company-verification-ui.spec.cjs",
+    "test:admin-mfa-ui": "node scripts/admin-mfa-ui.spec.cjs",
     "test:guard-lifecycle": "node scripts/guard-lifecycle.spec.cjs",
     "test:screening-ui": "node scripts/screening-ui.spec.cjs",
     "test:screening-review": "node scripts/screening-review-refresh.spec.cjs",

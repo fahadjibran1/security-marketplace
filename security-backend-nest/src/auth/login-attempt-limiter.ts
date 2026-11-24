@@ -52,7 +52,12 @@ const MAX_ENTRIES = 50_000;
 export const LOGIN_LIMITED_MESSAGE =
   'Too many unsuccessful sign-in attempts. Please wait 15 minutes and try again, or reset your password.';
 
-export type LoginScope = 'user' | 'client';
+/**
+ * 'mfa' counts wrong Platform Admin authenticator codes (AdminMfaService), keyed by the admin's user id instead of an
+ * email, with the same three limits: a source guessing codes is refused after 5 failures, and a code can be guessed
+ * at most 10 times in 15 minutes from sources the admin has not completed two-step sign-in from.
+ */
+export type LoginScope = 'user' | 'client' | 'mfa';
 type Counter = { count: number; resetAt: number };
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');

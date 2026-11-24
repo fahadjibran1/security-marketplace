@@ -2,6 +2,7 @@ import { equal, ok, throws } from 'node:assert/strict';
 import {
   getCorsOrigins,
   getTrustProxySetting,
+  isPlatformAdminMfaRequired,
   validateRuntimeEnv,
 } from '../src/config/runtime-env';
 
@@ -111,6 +112,18 @@ function testCorsWildcardInDevelopmentAllowed() {
   equal(origins, true, 'Wildcard CORS_ORIGIN resolves to true (allow all) in development');
 }
 
+// ─── PLATFORM_ADMIN_MFA_REQUIRED ─────────────────────────────────────────────
+
+function testPlatformAdminMfaFlag() {
+  const base = { NODE_ENV: 'development' };
+  equal(isPlatformAdminMfaRequired({}), false, 'off by default');
+  equal(isPlatformAdminMfaRequired({ PLATFORM_ADMIN_MFA_REQUIRED: 'false' }), false);
+  equal(isPlatformAdminMfaRequired({ PLATFORM_ADMIN_MFA_REQUIRED: ' TRUE ' }), true);
+  validateRuntimeEnv({ ...base, PLATFORM_ADMIN_MFA_REQUIRED: 'true' });
+  validateRuntimeEnv({ ...base, PLATFORM_ADMIN_MFA_REQUIRED: 'false' });
+  for (const typo of ['yes', 'ture', '1', 'on']) expectThrows(`PLATFORM_ADMIN_MFA_REQUIRED=${typo}`, () => validateRuntimeEnv({ ...base, PLATFORM_ADMIN_MFA_REQUIRED: typo }));
+}
+
 async function main() {
   testJwtSecretEmptyIsRejected();
   testJwtSecretDefaultIsRejected();
@@ -126,10 +139,11 @@ async function main() {
   testCorsWildcardInProductionThrows();
   testCorsOriginsParsedCorrectly();
   testCorsWildcardInDevelopmentAllowed();
+  testPlatformAdminMfaFlag();
 
   console.log(JSON.stringify({
     event: 'runtime_env_tests_passed',
-    tests: 14,
+    tests: 15,
     scope: 'jwt-secret-fail-closed-trust-proxy-cors-production-validation',
   }));
 }

@@ -46,8 +46,11 @@ async function main() {
       } as any,
       { sign: () => 'redacted-test-token' } as any,
       {} as any, {} as any, {} as any, {} as any, { create: async () => { throw new Error('auth session not expected in this test'); } } as any, dataSource, {} as any, { sendVerification: async () => undefined } as any,
+      // Not enrolled in two-step verification, flag off: the password sign-in issues the session as before.
+      { loginGate: async () => null } as any,
     );
-    equal((await auth.login({ email: admin.email, password })).user.role, UserRole.ADMIN);
+    const signedIn = await auth.login({ email: admin.email, password });
+    equal('user' in signedIn ? signedIn.user.role : null, UserRole.ADMIN, 'a session, not a two-step challenge');
 
     await rejects(() => service.bootstrap('second@example.test', password), /already exists/);
     equal(await users.count({ where: { role: UserRole.ADMIN } }), 1);

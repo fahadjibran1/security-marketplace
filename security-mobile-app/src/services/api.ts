@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { isUatBuild, resolveApiBaseUrl, resolveUatApiBaseUrl } from './api-base-url';
 import type { TimesheetHistoryItem } from './timesheetReview';
 import type { AdminVerificationCompany, CompanyVerificationStatus, VerificationHistoryEntry } from '../navigation/company-verification';
+import type { AdminMfaChallenge, AdminMfaEnrollmentRequired, AdminMfaEnrolmentSetup, AdminMfaStatus } from '../navigation/admin-mfa';
 import {
   Attachment,
   AuditLog,
@@ -333,7 +334,8 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
   // no access token at all yet — the stored refresh token is what mints the first one.
   const sentWithToken = !!accessToken;
   const couldRenew = !!refreshToken;
-  if (accessToken) {
+  // A caller-supplied Authorization (only the Platform Admin enrolment token, before any session exists) is kept.
+  if (accessToken && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
@@ -374,6 +376,7 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
   if (!response.ok) {
     const isAuthEndpoint =
       path.startsWith('/auth/login') ||
+      path.startsWith('/auth/mfa/verify') ||
       path.startsWith('/auth/register') ||
       path.startsWith('/auth/refresh');
 
@@ -473,8 +476,24 @@ export function formatApiErrorMessage(error: unknown, fallbackMessage: string) {
   return fallbackMessage;
 }
 
-export async function login(email: string, password: string) {
-  const session = await request<AuthSession>('/auth/login', {
+/** A Platform Admin's password was right but a second step is needed: no session has been issued. */
+export type LoginSecondStep = AdminMfaChallenge | AdminMfaEnrollmentRequired;
+
+function isLoginSecondStep(body: unknown): body is LoginSecondStep {
+  const b = body as { mfaRequired?: unknown; mfaEnrollmentRequired?: unknown } | null;
+  return !!b && typeof b === 'object' && (b.mfaRequired === true || b.mfaEnrollmentRequired === true);
+}
+
+/** Holds a session the server just issued (sign-in, two-step sign-in, or enrolment), exactly as login always has. */
+function adoptSession(session: AuthSession) {
+  const normalizedSession = normalizeSession(session);
+  accessToken = normalizedSession.accessToken;
+  refreshToken = session.refreshToken ?? null;
+  return { ...normalizedSession, refreshToken: refreshToken ?? undefined };
+}
+
+export async function login(email: string, password: string): Promise<AuthSession | LoginSecondStep> {
+  const session = await request<AuthSession | LoginSecondStep>('/auth/login', {
     method: 'POST',
     // A header, not a body field: the backend validates bodies with forbidNonWhitelisted, so an
     // unknown property would make an older deployment reject the login with 400. A header lets a
@@ -483,10 +502,53 @@ export async function login(email: string, password: string) {
     body: JSON.stringify({ email, password }),
   });
 
-  const normalizedSession = normalizeSession(session);
-  accessToken = normalizedSession.accessToken;
-  refreshToken = session.refreshToken ?? null;
-  return { ...normalizedSession, refreshToken: refreshToken ?? undefined };
+  // Platform Admin two-step verification: nothing is signed in yet; the caller asks for the code (or enrolment).
+  if (isLoginSecondStep(session)) return session;
+  return adoptSession(session);
+}
+
+// ─── Platform Admin two-step verification ───────────────────────────────────
+
+/** Second step of a Platform Admin sign-in: the challenge from login plus the authenticator code. */
+export async function verifyAdminMfa(challengeToken: string, code: string) {
+  const session = await request<AuthSession>('/auth/mfa/verify', {
+    method: 'POST',
+    headers: { 'x-s4-client': 'mobile' },
+    body: JSON.stringify({ challengeToken, code }),
+  });
+  return adoptSession(session);
+}
+
+/** The enrolment token (from a sign-in that must enrol first) as the bearer, or the current session when absent. */
+function enrolmentHeaders(enrollmentToken?: string): Record<string, string> {
+  return enrollmentToken ? { Authorization: `Bearer ${enrollmentToken}` } : {};
+}
+
+export function getAdminMfaStatus(enrollmentToken?: string) {
+  return request<AdminMfaStatus>('/auth/mfa/status', { headers: enrolmentHeaders(enrollmentToken) });
+}
+
+export function startAdminMfaEnrolment(enrollmentToken?: string) {
+  return request<AdminMfaEnrolmentSetup>('/auth/mfa/totp/enrol', { method: 'POST', headers: enrolmentHeaders(enrollmentToken) });
+}
+
+/**
+ * Confirm enrolment with a code. The server ends every earlier session of this admin and returns a fresh two-step one,
+ * which replaces the current one here and, when renewable, is persisted at once (the old refresh token is dead).
+ */
+export async function confirmAdminMfaEnrolment(code: string, enrollmentToken?: string) {
+  const session = await request<AuthSession>('/auth/mfa/totp/confirm', {
+    method: 'POST',
+    headers: { 'x-s4-client': 'mobile', ...enrolmentHeaders(enrollmentToken) },
+    body: JSON.stringify({ code }),
+  });
+  const adopted = adoptSession(session);
+  if (!enrollmentToken && adopted.refreshToken) await refreshPersist?.({ user: adopted.user, refreshToken: adopted.refreshToken });
+  return adopted;
+}
+
+export function disableAdminMfa(code: string) {
+  return request<{ enrolled: false }>('/auth/mfa/totp/disable', { method: 'POST', body: JSON.stringify({ code }) });
 }
 
 export async function clientLogin(email: string, password: string) {

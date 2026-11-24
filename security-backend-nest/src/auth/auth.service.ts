@@ -16,6 +16,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuthSessionService } from './auth-session.service';
 import { AccountRecoveryService } from './account-recovery.service';
 import { isUsablePasswordHash } from './password-policy';
+import { AdminMfaService } from './admin-mfa.service';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { CompanyMembership } from '../company-membership/entities/company-membership.entity';
 import {
@@ -79,6 +80,7 @@ export class AuthService {
     @InjectRepository(CompanyMembership)
     private readonly membershipRepo: Repository<CompanyMembership>,
     private readonly accountRecoveryService: AccountRecoveryService,
+    private readonly adminMfa: AdminMfaService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -182,8 +184,38 @@ export class AuthService {
     }
     if (mustVerifyEmail(user)) throw new ForbiddenException(EMAIL_VERIFICATION_REQUIRED);
 
+    // Platform Admin two-step verification: an enrolled admin (or, with PLATFORM_ADMIN_MFA_REQUIRED on, an unenrolled
+    // one) gets a short-lived, single-purpose token instead of a session. Every other role never reaches this.
+    if (user.role === UserRole.ADMIN) {
+      const secondStep = await this.adminMfa.loginGate(user);
+      if (secondStep) return secondStep;
+    }
+
+    return this.issueSession(user, isMobileClient);
+  }
+
+  /**
+   * The session a completed two-step sign-in (POST /auth/mfa/verify) or enrolment (POST /auth/mfa/totp/confirm)
+   * receives: exactly the response POST /auth/login gives, with the `mfa` claim in the access token. The account is
+   * re-checked here because the second step can arrive minutes after the password was.
+   */
+  async completeAdminMfaSignIn(userId: number, isMobileClient = false) {
+    const user = await this.usersService.findById(userId).catch(() => null);
+    if (!user || user.role !== UserRole.ADMIN) throw new UnauthorizedException('Invalid credentials');
+    if (user.status !== UserStatus.ACTIVE || user.deletionCompletedAt) {
+      throw new ForbiddenException(`Account status ${user.status} is not allowed to log in`);
+    }
+    if (mustVerifyEmail(user)) throw new ForbiddenException(EMAIL_VERIFICATION_REQUIRED);
+    return this.issueSession(user, isMobileClient, { mfa: true });
+  }
+
+  private async issueSession(
+    user: { id: number; email: string; role: UserRole; status: UserStatus },
+    isMobileClient: boolean,
+    claims: { mfa?: true } = {},
+  ) {
     await this.usersService.updateLastLogin(user.id);
-    const signed = await this.signToken(user.id, user.email, user.role, user.status);
+    const signed = await this.signToken(user.id, user.email, user.role, user.status, claims);
 
     // Only the mobile app gets a renewable session. Web keeps today's response exactly.
     if (!isMobileClient) return signed;
@@ -211,7 +243,10 @@ export class AuthService {
       throw new UnauthorizedException('Session is no longer valid');
     }
 
-    const signed = await this.signToken(user.id, user.email, user.role, user.status);
+    // A Platform Admin's renewed token keeps its two-step claim; an unenrolled admin cannot renew while the rollout
+    // flag requires enrolment. No other role reaches this.
+    const claims = user.role === UserRole.ADMIN ? await this.adminMfa.refreshClaims(user) : {};
+    const signed = await this.signToken(user.id, user.email, user.role, user.status, claims);
     return {
       ...signed,
       refreshToken: issued.refreshToken,
@@ -354,14 +389,16 @@ export class AuthService {
     }
   }
 
-  private async signToken(userId: number, email: string, role: UserRole, status: UserStatus) {
+  private async signToken(userId: number, email: string, role: UserRole, status: UserStatus, claims: { mfa?: true } = {}) {
     const companyProfile =
       isCompanyRole(role) ? await this.companyService.findByUserId(userId) : null;
     const guardProfile =
       role === UserRole.GUARD ? await this.guardProfileService.findByUserId(userId) : null;
     const companyPermissions = await this.computeCompanyPermissions(userId, role);
 
-    const payload = { sub: userId, email, role, status, principalType: 'user' as const };
+    // `mfa` only ever appears on a Platform Admin token issued through two-step verification (JwtStrategy requires it
+    // for an enrolled admin). Every other payload is exactly as before.
+    const payload = { sub: userId, email, role, status, principalType: 'user' as const, ...(claims.mfa ? { mfa: true as const } : {}) };
     return {
       accessToken: this.jwtService.sign(payload),
       user: {

@@ -44,6 +44,11 @@ async function main(): Promise<void> {
     console.log(`Platform Admin ${operation} succeeded.`);
     console.log(`User ID: ${result.userId}`);
     console.log(`Email: ${result.email}`);
+    if (operation === 'recover') {
+      console.log(result.mfaReset
+        ? 'Two-step verification: reset. The admin signs in with the new password and sets it up again.'
+        : 'Two-step verification: was not set up.');
+    }
   } finally {
     await dataSource.destroy();
   }

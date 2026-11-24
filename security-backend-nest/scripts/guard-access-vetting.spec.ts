@@ -42,6 +42,7 @@ function authHarness() {
     { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
     { find: async () => [], findOne: async () => null } as any,
     { sendVerification: async () => undefined } as any,
+    {} as any, // Platform Admin two-step verification: not reached by Guard flows
   );
   return { service, users, guards };
 }
@@ -79,7 +80,8 @@ async function main() {
   // status assertions below exercise a verified account.
   equal(registration.verificationRequired, true);
   Object.assign(users[0], { emailVerificationRequired: true, isEmailVerified: true });
-  equal((await service.login({ email: 'guard@example.test', password: 'secret123' })).user.status, UserStatus.ACTIVE);
+  const signedIn = await service.login({ email: 'guard@example.test', password: 'secret123' });
+  equal('user' in signedIn ? signedIn.user.status : null, UserStatus.ACTIVE);
 
   users[0].status = UserStatus.SUSPENDED;
   await rejects(() => service.login({ email: 'guard@example.test', password: 'secret123' }), ForbiddenException);

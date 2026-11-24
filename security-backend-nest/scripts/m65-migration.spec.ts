@@ -122,7 +122,7 @@ async function main() {
     await test('M65-01-A-64-DATABASE-MIGRATES-TO-65-AND-65-IS-LAST', () => {
       assert.equal(applied.length, 1, 'only 65 is pending on a 64 database');
       assert.equal(applied[0].name, MIGRATION_65);
-      assert.equal(allFiles.length, 76);
+      assert.equal(allFiles.length, 77);
       assert.equal(allFiles[64], '1720900000011-AddWelfarePushReminders.ts');
       assert.equal(allFiles[65], '1720900000012-AddGuardNotificationDispatches.ts', 'Migration 66 follows 65 and is certified by m66-migration.spec.ts');
       assert.equal(allFiles[66], '1720900000013-AddManualAttendance.ts', 'Migration 67 follows 66 and is certified by m67-migration.spec.ts');
@@ -271,7 +271,9 @@ async function main() {
       const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
       // Migration 76 (1720900000023, certified by m76-migration.spec.ts) follows: its enum and companies columns are not drift here.
       const m76 = /^CREATE TYPE "(public"\.")?company_verification_status_enum"|^ALTER TABLE "companies" ADD "(verificationStatus|verificationNote|verificationDecidedAt)" /;
-      const semantic = drift.filter((x) => !m76.test(x) && !after65.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m74.test(x) && !m75.test(x) &&
+      // Migration 77 (1720900000024, certified by m77-migration.spec.ts) follows: its platform_admin_mfa table is not drift here.
+      const m77 = /^CREATE TABLE "platform_admin_mfa" |^ALTER TABLE "platform_admin_mfa" /;
+      const semantic = drift.filter((x) => !m76.test(x) && !m77.test(x) && !after65.test(x) && !m67.test(x) && !m68.test(x) && !m69.test(x) && !m70.test(x) && !m71.test(x) && !m72.test(x) && !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       console.log(`      (diagnostic-only drift elsewhere, unchanged by 65: ${drift.length} statement(s))`);

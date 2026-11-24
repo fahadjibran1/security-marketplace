@@ -7,4 +7,6 @@ export interface JwtPayload {
   status: UserStatus | 'active';
   principalType?: 'user' | 'client_portal';
   clientId?: number;
+  /** Platform Admin only: the token was issued through two-step verification (required once the admin is enrolled). */
+  mfa?: true;
 }

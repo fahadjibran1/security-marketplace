@@ -16,6 +16,24 @@ function parseBoolean(value: unknown, fallback: boolean) {
   return normalized === 'true';
 }
 
+/**
+ * PLATFORM_ADMIN_MFA_REQUIRED (default false). When true, a Platform Admin who has not enrolled an authenticator app
+ * gets no session from a password sign-in: only a short-lived enrolment token that can reach nothing but the
+ * enrolment endpoints, and every existing Platform Admin session without two-step verification stops being accepted.
+ * Read at call time so a test can switch it; in production it changes only with a restart.
+ */
+export function isPlatformAdminMfaRequired(env: RawEnv = process.env): boolean {
+  return toTrimmedString(env.PLATFORM_ADMIN_MFA_REQUIRED).toLowerCase() === 'true';
+}
+
+function validatePlatformAdminMfaFlag(config: RawEnv) {
+  const value = toTrimmedString(config.PLATFORM_ADMIN_MFA_REQUIRED).toLowerCase();
+  // A typo ("ture", "yes") must not silently leave enforcement off.
+  if (value && value !== 'true' && value !== 'false') {
+    throw new Error('PLATFORM_ADMIN_MFA_REQUIRED must be "true" or "false" when set.');
+  }
+}
+
 function hasProductionDatabaseConfig(config: RawEnv) {
   const connectionUrl =
     toTrimmedString(config.DATABASE_POOLER_URL) || toTrimmedString(config.DATABASE_URL);
@@ -76,6 +94,7 @@ export function validateRuntimeEnv(config: RawEnv) {
     config.DATABASE_SYNCHRONIZE,
     nodeEnv === 'production' ? false : true,
   );
+  validatePlatformAdminMfaFlag(config);
 
   if (nodeEnv === 'production') {
     if (!jwtSecret || jwtSecret === DEFAULT_JWT_SECRET || jwtSecret.length < 32) {

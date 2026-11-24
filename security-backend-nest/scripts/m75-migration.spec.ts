@@ -139,7 +139,7 @@ async function main() {
     assert.ok(rows74.patrol_runs.length === 240 && rows74.shifts.length === 60, 'seeded');
 
     await test('M75-01-IDENTIFIER-AND-ORDER', async () => {
-      assert.equal(allFiles.length, 76, 'exactly 76 migration files');
+      assert.equal(allFiles.length, 77, 'exactly 77 migration files');
       assert.equal(allFiles[73], '1720900000021-AddPatrolSiteSetup.ts', 'Migration 74 comes just before 75');
       assert.equal(allFiles[74], '1720900000022-AddPatrolMonitorIndexes.ts', 'Migration 75 = 1720900000022');
       assert.equal(allFiles[75], '1720900000023-AddCompanyVerification.ts', 'Migration 76 follows 75 and is certified by m76-migration.spec.ts');
@@ -363,7 +363,9 @@ async function main() {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
       // Migration 76 (1720900000023, certified by m76-migration.spec.ts) follows: its enum and companies columns are not drift here.
       const m76 = /^CREATE TYPE "(public"\.")?company_verification_status_enum"|^ALTER TABLE "companies" ADD "(verificationStatus|verificationNote|verificationDecidedAt)" /;
-      const semantic = drift.filter((x) => !m76.test(x) &&
+      // Migration 77 (1720900000024, certified by m77-migration.spec.ts) follows: its platform_admin_mfa table is not drift here.
+      const m77 = /^CREATE TABLE "platform_admin_mfa" |^ALTER TABLE "platform_admin_mfa" /;
+      const semantic = drift.filter((x) => !m76.test(x) && !m77.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => NEW_INDEXES.some((n) => x.includes(`"${n}"`)));

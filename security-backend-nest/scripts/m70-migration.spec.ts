@@ -138,7 +138,7 @@ async function main() {
 
     await test('M70-01-A-69-DATABASE-MIGRATES-TO-70-AND-ONLY-71-AND-72-FOLLOW', () => {
       assert.deepEqual(applied.map((m) => m.name), [MIGRATION_70], 'only 70 is pending on a 69 database');
-      assert.equal(allFiles.length, 76);
+      assert.equal(allFiles.length, 77);
       assert.equal(allFiles[69], '1720900000016-AddPatrolEvidenceStorage.ts');
       assert.equal(allFiles[70], '1720900000017-AddPatrolSweepReconciliation.ts', 'Migration 71 follows 70 and is certified by m71-migration.spec.ts');
       assert.equal(allFiles[71], '1720900000018-AddPatrolSyncRecoveryGrants.ts', 'Migration 72 follows 71 and is certified by m72-migration.spec.ts');
@@ -294,7 +294,9 @@ async function main() {
       const m75 = /^CREATE INDEX "(IDX_patrol_runs_company_site_window_start|IDX_shifts_company_site_end)" /;
       // Migration 76 (1720900000023, certified by m76-migration.spec.ts) follows: its enum and companies columns are not drift here.
       const m76 = /^CREATE TYPE "(public"\.")?company_verification_status_enum"|^ALTER TABLE "companies" ADD "(verificationStatus|verificationNote|verificationDecidedAt)" /;
-      const semantic = drift.filter((x) => !m76.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x) &&
+      // Migration 77 (1720900000024, certified by m77-migration.spec.ts) follows: its platform_admin_mfa table is not drift here.
+      const m77 = /^CREATE TABLE "platform_admin_mfa" |^ALTER TABLE "platform_admin_mfa" /;
+      const semantic = drift.filter((x) => !m76.test(x) && !m77.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /"patrol_|patrolsEnabled|patrol(ExceptionId|RunId|WindowKey|LateSyncAt|Annotation)|uq_safety_alerts_patrol_exception/.test(x) && !m71.test(x) && !m72.test(x) && !m73.test(x) && !m74.test(x) && !m75.test(x));

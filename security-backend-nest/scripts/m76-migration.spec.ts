@@ -114,7 +114,7 @@ async function main() {
 
   try {
     await test('M76-01-IDENTIFIER-AND-ORDER', async () => {
-      assert.equal(allFiles.length, 76, 'exactly 76 migration files');
+      assert.equal(allFiles.length, 77, 'exactly 77 migration files');
       assert.equal(allFiles[74], '1720900000022-AddPatrolMonitorIndexes.ts', 'Migration 75 comes just before 76');
       assert.equal(allFiles[75], '1720900000023-AddCompanyVerification.ts', 'Migration 76 = 1720900000023 and is the last');
       assert.equal(new Set(allFiles.map((f) => f.split('-')[0])).size, allFiles.length, 'every identifier is unique');
@@ -170,7 +170,9 @@ async function main() {
 
     await test('M76-07-NO-SEMANTIC-DRIFT', async () => {
       const drift = (await ds.driver.createSchemaBuilder().log()).upQueries.map((x) => x.query);
-      const semantic = drift.filter((x) =>
+      // Migration 77 (1720900000024, certified by m77-migration.spec.ts) follows: its platform_admin_mfa table is not drift here.
+      const m77 = /^CREATE TABLE "platform_admin_mfa" |^ALTER TABLE "platform_admin_mfa" /;
+      const semantic = drift.filter((x) => !m77.test(x) &&
         /CREATE TABLE|DROP TABLE|CREATE TYPE|DROP TYPE|ALTER TYPE|ALTER TABLE.*ALTER COLUMN|ALTER TABLE.*DROP COLUMN|ALTER TABLE.*ADD "/i.test(x));
       assert.deepEqual(semantic, [], `semantic drift (the release gate would fail):\n${semantic.join('\n')}`);
       const ours = drift.filter((x) => /companies/.test(x) && NEW_COLUMNS.some((c) => x.includes(`"${c}"`)) || x.includes(ENUM));

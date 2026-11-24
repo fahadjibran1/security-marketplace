@@ -52,6 +52,7 @@ function harness(seed: { email?: string; sia?: string } = {}, failure: Failure =
     {} as any, {} as any, { create: async () => { throw new Error('auth session not expected in this test'); } } as any, dataSource as any,
     { find: async () => [], findOne: async () => null } as any,
     { sendVerification: async () => { verificationsSent += 1; } } as any,
+    {} as any, // Platform Admin two-step verification: not reached by registration
   );
   return { service, users: () => users, guards: () => guards, sessions: () => sessions, verificationsSent: () => verificationsSent };
 }
