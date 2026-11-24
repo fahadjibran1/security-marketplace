@@ -358,6 +358,37 @@ test('EM-M13-NOT-CONFIRMED-BECOMES-RECEIVED-WHEN-S4-HAS-IT-WITH-NO-SECOND-REQUES
   assert.equal(em.activeEmergencyReceipt([{ id: 1, type: 'panic', status: 'open', createdAt: 'x', shift: { id: 42 } }], null), null, 'no shift, no match');
 });
 
+test('EM-M14-ONE-REQUEST-KEY-PER-EMERGENCY-REUSED-BY-TRY-AGAIN-NEW-WHEN-REOPENED', async () => {
+  const keys = [];
+  let fail = true;
+  const api = {
+    createSafetyAlert: async (_p, key) => { keys.push(key); if (fail) throw new NetworkError('x'); return receiptBody(); },
+    listMySafetyAlerts: async () => [],
+  };
+  const { renderer, root } = await mount(api);
+  await press(byTestId(root, 'guard-emergency-send')[0]);
+  fail = false;
+  await press(byTestId(root, 'guard-emergency-retry')[0]);
+  assert.equal(keys.length, 2);
+  assert.match(keys[0], /^[A-Za-z0-9_-]{16,64}$/, 'the form S4 accepts');
+  assert.equal(keys[1], keys[0], 'TRY AGAIN is the same Emergency');
+  // Closed and opened again: a new Emergency, a new key.
+  await act(async () => renderer.update(h(GuardEmergencyScreen, { visible: false, shift: LIVE, timeZone: 'Europe/London', api, onClose: () => {} })));
+  await act(async () => renderer.update(h(GuardEmergencyScreen, { visible: true, shift: LIVE, timeZone: 'Europe/London', api, onClose: () => {} })));
+  await act(async () => { await settle(); });
+  await press(byTestId(renderer.root, 'guard-emergency-send')[0]);
+  assert.equal(keys.length, 3);
+  assert.notEqual(keys[2], keys[0]);
+  await act(async () => renderer.unmount());
+  // The key is a header, never a body field (the API refuses unknown body fields; an older backend ignores the header).
+  const apiSrc = read('src/services/api.ts');
+  assert.match(apiSrc, /headers: \{ 'Idempotency-Key': requestKey \}/);
+  const body = [];
+  await em.sendGuardEmergency(LIVE, { createSafetyAlert: async (p) => { body.push(p); return receiptBody(); } }, undefined, 'em-abcdefghijklmnop');
+  assert.deepEqual(Object.keys(body[0]).sort(), ['message', 'priority', 'shiftId', 'type']);
+  assert.match(em.newEmergencyRequestKey(() => 1, () => 0.5), /^[A-Za-z0-9_-]{16,64}$/);
+});
+
 // ═══════════════════ the action-form model and the dashboard ═══════════════════
 
 test('EM-M10-EMERGENCY-NEEDS-NO-WORDS', () => {

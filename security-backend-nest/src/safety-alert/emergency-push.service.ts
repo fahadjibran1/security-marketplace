@@ -1,13 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager } from 'typeorm';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { revokeDeadPushDevice } from '../welfare-push/push-device-lifecycle';
 import { ExpoPushClient, ExpoPushMessage } from '../welfare-push/expo-push.client';
+import { EMERGENCY_PUSH_RECOVERY_LOCK_NAMESPACE } from '../operations/advisory-locks';
+import { SingleFlightJob } from '../scheduler/single-flight-job';
 import {
   EMERGENCY_PUSH_CHANNEL,
   EMERGENCY_PUSH_KIND,
+  EMERGENCY_PUSH_RECOVERY_INTERVAL_MS,
+  EMERGENCY_PUSH_RECOVERY_MAX_AGE_SECONDS,
+  EMERGENCY_PUSH_RECOVERY_MIN_AGE_SECONDS,
   EMERGENCY_PUSH_TTL_SECONDS,
+  emergencyNotificationText,
+  emergencyRecipientUserIds,
 } from './emergency-alert';
 
 export type EmergencyPushOutcome = {
@@ -33,8 +40,10 @@ export type EmergencyPushOutcome = {
  * PUSH_EMERGENCY_ALERTS_ENABLED=false turns the push (only) off; anything else, including unset, leaves it on.
  */
 @Injectable()
-export class EmergencyPushService {
+export class EmergencyPushService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('EmergencyPush');
+  private recoveryJob?: SingleFlightJob;
+  private recoveryTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -42,6 +51,98 @@ export class EmergencyPushService {
     private readonly auditLogService: AuditLogService,
     private readonly config: ConfigService,
   ) {}
+
+  onModuleInit() {
+    this.recoveryJob = new SingleFlightJob('emergency-push-recovery', () => this.recoverOwedPushes(), {
+      overrunAfterMs: EMERGENCY_PUSH_RECOVERY_INTERVAL_MS * 3,
+    });
+    this.recoveryTimer = setInterval(() => void this.recoveryJob?.tick(), EMERGENCY_PUSH_RECOVERY_INTERVAL_MS);
+    this.recoveryTimer.unref?.();
+  }
+
+  onModuleDestroy() {
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    this.recoveryJob?.stop();
+  }
+
+  /**
+   * Bounded recovery of a push that was owed and never attempted: the process stopped after the Emergency committed
+   * (with its 'safety_alert.emergency_push_pending' record) and before the dispatch ran. Runs every minute.
+   *
+   * Each candidate is claimed in its own transaction under a TRY advisory lock on the alert id: still OPEN, between
+   * EMERGENCY_PUSH_RECOVERY_MIN_AGE_SECONDS and _MAX_AGE_SECONDS old, push owed, and no attempt or earlier recovery
+   * recorded. The claim ('safety_alert.emergency_push_recovery') commits BEFORE the push, so an Emergency is recovered at
+   * most once, even if this process stops again: no duplicate pushes, and nothing stale is pushed late. The push goes to
+   * the people responsible NOW (same rule as at raise time). Returns how many were recovered.
+   */
+  async recoverOwedPushes(): Promise<number> {
+    if (!this.enabled()) return 0;
+    const candidates: Array<{ id: number | string }> = await this.dataSource.query(
+      `SELECT id FROM safety_alerts
+        WHERE type = 'panic' AND status = 'open'
+          AND "createdAt" < now() - ($1 || ' seconds')::interval
+          AND "createdAt" > now() - ($2 || ' seconds')::interval
+        ORDER BY id`,
+      [String(EMERGENCY_PUSH_RECOVERY_MIN_AGE_SECONDS), String(EMERGENCY_PUSH_RECOVERY_MAX_AGE_SECONDS)],
+    );
+    let recovered = 0;
+    for (const candidate of candidates) {
+      const alertId = Number(candidate.id);
+      try {
+        const claim = await this.dataSource.transaction(async (manager) => {
+          const [{ locked }] = await manager.query('SELECT pg_try_advisory_xact_lock($1, $2) AS locked', [
+            EMERGENCY_PUSH_RECOVERY_LOCK_NAMESPACE,
+            alertId,
+          ]);
+          if (!locked) return null;
+          const actions: Array<{ action: string }> = await manager.query(
+            `SELECT action FROM audit_logs WHERE "entityType" = 'safety_alert' AND "entityId" = $1
+               AND action IN ('safety_alert.emergency_push_pending', 'safety_alert.emergency_push_attempted',
+                              'safety_alert.emergency_push_recovery')`,
+            [alertId],
+          );
+          const seen = new Set(actions.map((a) => a.action));
+          if (!seen.has('safety_alert.emergency_push_pending')) return null;
+          if (seen.has('safety_alert.emergency_push_attempted') || seen.has('safety_alert.emergency_push_recovery')) return null;
+          const [alert] = await manager.query(
+            `SELECT a.id, a."companyId", a.status, EXTRACT(EPOCH FROM (now() - a."createdAt"))::int AS "ageSeconds",
+                    g."fullName" AS "guardName", COALESCE(s.name, sh."siteName") AS "siteName"
+               FROM safety_alerts a
+               LEFT JOIN guard_profiles g ON g.id = a."guardId"
+               LEFT JOIN shifts sh ON sh.id = a."shiftId"
+               LEFT JOIN sites s ON s.id = sh."siteId"
+              WHERE a.id = $1 AND a.status = 'open'`,
+            [alertId],
+          );
+          if (!alert) return null;
+          const companyId = Number(alert.companyId);
+          const recipients = await emergencyRecipientUserIds(manager, companyId);
+          const devices = await this.activeDevices(recipients, manager);
+          await this.auditLogService.logInTransaction(manager, {
+            company: { id: companyId },
+            user: null,
+            action: 'safety_alert.emergency_push_recovery',
+            entityType: 'safety_alert',
+            entityId: alertId,
+            afterData: { ageSeconds: Number(alert.ageSeconds), devices: devices.length },
+          });
+          return { companyId, devices, text: emergencyNotificationText(alert.guardName, alert.siteName) };
+        });
+        if (!claim) continue;
+        await this.dispatch({
+          alertId,
+          companyId: claim.companyId,
+          title: claim.text.title,
+          body: claim.text.pushBody,
+          devices: claim.devices,
+        });
+        recovered += 1;
+      } catch (error) {
+        this.logger.error(JSON.stringify({ event: 'emergency_push_recovery_failed', alertId, reason: error instanceof Error ? error.name : 'unknown' }));
+      }
+    }
+    return recovered;
+  }
 
   enabled(): boolean {
     return String(this.config.get<string>('PUSH_EMERGENCY_ALERTS_ENABLED') ?? '').trim().toLowerCase() !== 'false';

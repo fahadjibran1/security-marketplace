@@ -40,6 +40,32 @@ export const EMERGENCY_PUSH_KIND = 'emergency_alert';
 /** Long enough to reach a phone that was briefly out of signal; short enough not to arrive hours late. */
 export const EMERGENCY_PUSH_TTL_SECONDS = 30 * 60;
 
+/**
+ * Owed-push recovery: an Emergency whose push was recorded as owed ('safety_alert.emergency_push_pending') but never
+ * attempted (the process stopped between the commit and the dispatch) gets ONE recovery attempt, and only while it is
+ * still OPEN, at least MIN seconds old (so a dispatch still in flight, whose provider call times out after 10 s, is never
+ * doubled) and at most MAX seconds old (an older Emergency is not pushed late: it is in Live Operations and the audit
+ * trail keeps the owed, unattempted push as evidence).
+ */
+export const EMERGENCY_PUSH_RECOVERY_MIN_AGE_SECONDS = 60;
+export const EMERGENCY_PUSH_RECOVERY_MAX_AGE_SECONDS = 10 * 60;
+export const EMERGENCY_PUSH_RECOVERY_INTERVAL_MS = 60 * 1000;
+
+/**
+ * Request-level idempotency: the app sends one Idempotency-Key header per Emergency (the same key on every TRY AGAIN of
+ * it, a new key for a new Emergency). A request whose key matches an Emergency this Guard raised in the last
+ * EMERGENCY_REQUEST_KEY_HOURS is answered with that Emergency, whatever its status, so a retry is never a second alert
+ * even after it was acknowledged. A header, not a body field: the API refuses unknown body fields, and an older backend
+ * simply ignores the header. A malformed key is ignored (never refused): an Emergency is never blocked over it.
+ */
+export const EMERGENCY_REQUEST_KEY_HOURS = 24;
+const EMERGENCY_REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+
+export function emergencyRequestKey(raw: unknown): string | null {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  return EMERGENCY_REQUEST_KEY_PATTERN.test(value) ? value : null;
+}
+
 /** What the Guard's app is told about its Emergency. Counts only: never who, never a token. */
 export type EmergencyReceipt = {
   /** True when this request matched an Emergency already raised (see EMERGENCY_DEDUPE_SECONDS). */

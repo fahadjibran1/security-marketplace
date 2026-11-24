@@ -23,6 +23,10 @@
  *          push is visible in the audit trail as pending with no attempt
  *   EM-16  an ACTIVE Control Room membership whose own account is suspended, inactive or deleted is neither notified
  *          nor pushed (the same rule as sign-in)
+ *   EM-17  request-level idempotency: a retry with the same Idempotency-Key is the same Emergency even after it was
+ *          acknowledged; a new key is a new Emergency; another Guard's key matches nothing; a malformed key is ignored
+ *   EM-18  owed-push recovery: an OPEN Emergency whose push was owed and never attempted is pushed once, between 60 s
+ *          and 10 min old; too new, stale, acknowledged, already claimed or kill-switched ones are left alone
  *
  * Needs EMERGENCY_SPEC_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -117,12 +121,13 @@ async function main() {
   if (actualDatabase !== new URL(url!).pathname.slice(1)) throw new Error(`Refusing: connected to ${actualDatabase}`);
   app.get(SafetyAlertService).onModuleDestroy(); // no background sweeps in this spec
   app.get(WelfarePushService).onModuleDestroy();
+  app.get(EmergencyPushService).onModuleDestroy(); // the owed-push recovery runs only when EM-18 calls it
   const auth = app.get(AuthService);
 
-  const api = async (method: string, path: string, token: string | null, body?: unknown): Promise<Res> => {
+  const api = async (method: string, path: string, token: string | null, body?: unknown, headers: Record<string, string> = {}): Promise<Res> => {
     const res = await fetch(base + path, {
       method,
-      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
@@ -456,6 +461,98 @@ async function main() {
       assert.equal(r.body.emergencyReceipt.pushDevicesTargeted, 0, 'no blocked account’s phone is targeted');
       const got = (await q(`SELECT "userId" FROM notifications WHERE "companyId" = $1 AND title LIKE 'EMERGENCY%'`, [C.id])).map((x: any) => Number(x.userId));
       for (const id of blocked) assert.ok(!got.includes(id), `account ${id} cannot sign in, so is not notified`);
+    });
+
+    await test('EM-17-A-RETRY-WITH-THE-SAME-REQUEST-KEY-IS-NEVER-A-SECOND-EMERGENCY-A-NEW-KEY-IS', async () => {
+      const g17 = await guard('emg17', A);
+      const s17 = await shift(A, g17);
+      const key = (n: number) => `em-spec-request-key-${String(n).padStart(4, '0')}`;
+      const send = (k?: string) => api('POST', '/alerts', g17.token, { shiftId: s17, type: 'panic', priority: 'critical' }, k ? { 'Idempotency-Key': k } : {});
+      const first = await send(key(1));
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      assert.equal(first.body.emergencyReceipt.duplicate, false);
+      // Acknowledged before the Guard's retry arrives: the window rule alone would raise a second alert; the key does not.
+      assert.equal((await api('PATCH', `/alerts/${first.body.id}/ack`, A.staff.control_room.token)).status, 200);
+      const retry = await send(key(1));
+      assert.equal(retry.status, 201);
+      assert.equal(retry.body.id, first.body.id, 'the same Emergency');
+      assert.equal(retry.body.emergencyReceipt.duplicate, true);
+      assert.equal(retry.body.emergencyReceipt.acknowledged, true, 'and its real state');
+      assert.equal(await panicsOn(s17), 1);
+      const matched = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'safety_alert.emergency_repeat_press' AND "entityId" = $1 ORDER BY id DESC LIMIT 1`, [first.body.id]);
+      assert.equal(matched.afterData.matchedBy, 'request_key');
+      // A genuinely new Emergency (new key) after the first was acknowledged: raised.
+      const fresh = await send(key(2));
+      assert.equal(fresh.body.emergencyReceipt.duplicate, false);
+      assert.notEqual(fresh.body.id, first.body.id);
+      assert.equal(await panicsOn(s17), 2);
+      // A new key while the newest is still OPEN and inside the window: the window still answers (one open Emergency).
+      const second = await send(key(3));
+      assert.equal(second.body.id, fresh.body.id);
+      // Another Guard cannot reach an Emergency through someone else's key.
+      const gOther = await guard('emg17b', A);
+      const sOther = await shift(A, gOther);
+      const other = await api('POST', '/alerts', gOther.token, { shiftId: sOther, type: 'panic', priority: 'critical' }, { 'Idempotency-Key': key(1) });
+      assert.equal(other.body.emergencyReceipt.duplicate, false);
+      assert.notEqual(other.body.id, first.body.id);
+      // A malformed key is ignored, never refused.
+      const g17c = await guard('emg17c', A);
+      const s17c = await shift(A, g17c);
+      const bad = await api('POST', '/alerts', g17c.token, { shiftId: s17c, type: 'panic', priority: 'critical' }, { 'Idempotency-Key': 'bad key!' });
+      assert.equal(bad.status, 201);
+      assert.equal(bad.body.emergencyReceipt.duplicate, false);
+      const created = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'safety_alert.created' AND "entityId" = $1`, [bad.body.id]);
+      assert.equal(created.afterData.requestKey, undefined);
+    });
+
+    await test('EM-18-AN-OWED-PUSH-IS-RECOVERED-ONCE-WITHIN-ITS-WINDOW-AND-NEVER-LATE-OR-TWICE', async () => {
+      const push = app.get(EmergencyPushService);
+      const realDispatch = push.dispatch.bind(push);
+      const owed = async (label: string) => {
+        (push as any).dispatch = async () => undefined; // the process "stops" before the dispatch
+        try {
+          const g = await guard(label, A);
+          const s = await shift(A, g);
+          const r = await emergency(g, s);
+          assert.equal(r.status, 201);
+          return r.body.id as number;
+        } finally {
+          (push as any).dispatch = realDispatch;
+        }
+      };
+      const age = (id: number, seconds: number) => q(`UPDATE safety_alerts SET "createdAt" = now() - ($2 || ' seconds')::interval WHERE id = $1`, [id, String(seconds)]);
+      const fresh = await owed('emg18a'); // 0 s old: a dispatch could still be in flight
+      const due = await owed('emg18b'); await age(due, 90);
+      const stale = await owed('emg18c'); await age(stale, 11 * 60);
+      const acked = await owed('emg18d'); await age(acked, 90);
+      assert.equal((await api('PATCH', `/alerts/${acked}/ack`, A.staff.control_room.token)).status, 200);
+      // Earlier tests' Emergencies (EM-15's is owed too) are closed so only these four are candidates.
+      await q(`UPDATE safety_alerts SET status = 'closed' WHERE type::text = 'panic' AND id NOT IN ($1,$2,$3,$4)`, [fresh, due, stale, acked]);
+      fake.mode = 'ok';
+      fake.sends.length = 0;
+      const recovered = await push.recoverOwedPushes();
+      assert.equal(recovered, 1, 'only the open, 90-second-old Emergency');
+      const outcome = await pushAudit(due);
+      assert.ok(outcome.devices >= 1 && outcome.providerAccepted === outcome.devices, JSON.stringify(outcome));
+      const recoveryRow = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'safety_alert.emergency_push_recovery' AND "entityId" = $1`, [due]);
+      assert.ok(recoveryRow && recoveryRow.afterData.ageSeconds >= 60, 'the late recovery is recorded with its age');
+      const sentOnce = fake.sends.flat().length;
+      assert.equal(sentOnce, outcome.devices);
+      for (const id of [fresh, stale, acked]) {
+        assert.equal(await count(`SELECT count(*)::int n FROM audit_logs WHERE "entityId" = $1 AND action IN ('safety_alert.emergency_push_recovery','safety_alert.emergency_push_attempted')`, [id]), 0,
+          `alert ${id}: not recovered (too new, stale or already acknowledged)`);
+      }
+      // Never twice: a second run, and a recovery claimed but interrupted before its dispatch, are both left alone.
+      assert.equal(await push.recoverOwedPushes(), 0);
+      assert.equal(fake.sends.flat().length, sentOnce);
+      await age(fresh, 90);
+      await q(`INSERT INTO audit_logs (action, "entityType", "entityId", "afterData") VALUES ('safety_alert.emergency_push_recovery', 'safety_alert', $1, '{}')`, [fresh]);
+      assert.equal(await push.recoverOwedPushes(), 0, 'a claimed recovery is never repeated');
+      // Kill switch: nothing is claimed while emergency push is off.
+      const off = await owed('emg18e'); await age(off, 90);
+      (push as any).enabled = () => false;
+      try { assert.equal(await push.recoverOwedPushes(), 0); } finally { (push as any).enabled = EmergencyPushService.prototype.enabled.bind(push); }
+      assert.equal(await count(`SELECT count(*)::int n FROM audit_logs WHERE "entityId" = $1 AND action = 'safety_alert.emergency_push_recovery'`, [off]), 0);
     });
   } finally {
     await app.close();

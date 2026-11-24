@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseIntPipe, Patch, Post, UseGuards, UseInterceptors } from '@nestjs/common';
 import { SafetyAlertService } from './safety-alert.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -35,8 +35,9 @@ export class SafetyAlertController {
 
   @Post()
   @Roles(UserRole.GUARD)
-  create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSafetyAlertDto) {
-    return this.safetyAlertService.createForGuard(user.sub, dto);
+  create(@CurrentUser() user: JwtPayload, @Body() dto: CreateSafetyAlertDto, @Headers('idempotency-key') idempotencyKey?: string) {
+    // S4-EM-01: the key is read for an Emergency only (see emergencyRequestKey); every other type ignores it.
+    return this.safetyAlertService.createForGuard(user.sub, dto, idempotencyKey);
   }
 
   // Entry gate. Company staff reach this only to act on their own company's compliance lapse alerts with

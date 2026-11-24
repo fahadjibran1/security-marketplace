@@ -13,6 +13,7 @@ import {
   emergencyFollowUp,
   emergencyReceivedView,
   emergencyScreenLayout,
+  newEmergencyRequestKey,
   sendGuardEmergency,
   type EmergencyApi,
   type EmergencyFollowUp,
@@ -70,9 +71,12 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
   const [followUp, setFollowUp] = useState<EmergencyFollowUp>({ state: 'waiting' });
   // One request per press, whatever the renderer does with a fast double tap: state updates are not synchronous.
   const inFlight = useRef(false);
+  // One key per Emergency (see newEmergencyRequestKey): a new one each time the screen opens, kept for every TRY AGAIN.
+  const requestKey = useRef(newEmergencyRequestKey());
 
   useEffect(() => {
     if (visible) {
+      requestKey.current = newEmergencyRequestKey();
       setPhase('confirm');
       setResult(null);
       setFollowUp({ state: 'waiting' });
@@ -84,7 +88,7 @@ export function GuardEmergencyScreen({ visible, shift, timeZone, api, onClose, o
     inFlight.current = true;
     setPhase('sending');
     try {
-      const outcome = await sendGuardEmergency(shift, api);
+      const outcome = await sendGuardEmergency(shift, api, undefined, requestKey.current);
       setResult(outcome);
       setPhase('result');
       if (outcome.kind === 'received') onReceived?.(outcome.receipt);

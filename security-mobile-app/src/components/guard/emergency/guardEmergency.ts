@@ -69,8 +69,19 @@ export type EmergencySubmitResult =
   | { kind: 'failed' };
 
 export type EmergencyApi = {
-  createSafetyAlert: (payload: { shiftId: number; type: 'panic'; priority: 'critical'; message: string }) => Promise<unknown>;
+  createSafetyAlert: (payload: { shiftId: number; type: 'panic'; priority: 'critical'; message: string }, requestKey?: string) => Promise<unknown>;
 };
+
+/**
+ * One key per Emergency: made when the Emergency screen opens and reused by every TRY AGAIN on it, so S4 answers a retry
+ * with the Emergency it already has (even after an acknowledgement); opening the screen again makes a new key, a new
+ * Emergency. Uniqueness per Guard is all it needs (it is not a secret). 16–64 of [A-Za-z0-9_-], as the server expects.
+ */
+export function newEmergencyRequestKey(now: () => number = Date.now, random: () => number = Math.random): string {
+  let tail = '';
+  while (tail.length < 16) tail += Math.floor(random() * 36 ** 4).toString(36).padStart(4, '0');
+  return `em-${now().toString(36)}-${tail.slice(0, 16)}`;
+}
 
 export function isLiveEmergencyShift(shift: EmergencyShift): shift is { id: number; status: string } {
   return !!shift && (shift.status || '').trim().toLowerCase() === 'in_progress';
@@ -121,12 +132,18 @@ export function classifyEmergencyError(error: unknown): EmergencySubmitResult {
  * Send one Emergency. Never throws. Exactly one request, and only for the Guard's live shift (the same availability
  * rule as before: the server enforces it too).
  */
-export async function sendGuardEmergency(shift: EmergencyShift, api: EmergencyApi, now: () => Date = () => new Date()): Promise<EmergencySubmitResult> {
+export async function sendGuardEmergency(
+  shift: EmergencyShift,
+  api: EmergencyApi,
+  now: () => Date = () => new Date(),
+  requestKey?: string,
+): Promise<EmergencySubmitResult> {
   if (!isLiveEmergencyShift(shift)) {
     return { kind: 'not_available', message: 'Emergency is only available while you are booked on to a shift.' };
   }
   try {
-    const response = await api.createSafetyAlert({ shiftId: shift.id, type: 'panic', priority: 'critical', message: EMERGENCY_APP_MESSAGE });
+    const payload = { shiftId: shift.id, type: 'panic' as const, priority: 'critical' as const, message: EMERGENCY_APP_MESSAGE };
+    const response = await (requestKey ? api.createSafetyAlert(payload, requestKey) : api.createSafetyAlert(payload));
     const receipt = readEmergencyReceipt(response, now());
     // A 2xx without an alert id is not proof S4 recorded it, nor proof it did not: unknown.
     return receipt ? { kind: 'received', receipt } : { kind: 'uncertain' };

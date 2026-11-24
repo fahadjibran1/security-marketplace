@@ -63,6 +63,8 @@ import { SingleFlightJob, SingleFlightOutcome } from '../scheduler/single-flight
 import { EMERGENCY_ALERT_LOCK_NAMESPACE, WELFARE_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
 import {
   EMERGENCY_DEDUPE_SECONDS,
+  EMERGENCY_REQUEST_KEY_HOURS,
+  emergencyRequestKey,
   EMERGENCY_DEFAULT_MESSAGE,
   EmergencyReceipt,
   emergencyNotificationText,
@@ -252,7 +254,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     return alert;
   }
 
-  async createForGuard(userId: number, dto: CreateSafetyAlertDto): Promise<SafetyAlert> {
+  async createForGuard(userId: number, dto: CreateSafetyAlertDto, idempotencyKey?: string): Promise<SafetyAlert> {
     // System-generated types (missed Welfare Check, Missing Book Off, compliance lapse, ...) come only from
     // the server's own sweeps. A Guard may raise only the types in GUARD_RAISABLE_ALERT_TYPES; checked
     // first, before anything is looked up, so a forged type learns nothing about shifts.
@@ -287,7 +289,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
 
     // S4-EM-01: an Emergency needs no description and has its own transactional, de-duplicated path.
     if (type === SafetyAlertType.PANIC) {
-      return this.raiseEmergency(userId, guard, shift, dto.message);
+      return this.raiseEmergency(userId, guard, shift, dto.message, emergencyRequestKey(idempotencyKey));
     }
 
     const text = (dto.message ?? '').trim();
@@ -341,9 +343,13 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * committed is the Guard told S4 received it. Push to the responsible people's phones is attempted after the commit and
    * can never undo it.
    *
-   * Duplicate protection: an Emergency from the same Guard on the same shift that is still OPEN and younger than
-   * EMERGENCY_DEDUPE_SECONDS is returned instead of raising another (receipt.duplicate). Once it has been acknowledged or
-   * closed, or that time has passed, a new press is a new Emergency.
+   * Duplicate protection, first match wins (receipt.duplicate):
+   * 1. Request key: a request carrying the Idempotency-Key of an Emergency this Guard raised in the last
+   *    EMERGENCY_REQUEST_KEY_HOURS is answered with that Emergency, whatever its status (a retry, even after an
+   *    acknowledgement, is never a second alert). A new key is a new Emergency's request.
+   * 2. Window (older apps, and a second press from another screen): an Emergency from the same Guard on the same shift
+   *    that is still OPEN and younger than EMERGENCY_DEDUPE_SECONDS. Once it has been acknowledged or closed, or that
+   *    time has passed, a new press is a new Emergency.
    *
    * The site, company and Guard come only from the Guard's own in-progress shift (checked by the caller), exactly as
    * before. Availability is unchanged: an Emergency still needs that live shift.
@@ -353,6 +359,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     guard: GuardProfile,
     shift: Shift,
     description: string | undefined,
+    requestKey: string | null = null,
   ): Promise<SafetyAlert & { emergencyReceipt: EmergencyReceipt }> {
     const company = shift.company;
     const message = (description ?? '').trim() || EMERGENCY_DEFAULT_MESSAGE;
@@ -361,19 +368,34 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
 
     const result = await this.dataSource.transaction(async (manager) => {
       await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [EMERGENCY_ALERT_LOCK_NAMESPACE, guard.id]);
-      const [existing] = await manager.query(
+      // The key lives on the alert's own creation audit entry (no schema change). Only this Guard's Emergencies of the
+      // last EMERGENCY_REQUEST_KEY_HOURS are considered.
+      const [sameRequest] = requestKey
+        ? await manager.query(
+          `SELECT a.id FROM safety_alerts a
+             JOIN audit_logs l ON l."entityType" = 'safety_alert' AND l."entityId" = a.id AND l.action = 'safety_alert.created'
+            WHERE a."guardId" = $1 AND a.type = $2
+              AND a."createdAt" > now() - ($3 || ' hours')::interval
+              AND l."afterData"::jsonb ->> 'requestKey' = $4
+            ORDER BY a.id DESC LIMIT 1`,
+          [guard.id, SafetyAlertType.PANIC, String(EMERGENCY_REQUEST_KEY_HOURS), requestKey],
+        )
+        : [];
+      const [withinWindow] = sameRequest ? [] : await manager.query(
         `SELECT id FROM safety_alerts
           WHERE "guardId" = $1 AND "shiftId" = $2 AND type = $3 AND status = $4
             AND "createdAt" > now() - ($5 || ' seconds')::interval
           ORDER BY id DESC LIMIT 1`,
         [guard.id, shift.id, SafetyAlertType.PANIC, SafetyAlertStatus.OPEN, String(EMERGENCY_DEDUPE_SECONDS)],
       );
+      const existing = sameRequest ?? withinWindow;
       const recipients = await emergencyRecipientUserIds(manager, company.id);
       if (existing) {
         const alert = await manager.getRepository(SafetyAlert).findOneOrFail({ where: { id: Number(existing.id) } });
         await this.auditLogService.logInTransaction(manager, {
           company, user: { id: userId }, action: 'safety_alert.emergency_repeat_press',
-          entityType: 'safety_alert', entityId: alert.id, afterData: { type: alert.type, status: alert.status },
+          entityType: 'safety_alert', entityId: alert.id,
+          afterData: { type: alert.type, status: alert.status, matchedBy: sameRequest ? 'request_key' : 'window' },
         });
         return { alert, duplicate: true, recipients, devices: undefined };
       }
@@ -385,7 +407,10 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       }));
       await this.auditLogService.logInTransaction(manager, {
         company, user: { id: userId }, action: 'safety_alert.created', entityType: 'safety_alert', entityId: alert.id,
-        afterData: { type: alert.type, priority: alert.priority, status: alert.status, responsiblePeopleNotified: recipients.length },
+        afterData: {
+          type: alert.type, priority: alert.priority, status: alert.status, responsiblePeopleNotified: recipients.length,
+          ...(requestKey ? { requestKey } : {}),
+        },
       });
       for (const recipientId of recipients) {
         await manager.save(manager.create(Notification, {
