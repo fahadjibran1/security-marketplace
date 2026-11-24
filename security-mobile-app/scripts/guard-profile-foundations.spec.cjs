@@ -860,7 +860,8 @@ test('UNSAVED-01 only a typed, unsaved masked value asks before leaving', () => 
   }
   assert.equal(src.split('const holdForUnsavedEdits = useCallback').length - 1, 1, 'defined once');
   assert.equal(src.split('holdForUnsavedEdits(').length - 1, 3, 'used by exactly three moves');
-  assert.match(src, /const openEmergency = \(\) => setQuickActionModal\('emergency'\);/, 'Emergency is not gated');
+  // S4-EM-01: Emergency opens its full-screen confirmation, still straight away, never behind the unsaved-edits question.
+  assert.match(src, /const openEmergency = \(\) => setEmergencyOpen\(true\);/, 'Emergency is not gated');
   for (const field of ['ninoInput', 'utrInput', 'licenceNumberInput', 'bankHolderInput, bankSortInput, bankAccountInput']) {
     assert.ok(src.includes(`inputs: [${field}]`), field);
   }

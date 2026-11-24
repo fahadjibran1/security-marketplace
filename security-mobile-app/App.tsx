@@ -114,16 +114,16 @@ export default function App() {
   // Register this phone for the signed-in Guard (Welfare Check reminders, shift notifications) — and, S4-EM-01, for a
   // signed-in company user, so an Emergency at their company reaches this phone when their role is responsible for
   // responding (the server decides who; see the backend's emergency-alert.ts). Web registers nothing.
-  const guardUserId = surface === 'guard' || surface === 'company' ? session?.user.id ?? null : null;
+  const pushUserId = surface === 'guard' || surface === 'company' ? session?.user.id ?? null : null;
   useEffect(() => {
-    if (!guardUserId) { setPushState(null); return; }
+    if (!pushUserId) { setPushState(null); return; }
     let live = true;
     // A rotated token is passed through, so it is registered without fetching it again (a fetch reports it once more).
     const register = (rotated?: DevicePushToken) => registerWelfarePush(rotated).then((state) => { if (live) setPushState(state); });
     void register();
     const unsubscribe = subscribeTokenChanges((token) => { void register(token); });
     return () => { live = false; unsubscribe(); };
-  }, [guardUserId]);
+  }, [pushUserId]);
   const surfaceLabel = surface === 'admin' ? 'Platform Admin' : surface === 'company' ? 'Company' : surface === 'client' ? 'Client' : surface === 'guard' ? 'Guard' : 'Access Denied';
 
   return <SafeAreaProvider><AppErrorBoundary onSignOut={session ? handleLogout : undefined}>
