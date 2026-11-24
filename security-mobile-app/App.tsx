@@ -111,8 +111,10 @@ export default function App() {
   useEffect(() => {
     if (!booting && !session) setWelfareTap((tap) => (tap && tap.sessionLive ? { ...tap, sessionLive: false } : tap));
   }, [booting, session]);
-  // Only Guards receive Welfare Check notifications; register this phone for the signed-in Guard.
-  const guardUserId = surface === 'guard' ? session?.user.id ?? null : null;
+  // Register this phone for the signed-in Guard (Welfare Check reminders, shift notifications) — and, S4-EM-01, for a
+  // signed-in company user, so an Emergency at their company reaches this phone when their role is responsible for
+  // responding (the server decides who; see the backend's emergency-alert.ts). Web registers nothing.
+  const guardUserId = surface === 'guard' || surface === 'company' ? session?.user.id ?? null : null;
   useEffect(() => {
     if (!guardUserId) { setPushState(null); return; }
     let live = true;

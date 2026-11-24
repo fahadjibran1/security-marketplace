@@ -85,8 +85,25 @@ export async function configureWelfareNotifications(): Promise<void> {
     } catch {
       // Without the channel Android shows these on its default channel; the inbox in S4 still lists them.
     }
+    // S4-EM-01: a Guard's Emergency, to the company people responsible for responding. Maximum importance, on the lock
+    // screen. A tap opens S4; Live Operations shows the alert. Same channel id as the backend's EMERGENCY_PUSH_CHANNEL.
+    try {
+      await Notifications.setNotificationChannelAsync(EMERGENCY_CHANNEL_ID, {
+        name: 'Guard Emergencies',
+        description: 'A Guard at your company raised an Emergency.',
+        importance: Notifications.AndroidImportance.MAX,
+        sound: 'default',
+        vibrationPattern: [0, 600, 200, 600, 200, 600],
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    } catch {
+      // Without it Android uses its default channel; the Emergency is still in Live Operations and S4 notifications.
+    }
   }
 }
+
+/** S4-EM-01: the Android channel for Emergency pushes (backend EMERGENCY_PUSH_CHANNEL). */
+export const EMERGENCY_CHANNEL_ID = 'emergency-alerts';
 
 const tokenText = (token: Notifications.DevicePushToken) => (typeof token.data === 'string' ? token.data : JSON.stringify(token.data));
 

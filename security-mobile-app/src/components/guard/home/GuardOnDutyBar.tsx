@@ -8,8 +8,8 @@ import type { GuardHomeLayout } from './guardHomeLayout';
  *
  * Rendered by the Guard dashboard OUTSIDE every scrolling area, between the header and the tab content, on every
  * Guard tab while an Emergency can be raised (see `showOnDutyBar`). It is the only Emergency launcher: pressing it
- * opens the existing Emergency form (type SOS to confirm, then one online request), unchanged. Nothing is sent from
- * here.
+ * opens the full-screen Emergency confirmation (S4-EM-01: SEND EMERGENCY or Cancel, then one online request). Nothing
+ * is sent from here.
  */
 export interface GuardOnDutyBarProps {
   siteName: string | null;
@@ -38,7 +38,7 @@ export function GuardOnDutyBar({ siteName, emergencyLabel, emergencyAccessibilit
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={emergencyAccessibilityLabel}
-        accessibilityHint="Opens the Emergency form. Sending it needs a connection."
+        accessibilityHint="Opens the Emergency confirmation. Sending it needs a connection."
         onPress={onEmergency}
         style={({ pressed }: { pressed: boolean }) => [styles.emergency, stacked && styles.emergencyStacked, pressed && styles.pressed]}
       >

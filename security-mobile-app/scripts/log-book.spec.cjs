@@ -195,8 +195,9 @@ test('LOG-01-GUARD-STILL-WRITES-logType-log_book', () => {
   assert.match(logBookForm.helperText, /routine record/i);
   assert.match(forms.guardActionForm('siteRequest').helperText, /site needs/i);
   assert.match(forms.guardActionForm('incident').helperText, /reporting and follow-up/i);
-  assert.match(forms.guardActionForm('emergency').helperText, /immediate help/i);
-  assert.equal(forms.guardActionForm('emergency').confirmWord, 'SOS', 'the SOS confirmation survives');
+  // S4-EM-01 (deliberate retarget): Emergency is a two-tap full-screen confirmation, no typed SOS.
+  assert.match(forms.guardActionForm('emergency').helperText, /Send an Emergency alert/i);
+  assert.equal(forms.guardActionForm('emergency').requiresText, false, 'Emergency needs no words');
 });
 
 test('LOG-02-NO-ENTRY-WITHOUT-A-LIVE-AUTHORISED-SHIFT', () => {

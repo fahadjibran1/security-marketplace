@@ -251,6 +251,7 @@ import { KpiCard, KpiTone } from '../components/ui/KpiCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { brand, colors, radii, spacing } from '../theme';
 import { AccountSettingsPanel } from '../components/account/AccountSettingsPanel';
+import { compareAttentionItems } from '../components/company/attentionPriority';
 
 const IS_WEB = typeof document !== 'undefined';
 
@@ -2659,7 +2660,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
       // NO cap. Attention Now used to keep only the newest ten, so its count — and the status-bar counts
       // read from it — silently under-reported once more than ten items were outstanding, and the
       // Dashboard's "View all N" led to a list that could not show all N. The rail scrolls.
-      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+      // S4-EM-01: active Emergencies first (unacknowledged ahead of acknowledged), then newest first as before.
+      .sort(compareAttentionItems);
   }, [attentionCandidates, operationalNow, operationalShiftById]);
 
   /** The Dashboard reads the SAME queue as Attention Now, so the two can never disagree about N. */

@@ -36,7 +36,7 @@ export interface GuardHeaderProps {
   notifications: ReactNode;
   /**
    * S4-UX-01.3 Variant B (review only, see guardEmergencyPresentation.ts): a compact SOS control that opens the
-   * existing Emergency form. Null (the default) renders nothing, which is Variant A.
+   * Emergency confirmation. Null (the default) renders nothing, which is Variant A.
    */
   sos?: { accessibilityLabel: string; onPress: () => void } | null;
 }
@@ -99,7 +99,7 @@ export function GuardHeader({ title, productLabel, productIsUat, notifications, 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={sos.accessibilityLabel}
-          accessibilityHint="Opens the Emergency form. Sending it needs a connection."
+          accessibilityHint="Opens the Emergency confirmation. Sending it needs a connection."
           onPress={sos.onPress}
           style={({ pressed }: { pressed: boolean }) => [styles.sosButton, pressed && styles.pressed]}
           testID="guard-header-sos"

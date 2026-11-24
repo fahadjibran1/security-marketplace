@@ -53,6 +53,7 @@
     "test:guard-book-off": "node scripts/guard-book-off.spec.cjs",
     "test:uat-variant": "node scripts/uat-variant.spec.cjs",
     "test:guard-action-dispatch": "node scripts/guard-action-dispatch.spec.cjs",
+    "test:guard-emergency": "node scripts/guard-emergency.spec.cjs",
     "test:guard-action-consolidation": "node scripts/guard-action-consolidation.spec.cjs",
     "test:guard-welfare-status": "node scripts/guard-welfare-status.spec.cjs",
     "test:current-shift-actions": "node scripts/current-shift-action-target.spec.cjs",

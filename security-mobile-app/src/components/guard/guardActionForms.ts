@@ -18,14 +18,11 @@
 // The canonical set is now: WELFARE CHECK, LOG BOOK, SITE REQUEST, INCIDENT, EMERGENCY — and Book Off,
 // which stays where it is, as the shift card's own control, well away from routine reporting.
 //
-// THE CONFIRMATION WORD
-// The alert is still SafetyAlertType.PANIC on the wire; only what the Guard reads has changed. The typed
-// word is SOS. It has to be deliberate enough that a pocket cannot send it, and short enough to type
-// one-handed under real duress — PANIC no longer matched the button, and EMERGENCY, which Phase 3C
-// briefly used for copy consistency, was nine characters at the worst possible moment.
-//
-// The requirement itself is NOT weakened to a single tap: still an exact match, checked in the same
-// place, by the same function, with the button inert until it matches.
+// EMERGENCY IS TWO TAPS, NOT A TYPED WORD (S4-EM-01, owner decision 24 Nov 2026)
+// The alert is still SafetyAlertType.PANIC on the wire. Typing SOS under real duress, one-handed, was the
+// wrong safeguard: it is replaced by a full-screen confirmation (components/guard/emergency) — the
+// Emergency launcher, then one large SEND EMERGENCY button with a separate Cancel. Nothing is typed and no
+// description is required. The pocket-press safeguard is the second, deliberate tap on a dedicated screen.
 
 export type GuardActionKey = 'welfareCheck' | 'logBook' | 'siteRequest' | 'incident' | 'emergency';
 
@@ -43,11 +40,10 @@ export type GuardActionForm = {
   /** A free-text operational note, so the input is multiline and grows. */
   multiline: boolean;
   /**
-   * Set for an action that requires the guard to type a word to confirm. The dispatcher checks this
-   * itself; it is repeated here so the button can reflect it instead of looking enabled and then
-   * refusing.
+   * False for an action that needs no words (Emergency): its button is ready as soon as a live shift exists. Every
+   * other action needs a non-empty note.
    */
-  confirmWord?: string;
+  requiresText?: boolean;
   /** Destructive styling for the primary action. */
   destructive?: boolean;
   /** Accessibility label on the launcher control. */
@@ -100,12 +96,12 @@ export const GUARD_ACTION_FORMS: readonly GuardActionForm[] = [
   {
     key: 'emergency',
     title: 'Emergency',
-    helperText: 'You need immediate help. Type SOS to confirm.',
-    placeholder: 'Type SOS',
-    submitLabel: 'Send Emergency Alert',
+    helperText: 'Send an Emergency alert to your company?',
+    placeholder: '',
+    submitLabel: 'SEND EMERGENCY',
     busyLabel: 'Sending...',
     multiline: false,
-    confirmWord: 'SOS',
+    requiresText: false,
     destructive: true,
     launchAccessibilityLabel: 'Send Emergency alert',
   },
@@ -123,15 +119,15 @@ export type ActionSubmitState = {
   /** The label to show right now. */
   label: string;
   /** Why it is disabled, for the test and for an accessibility hint. Null when enabled. */
-  blockedReason: 'busy' | 'empty' | 'confirmation' | null;
+  blockedReason: 'busy' | 'empty' | null;
 };
 
 /**
  * The primary button's state for one render.
  *
  * DELIBERATELY MIRRORS THE DISPATCHER, IT DOES NOT REPLACE IT. `dispatchGuardAction` already refuses an
- * empty note, and refuses an Emergency whose confirmation word does not match — those checks stay where
- * they are, because they are what actually protects the request. Reflecting them in the button is a
+ * empty note (Emergency excepted: it needs no words) — that check stays where it is, because it is what
+ * actually protects the request. Reflecting them in the button is a
  * usability change only: a button that is visibly not ready is better than one that looks ready and
  * quietly refuses.
  *
@@ -148,13 +144,8 @@ export function resolveActionSubmitState(
 
   const trimmed = (value ?? '').trim();
 
-  if (form.confirmWord) {
-    const matches = trimmed.toUpperCase() === form.confirmWord.toUpperCase();
-    return {
-      disabled: !matches,
-      label: form.submitLabel,
-      blockedReason: matches ? null : 'confirmation',
-    };
+  if (form.requiresText === false) {
+    return { disabled: false, label: form.submitLabel, blockedReason: null };
   }
 
   return {
