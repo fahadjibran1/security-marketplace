@@ -229,6 +229,42 @@ let refreshPersist:
   | null = null;
 let unauthorizedHandler: ((message: string) => void | Promise<void>) | null = null;
 
+/**
+ * Web portal only (see services/crossTabAuth): browser tabs share one stored session, so a renewal must be serialised
+ * across tabs and must never present a refresh token another tab has already rotated — the server rightly treats that as
+ * token theft and revokes the whole session. Null on native, where the single-flight below is all that is needed.
+ */
+export interface RefreshCoordination {
+  /** Runs `task` while holding the cross-tab renewal lock; `contended` when another tab held it first. */
+  runExclusive<T>(task: (contended: boolean) => Promise<T>): Promise<T>;
+  /** The stored session's refresh token; null when there is no stored session (signed out elsewhere); undefined if unknown. */
+  readSharedRefreshToken(): string | null | undefined;
+  /** True for a token this tab knows was already rotated or refused: it must never be presented. */
+  isSpent(refreshToken: string): boolean;
+  /** An access token another tab minted for `refreshToken` (never `exclude`), waiting up to `waitMs` for it to arrive. */
+  awaitAccessToken(refreshToken: string, options: { exclude?: string | null; waitMs: number }): Promise<string | null>;
+  /** The session another tab rotated `refreshToken` into, waiting up to `waitMs` for word of it; null if none. */
+  awaitSuccessor(refreshToken: string, waitMs: number): Promise<{ refreshToken: string; accessToken: string } | null>;
+  /** Tells the other tabs this tab rotated `previous` into `refreshToken`. Called after the rotation was persisted. */
+  announceRotation(rotation: { previous: string; refreshToken: string; accessToken: string }): void;
+  /** The server refused `refreshToken`: drop it from the shared store (if still there) before the lock is released. */
+  sessionEnded(refreshToken: string): void;
+}
+let refreshCoordination: RefreshCoordination | null = null;
+
+export function setRefreshCoordination(coordination: RefreshCoordination | null) {
+  refreshCoordination = coordination;
+}
+
+/**
+ * Another tab rotated the shared session: hold its successor from now on, so this tab never presents the token it
+ * replaced. The access token is taken only when that tab handed one over; otherwise this tab's own stays in use.
+ */
+export function adoptSharedSession(session: { refreshToken: string; accessToken?: string }) {
+  refreshToken = session.refreshToken;
+  if (session.accessToken) accessToken = session.accessToken;
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -331,6 +367,7 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
   // Captured before the call: clearing the in-memory token on a failed renewal must not stop the
   // next 401 from reaching the handler. `couldRenew` covers the cold-start case, where there is
   // no access token at all yet — the stored refresh token is what mints the first one.
+  const sentAccessToken = accessToken;
   const sentWithToken = !!accessToken;
   const couldRenew = !!refreshToken;
   if (accessToken) {
@@ -381,7 +418,7 @@ async function request<T>(path: string, options?: RequestInit, retried = false):
       // The access token has almost certainly just expired. Try to renew once — all concurrent
       // 401s share the same attempt — and replay this request exactly once. `retried` makes a
       // refresh loop impossible: a second 401 falls straight through to the handler below.
-      const outcome: RefreshOutcome = retried ? 'rejected' : await refreshAccessToken();
+      const outcome: RefreshOutcome = retried ? 'rejected' : await refreshAccessToken(sentAccessToken);
       if (outcome === 'renewed') {
         return request<T>(path, options, true);
       }
@@ -617,47 +654,110 @@ export function restoreSession(session: { accessToken?: string; refreshToken?: s
  * request would rotate the token independently and all but one would then be presenting a
  * rotated token — which the server correctly treats as theft and revokes the whole family.
  */
-async function refreshAccessToken(): Promise<RefreshOutcome> {
+async function refreshAccessToken(sentAccessToken?: string | null): Promise<RefreshOutcome> {
   if (!refreshToken) return 'rejected';
   if (inFlightRefresh) return inFlightRefresh;
 
   const presented = refreshToken;
-  inFlightRefresh = (async () => {
-    // The same 30 s limit as every other request. Without it a stalled renewal left every request waiting on it (each
-    // 401 retry shares this promise) hanging for good; a timeout is the service being unavailable, not the session ending.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await fetch(apiUrl('/auth/refresh'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken: presented }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        // Only a refusal ends the session. A server error or rate limit is the service, not the session.
-        return response.status >= 500 || response.status === 429 ? 'unavailable' : 'rejected';
+  const coordination = refreshCoordination;
+  if (!coordination) {
+    // Native (and any context without cross-tab coordination): exactly the single-flight renewal it always was.
+    inFlightRefresh = (async () => {
+      try {
+        return await exchangeRefreshToken(presented, null);
+      } finally {
+        inFlightRefresh = null;
       }
+    })();
+    return inFlightRefresh;
+  }
 
-      const body = (await response.json()) as AuthSession;
-      if (!body?.accessToken || !body?.refreshToken) return 'rejected';
-
-      accessToken = body.accessToken;
-      refreshToken = body.refreshToken;
-      // Persist the rotated token immediately: the presented one is already dead server-side, so
-      // losing the successor here would strand the device.
-      await refreshPersist?.({ user: body.user, refreshToken: body.refreshToken });
-      return 'renewed';
+  inFlightRefresh = (async () => {
+    try {
+      return await coordination.runExclusive(async (contended) => {
+        // Under the cross-tab lock. Another tab may have rotated the shared session while this one waited (or before
+        // this tab heard about it): present only the current token. The one it replaced is already dead server-side,
+        // and presenting it again is exactly what reuse detection exists to catch.
+        const shared = coordination.readSharedRefreshToken();
+        if (shared === null) return 'rejected'; // signed out in another tab: the session is over here too
+        let current = shared ?? refreshToken;
+        if (!current) return 'rejected';
+        if (contended && current === presented) {
+          // The tab that held the lock may have rotated this very token; word of it (storage write, broadcast) can trail
+          // the lock's release by a moment. Wait briefly for it rather than risk presenting a rotated token.
+          const successor = await coordination.awaitSuccessor(current, 300);
+          if (successor) {
+            refreshToken = successor.refreshToken;
+            accessToken = successor.accessToken;
+            return 'renewed';
+          }
+          const again = coordination.readSharedRefreshToken();
+          if (again === null) return 'rejected';
+          if (again) current = again;
+        }
+        // Known spent (rotated or refused elsewhere) with no successor known yet: never present it. Keep the session; the
+        // other tab's word arrives and the next attempt renews with the current token.
+        if (coordination.isSpent(current)) return 'unavailable';
+        const rotatedElsewhere = current !== presented;
+        if (rotatedElsewhere) refreshToken = current;
+        // The tab that rotated it hands over the access token it was issued with, so this tab needs no renewal of its own.
+        const handed = await coordination.awaitAccessToken(current, { exclude: sentAccessToken, waitMs: rotatedElsewhere ? 1_500 : 0 });
+        if (handed) {
+          accessToken = handed;
+          return 'renewed';
+        }
+        const outcome = await exchangeRefreshToken(current, coordination);
+        // Refused: the session is over for every tab. Clear the shared copy while still holding the lock, so a tab
+        // waiting for it finds no session instead of presenting the refused token a second time.
+        if (outcome === 'rejected') coordination.sessionEnded(current);
+        return outcome;
+      });
     } catch {
-      // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
+      // The lock could not be taken. Not an auth failure: keep the session for a later attempt.
       return 'unavailable';
     } finally {
-      clearTimeout(timeout);
       inFlightRefresh = null;
     }
   })();
 
   return inFlightRefresh;
+}
+
+/** One POST /auth/refresh presenting `presented`, adopting and persisting the rotated session it returns. */
+async function exchangeRefreshToken(presented: string, coordination: RefreshCoordination | null): Promise<RefreshOutcome> {
+  // The same 30 s limit as every other request. Without it a stalled renewal left every request waiting on it (each
+  // 401 retry shares this promise) hanging for good; a timeout is the service being unavailable, not the session ending.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(apiUrl('/auth/refresh'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: presented }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      // Only a refusal ends the session. A server error or rate limit is the service, not the session.
+      return response.status >= 500 || response.status === 429 ? 'unavailable' : 'rejected';
+    }
+
+    const body = (await response.json()) as AuthSession;
+    if (!body?.accessToken || !body?.refreshToken) return 'rejected';
+
+    accessToken = body.accessToken;
+    refreshToken = body.refreshToken;
+    // Persist the rotated token immediately: the presented one is already dead server-side, so
+    // losing the successor here would strand the device.
+    await refreshPersist?.({ user: body.user, refreshToken: body.refreshToken });
+    // Web: only now, with the successor stored, tell the other tabs (still under the cross-tab lock).
+    coordination?.announceRotation({ previous: presented, refreshToken: body.refreshToken, accessToken: body.accessToken });
+    return 'renewed';
+  } catch {
+    // Offline or unreachable — not an auth failure. Keep the token so a later attempt can work.
+    return 'unavailable';
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function setRefreshPersister(
@@ -686,7 +786,10 @@ export function fetchCurrentUser(): Promise<AuthUser> {
  * this device — the session then simply expires on its own schedule server-side.
  */
 export async function logout() {
-  const presented = refreshToken;
+  // Web: another tab may have rotated the shared session since this tab last heard; revoking a rotated token is a
+  // silent no-op server-side, so present the stored (current) one to actually end the session.
+  const shared = refreshCoordination?.readSharedRefreshToken();
+  const presented = typeof shared === 'string' && refreshToken ? shared : refreshToken;
   try {
     if (presented && accessToken) {
       await request('/auth/logout', {

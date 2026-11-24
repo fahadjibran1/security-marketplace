@@ -2,8 +2,23 @@ import * as SecureStore from 'expo-secure-store';
 import { StoredSession } from '../types/models';
 import { parseStoredSession, serializeStoredSession } from '../navigation/role-routing';
 
-const SESSION_KEY = 'security-app-session';
+export const SESSION_KEY = 'security-app-session';
 const isWeb = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+
+/**
+ * Web: true while the stored session still carries `refreshToken`. Browser tabs share this store, so another tab may
+ * have rotated (or ended) the session since this tab read it; a write based on the older token must then be skipped,
+ * or it would put a dead token back where every tab reads it. Native has one process, so it is always current there.
+ */
+export function isStoredRefreshToken(refreshToken: string): boolean {
+  if (!isWeb) return true;
+  try {
+    const raw = readWebSession();
+    return !!raw && parseStoredSession(raw)?.refreshToken === refreshToken;
+  } catch {
+    return false;
+  }
+}
 
 function readWebSession() {
   if (!isWeb) {
