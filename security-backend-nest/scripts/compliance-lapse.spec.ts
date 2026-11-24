@@ -542,12 +542,14 @@ async function main() {
       assert.equal((await one(`SELECT status::text AS s FROM safety_alerts WHERE id = $1`, [alert.id])).s, 'open');
     });
 
-    await test('LAPSE-21-MEMBERS-SEE-ONLY-THEIR-OWN-COMPANYS-COMPLIANCE-ALERTS', async () => {
+    await test('LAPSE-21-MEMBERS-SEE-ONLY-THEIR-OWN-COMPANYS-COMPLIANCE-ALERTS-AND-RESPONDERS-ITS-EMERGENCIES', async () => {
       for (const role of ['hr_compliance', 'operations', 'control_room', 'viewer']) {
         const list = await api('GET', '/alerts/company', await memberToken(A, role));
         assert.equal(list.status, 200, role);
         assert.ok(list.body.length > 0, `${role} sees the company's compliance alerts`);
-        assert.ok(list.body.every((a: any) => a.type === 'compliance_lapse'), `${role} sees no other alert type`);
+        // S4-EM-01: Operations and Control Room (alerts.manage) also respond to the company's Emergencies; nothing else.
+        const allowed = role === 'operations' || role === 'control_room' ? ['compliance_lapse', 'panic'] : ['compliance_lapse'];
+        assert.ok(list.body.every((a: any) => allowed.includes(a.type)), `${role} sees no other alert type`);
         assert.ok(list.body.every((a: any) => a.company?.id === A.id), `${role} sees no other company`);
       }
       assert.equal((await api('GET', '/alerts/company', await memberToken(A, 'finance'))).status, 404, 'finance has no compliance.view: unchanged');

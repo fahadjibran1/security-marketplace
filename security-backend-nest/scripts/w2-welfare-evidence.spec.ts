@@ -87,7 +87,7 @@ async function main() {
     welfare,
     windowEngine,
     ds,
-    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
+    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never, { activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
   );
 
   // ── fixtures ───────────────────────────────────────────────────────────────────────────────────
@@ -393,7 +393,7 @@ async function main() {
         alerts, repo(DailyLog), repo(AttendanceEvent), shifts,
         null as never, null as never, null as never,
         auditLogService, notifications as never, welfare, windowEngine, ds,
-        { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
+        { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never, { activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
       );
       await restarted.runMissedWelfareChecks();
       assert.equal(await indexedEvidence(shift.id), 3, 'no in-memory state is involved');

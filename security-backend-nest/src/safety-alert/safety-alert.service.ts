@@ -60,7 +60,16 @@ import {
 import { SingleFlightJob, SingleFlightOutcome } from '../scheduler/single-flight-job';
 // The welfare sweep's per-shift advisory-lock namespace (534_401_401, beside admin-operator's 534_401_400).
 // Shared with shift reconciliation, which waits on the same lock.
-import { WELFARE_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
+import { EMERGENCY_ALERT_LOCK_NAMESPACE, WELFARE_SWEEP_LOCK_NAMESPACE } from '../operations/advisory-locks';
+import {
+  EMERGENCY_DEDUPE_SECONDS,
+  EMERGENCY_DEFAULT_MESSAGE,
+  EmergencyReceipt,
+  emergencyNotificationText,
+  emergencyRecipientUserIds,
+  memberMayHandleEmergency,
+} from './emergency-alert';
+import { EmergencyPushService } from './emergency-push.service';
 
 /** A Book Off is late, not missing, until the shift has been over for a quarter of an hour. */
 const MISSING_BOOK_OFF_GRACE_MINUTES = 15;
@@ -164,6 +173,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     private readonly windowEngine: OperationalWindowService,
     private readonly dataSource: DataSource,
     private readonly guardComplianceService: GuardComplianceService,
+    private readonly emergencyPush: EmergencyPushService,
   ) {}
 
   /**
@@ -271,14 +281,19 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     }
 
     const company = shift?.company;
-    if (!company) {
+    if (!shift || !company) {
       throw new BadRequestException('Safety alerts must be linked to an assigned shift');
     }
 
-    const priority =
-      type === SafetyAlertType.PANIC
-        ? SafetyAlertPriority.CRITICAL
-        : dto.priority ?? SafetyAlertPriority.MEDIUM;
+    // S4-EM-01: an Emergency needs no description and has its own transactional, de-duplicated path.
+    if (type === SafetyAlertType.PANIC) {
+      return this.raiseEmergency(userId, guard, shift, dto.message);
+    }
+
+    const text = (dto.message ?? '').trim();
+    if (!text) throw new BadRequestException('Enter a message for this alert.');
+
+    const priority = dto.priority ?? SafetyAlertPriority.MEDIUM;
 
     const safetyAlert = this.safetyAlertRepo.create({
       company,
@@ -286,7 +301,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
       shift,
       type,
       priority,
-      message: dto.message.trim(),
+      message: text,
       status: SafetyAlertStatus.OPEN,
     });
 
@@ -305,17 +320,98 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (company.user?.id) {
-      const isPanic = saved.type === SafetyAlertType.PANIC;
+      // Not an Emergency (that has its own path, raiseEmergency): the owner account, as before.
       await this.notificationService.createForUser({
         userId: company.user.id,
         company,
         type: NotificationType.ALERT_RAISED,
-        title: isPanic ? 'CRITICAL: Panic alert raised' : 'Safety alert raised',
+        title: 'Safety alert raised',
         message: `${guard.user?.firstName ?? 'A guard'} raised a ${saved.type.replace('_', ' ')} alert.`,
       });
     }
 
     return saved;
+  }
+
+  /**
+   * S4-EM-01 — raise a Guard's Emergency.
+   *
+   * ONE transaction, under a per-Guard advisory lock: the duplicate check, the alert (PANIC, CRITICAL, OPEN), its audit
+   * entry and an in-app notification for every responsible person commit together or not at all. Only once that has
+   * committed is the Guard told S4 received it. Push to the responsible people's phones is attempted after the commit and
+   * can never undo it.
+   *
+   * Duplicate protection: an Emergency from the same Guard on the same shift that is still OPEN and younger than
+   * EMERGENCY_DEDUPE_SECONDS is returned instead of raising another (receipt.duplicate). Once it has been acknowledged or
+   * closed, or that time has passed, a new press is a new Emergency.
+   *
+   * The site, company and Guard come only from the Guard's own in-progress shift (checked by the caller), exactly as
+   * before. Availability is unchanged: an Emergency still needs that live shift.
+   */
+  private async raiseEmergency(
+    userId: number,
+    guard: GuardProfile,
+    shift: Shift,
+    description: string | undefined,
+  ): Promise<SafetyAlert & { emergencyReceipt: EmergencyReceipt }> {
+    const company = shift.company;
+    const message = (description ?? '').trim() || EMERGENCY_DEFAULT_MESSAGE;
+    const siteName = shift.site?.name || shift.siteName || null;
+    const text = emergencyNotificationText(guard.fullName || guard.user?.firstName, siteName);
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [EMERGENCY_ALERT_LOCK_NAMESPACE, guard.id]);
+      const [existing] = await manager.query(
+        `SELECT id FROM safety_alerts
+          WHERE "guardId" = $1 AND "shiftId" = $2 AND type = $3 AND status = $4
+            AND "createdAt" > now() - ($5 || ' seconds')::interval
+          ORDER BY id DESC LIMIT 1`,
+        [guard.id, shift.id, SafetyAlertType.PANIC, SafetyAlertStatus.OPEN, String(EMERGENCY_DEDUPE_SECONDS)],
+      );
+      const recipients = await emergencyRecipientUserIds(manager, company.id);
+      if (existing) {
+        const alert = await manager.getRepository(SafetyAlert).findOneOrFail({ where: { id: Number(existing.id) } });
+        await this.auditLogService.logInTransaction(manager, {
+          company, user: { id: userId }, action: 'safety_alert.emergency_repeat_press',
+          entityType: 'safety_alert', entityId: alert.id, afterData: { type: alert.type, status: alert.status },
+        });
+        return { alert, duplicate: true, recipients };
+      }
+
+      const repo = manager.getRepository(SafetyAlert);
+      const alert = await repo.save(repo.create({
+        company, guard, shift, type: SafetyAlertType.PANIC, priority: SafetyAlertPriority.CRITICAL,
+        message, status: SafetyAlertStatus.OPEN,
+      }));
+      await this.auditLogService.logInTransaction(manager, {
+        company, user: { id: userId }, action: 'safety_alert.created', entityType: 'safety_alert', entityId: alert.id,
+        afterData: { type: alert.type, priority: alert.priority, status: alert.status, responsiblePeopleNotified: recipients.length },
+      });
+      for (const recipientId of recipients) {
+        await manager.save(manager.create(Notification, {
+          user: { id: recipientId }, company: { id: company.id }, type: NotificationType.ALERT_RAISED,
+          title: text.title, message: text.message,
+        }));
+      }
+      return { alert, duplicate: false, recipients };
+    });
+
+    const devices = result.duplicate ? [] : await this.emergencyPush.activeDevices(result.recipients).catch(() => []);
+    if (!result.duplicate) {
+      // After the commit, never awaited by the Guard's request: a slow or failed provider cannot delay the receipt.
+      void this.emergencyPush
+        .dispatch({ alertId: result.alert.id, companyId: company.id, title: text.title, body: text.pushBody, devices })
+        .catch(() => undefined);
+    }
+
+    const receipt: EmergencyReceipt = {
+      duplicate: result.duplicate,
+      receivedAt: new Date(result.alert.createdAt).toISOString(),
+      responsiblePeopleNotified: result.recipients.length,
+      pushDevicesTargeted: devices.length,
+      acknowledged: result.alert.status !== SafetyAlertStatus.OPEN,
+    };
+    return Object.assign(result.alert, { emergencyReceipt: receipt });
   }
 
   /**
@@ -1142,6 +1238,8 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     // Patrols (Migration 69): with the company's Patrol switch on, a member with patrols.view also sees its patrol
     // alerts. With the switch off nothing changes for anyone.
     const types: SafetyAlertType[] = [];
+    // S4-EM-01: Owner, Admin, Operations and Control Room members (alerts.manage) respond to their company's Emergencies.
+    if (memberMayHandleEmergency(actor.role)) types.push(SafetyAlertType.PANIC);
     if (hasPermission(actor.role, CompanyPermission.COMPLIANCE_VIEW)) types.push(SafetyAlertType.COMPLIANCE_LAPSE);
     if (hasPermission(actor.role, CompanyPermission.PATROLS_VIEW) && (await this.patrolsEnabled(actor.companyId))) types.push(...PATROL_ALERT_TYPES);
     if (!types.length) throw new NotFoundException('Company not found');
@@ -1184,6 +1282,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     // Room operator therefore handles patrol alerts without being able to change any patrol configuration.
     if (isPatrolAlertType(alert.type)) {
       if (!mayActOnPatrolAlerts(role)) throw new ForbiddenException('Insufficient permissions.');
+      return;
+    }
+    // S4-EM-01: an Emergency is acknowledged and resolved by anyone responsible for responding to it (alerts.manage).
+    if (alert.type === SafetyAlertType.PANIC) {
+      if (!memberMayHandleEmergency(role)) throw new ForbiddenException('Insufficient permissions.');
       return;
     }
     if (alert.type !== SafetyAlertType.COMPLIANCE_LAPSE) {
@@ -1324,6 +1427,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
 
     // A missed Welfare Check is an unanswered question about a Guard's safety. Nothing closes one
     // automatically any more (owner policy, 18 October 2026), so a person closing it always says why.
+    // S4-EM-01: an Emergency is closed only with what Control established, never by a bare close.
+    if (alert.type === SafetyAlertType.PANIC && !reason) {
+      throw new BadRequestException('A resolution reason and note are required to resolve an Emergency.');
+    }
+
     if (alert.type === SafetyAlertType.MISSED_CHECKCALL && !reason) {
       throw new BadRequestException('A resolution reason and note are required to close a missed Welfare Check alert.');
     }
@@ -1435,6 +1543,11 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
         throw patrolError(HttpStatus.CONFLICT, PatrolErrorCode.ALERT_ALREADY_ACKNOWLEDGED,
           `This patrol alert has already been acknowledged${by ? ` by ${by}` : ''}. Showing the latest state.`,
           { acknowledgedByName: by, acknowledgedAt: alert.acknowledgedAt ?? null });
+      }
+      // S4-EM-01: an Emergency keeps its FIRST acknowledger, the person the Guard is told has taken it up. A second
+      // acknowledgement (another operator, a double click) changes nothing and records nothing; it returns the alert.
+      if (alert.type === SafetyAlertType.PANIC && alert.status === SafetyAlertStatus.ACKNOWLEDGED && alert.acknowledgedAt) {
+        return alert;
       }
       const beforeData = this.transitionBefore(alert);
       alert.status = SafetyAlertStatus.ACKNOWLEDGED;

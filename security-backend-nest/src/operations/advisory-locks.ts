@@ -69,3 +69,11 @@ export function returningRows<T>(result: unknown): T[] {
   }
   return Array.isArray(result) ? (result as T[]) : [];
 }
+
+/**
+ * S4-EM-01: one lock per GUARD PROFILE id, held (waiting) by a Guard raising an Emergency for the length of the
+ * transaction that writes the alert, its audit entry and its notifications. Two presses, a retried request, or the
+ * in-app button racing a notification's Need Help therefore decide one after the other, so the second sees the first's
+ * alert and is answered with it instead of raising a duplicate. Nothing that holds it takes another advisory lock.
+ */
+export const EMERGENCY_ALERT_LOCK_NAMESPACE = 534_401_407;
