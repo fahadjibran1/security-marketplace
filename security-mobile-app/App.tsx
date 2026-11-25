@@ -10,6 +10,7 @@ import { StatePanel } from './src/components/StatePanel';
 import { clearLocalSession, fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
 import { AppErrorBoundary } from './src/components/AppErrorBoundary';
 import { AccountLinkScreen } from './src/screens/AccountLinkScreen';
+import { StaffInvitationScreen } from './src/screens/StaffInvitationScreen';
 import { AccountLink, takeAccountLink } from './src/components/account/accountLinks';
 import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
 import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
@@ -33,7 +34,7 @@ export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [booting, setBooting] = useState(true);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
-  // An emailed link (/reset-password, /verify-email) opened on the S4 web app. Read once at start-up,
+  // An emailed link (/reset-password, /verify-email, /join-company) opened on the S4 web app. Read once at start-up,
   // with the token stripped from the address bar in the same step.
   const [accountLink, setAccountLink] = useState<AccountLink | null>(() =>
     IS_WEB && typeof window !== 'undefined' ? takeAccountLink(window.location, window.history) : null,
@@ -125,7 +126,7 @@ export default function App() {
   const surfaceLabel = surface === 'admin' ? 'Platform Admin' : surface === 'company' ? 'Company' : surface === 'client' ? 'Client' : surface === 'guard' ? 'Guard' : 'Access Denied';
 
   return <SafeAreaProvider><AppErrorBoundary onSignOut={session ? handleLogout : undefined}>
-    {accountLink ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AccountLinkScreen link={accountLink} onDone={leaveAccountLink} /></SafeAreaView>
+    {accountLink ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/>{accountLink.kind === 'join-company' ? <StaffInvitationScreen link={accountLink} onDone={leaveAccountLink} /> : <AccountLinkScreen link={accountLink} onDone={leaveAccountLink} />}</SafeAreaView>
     : booting || (surface === 'guard' && !guardFontsSettled) ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><View style={styles.loadingContainer}><StatePanel title={`Loading ${brand.appName}`} message="Restoring your secure session." tone="info" loading /></View></SafeAreaView>
     : !session ? <SafeAreaView style={styles.safeArea} edges={['top','right','bottom','left']}><StatusBar barStyle="dark-content" backgroundColor={colors.background}/><AuthScreen onLoggedIn={handleLoggedIn} noticeMessage={authNotice} onDismissNotice={() => setAuthNotice(null)} /></SafeAreaView>
     : <SafeAreaView style={styles.safeArea} edges={surface === 'guard' ? GUARD_SAFE_AREA_EDGES : ['top','right','bottom','left']}><StatusBar barStyle="light-content" backgroundColor={colors.primaryNavy}/>{surface === 'guard' ? <SafeAreaView edges={['top']} style={styles.guardStatusBarBackdrop} testID="guard-status-bar-backdrop" /> : null}<View style={styles.screenContainer}>

@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { isUatBuild, resolveApiBaseUrl, resolveUatApiBaseUrl } from './api-base-url';
 import type { TimesheetHistoryItem } from './timesheetReview';
+import type { CompanyTeam, TeamInvitation, TeamRole } from '../components/company/companyTeam';
 import type { AdminVerificationCompany, CompanyVerificationStatus, VerificationHistoryEntry } from '../navigation/company-verification';
 import {
   Attachment,
@@ -857,6 +858,44 @@ export function revokeGuardInvitation(invitationId: number) {
   return request<CompanyGuardInvitation>(`/company-guards/invitations/${invitationId}/revoke`, {
     method: 'POST',
   });
+}
+
+// ─── Company Team (staff management) ──────────────────────────────────────────
+
+/** The company's team and open invitations (staff.manage). Never carries an invitation token. */
+export function getCompanyTeam() {
+  return request<CompanyTeam>('/company-staff');
+}
+
+/** Emails the invitation; the link (and its token) goes only to the invited address. */
+export function inviteCompanyStaff(email: string, role: TeamRole) {
+  return request<{ invitation: TeamInvitation; emailSent: boolean }>('/company-staff/invitations', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim(), role }),
+  });
+}
+
+export function cancelCompanyStaffInvitation(invitationId: number) {
+  return request<TeamInvitation>(`/company-staff/invitations/${invitationId}/cancel`, { method: 'POST' });
+}
+
+export function changeCompanyStaffRole(userId: number, role: TeamRole) {
+  return request<{ userId: number; role: TeamRole; status: string }>(`/company-staff/members/${userId}/role`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function revokeCompanyStaffAccess(userId: number) {
+  return request<{ userId: number; role: TeamRole; status: string }>(`/company-staff/members/${userId}/revoke`, { method: 'POST' });
+}
+
+/** Public: the emailed /join-company link. The token travels in the body, never the URL. */
+export function acceptCompanyStaffInvitation(token: string, firstName: string, lastName: string, password: string) {
+  return request<AccountMessage & { accepted: boolean; email: string; companyName: string; role: TeamRole }>(
+    '/company-staff-invitations/accept',
+    { method: 'POST', body: JSON.stringify({ token, firstName: firstName.trim(), lastName: lastName.trim(), password }) },
+  );
 }
 
 // ─── Guard side: my companies and joining one ─────────────────────────────────

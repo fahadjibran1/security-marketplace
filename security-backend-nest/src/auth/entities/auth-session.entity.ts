@@ -56,7 +56,8 @@ export class AuthSession {
 
   /** Why the row stopped being usable — rotation is routine, the others are not. */
   @Column({ type: 'varchar', length: 32, nullable: true })
-  revokedReason?: 'rotated' | 'logout' | 'reuse_detected' | 'password_change' | 'account_deleted' | null;
+  // 'company_access_revoked': a company Owner / Admin revoked this staff member's access (company staff management).
+  revokedReason?: 'rotated' | 'logout' | 'reuse_detected' | 'password_change' | 'account_deleted' | 'company_access_revoked' | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   lastUsedAt?: Date | null;

@@ -2,6 +2,8 @@
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { CompanyAuditWorkspace } from '../components/company/CompanyAuditWorkspace';
+import { CompanyTeamWorkspace } from '../components/company/CompanyTeamWorkspace';
+import { canManageTeam } from '../components/company/companyTeam';
 import { CompanyGuardsWorkspace } from '../components/company/CompanyGuardsWorkspace';
 import { CompanyGuardInvitationsPanel } from '../components/company/CompanyGuardInvitationsPanel';
 import { CompanyClientsWorkspace, type ClientFormState, CLIENT_FORM_EMPTY } from '../components/company/CompanyClientsWorkspace';
@@ -298,6 +300,8 @@ type CompanySection =
   | 'contract-pricing'
   | 'pay-rules'
   | 'audit'
+  /** Company staff management: only with staff.manage (Owner, Admin). */
+  | 'team'
   | 'log-book'
   | 'incidents'
   | 'alerts'
@@ -423,6 +427,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'contract-pricing', label: 'Contract Pricing', caption: 'Client and site commercial rules.' },
   { id: 'pay-rules', label: 'Pay Rules', caption: 'Guard payable-hours calculation settings.' },
   { id: 'audit', label: 'Audit Trail', caption: 'Trace financial actions and before/after data.' },
+  { id: 'team', label: 'Team', caption: 'Invite your staff, set their roles and revoke access.' },
   { id: 'log-book', label: 'Log Book', caption: 'The site occurrence record and Daily Site Log.' },
   { id: 'incidents', label: 'Incidents', caption: 'Track reported site issues.' },
   { id: 'alerts', label: 'Safety Alerts', caption: 'Watch welfare and check-call alerts.' },
@@ -452,7 +457,7 @@ const COMPANY_NAV_GROUPS: Array<{ id: string; title: string; itemIds: CompanySec
   {
     id: 'management',
     title: 'Management',
-    itemIds: ['coverage', 'analytics', 'log-book', 'incidents', 'alerts', 'audit', 'recruitment'],
+    itemIds: ['coverage', 'analytics', 'log-book', 'incidents', 'alerts', 'audit', 'team', 'recruitment'],
   },
 ];
 
@@ -1430,9 +1435,17 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
     }
   }, [patrolPermissions.canView]);
   React.useEffect(() => { setPatrolTarget(null); }, [patrolCompanyKey]);
+  /** Team (staff management): staff.manage from the session; the legacy owner roles only when it has no list. */
+  const canManageStaff = React.useMemo(
+    () => canManageTeam(user?.companyPermissions, user?.role),
+    [user?.companyPermissions, user?.role],
+  );
+  React.useEffect(() => {
+    if (!canManageStaff) setActiveSection((current) => (current === 'team' ? 'dashboard' : current));
+  }, [canManageStaff]);
   const navGroups = React.useMemo(
     () => COMPANY_NAV_GROUPS
-      .map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => id !== 'compliance' || canViewCompliance) }))
+      .map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => (id !== 'compliance' || canViewCompliance) && (id !== 'team' || canManageStaff)) }))
       // Patrol Management: in the primary group, directly after Live Operations, only with patrols.view.
       .map((group) => ({
         ...group,
@@ -1443,7 +1456,7 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
           group.id === 'primary' ? patrolPermissions : { ...patrolPermissions, canView: false },
         ),
       })),
-    [canViewCompliance, patrolPermissions],
+    [canViewCompliance, canManageStaff, patrolPermissions],
   );
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -5710,6 +5723,8 @@ export function CompanyDashboardScreen({ user, onLogout, onAccountDeleted }: Com
         );
       case 'audit':
         return <CompanyAuditWorkspace />;
+      case 'team':
+        return canManageStaff ? <CompanyTeamWorkspace /> : null;
       case 'log-book':
         return (
           <CompanyLogBookWorkspace

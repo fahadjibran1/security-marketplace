@@ -2,11 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     { "source": "/reset-password", "destination": "/index.html" },
-    { "source": "/verify-email", "destination": "/index.html" }
+    { "source": "/verify-email", "destination": "/index.html" },
+    { "source": "/join-company", "destination": "/index.html" }
   ],
   "headers": [
     {
-      "source": "/(reset-password|verify-email)",
+      "source": "/(reset-password|verify-email|join-company)",
       "headers": [
         { "key": "Referrer-Policy", "value": "no-referrer" },
         { "key": "Cache-Control", "value": "no-store" },

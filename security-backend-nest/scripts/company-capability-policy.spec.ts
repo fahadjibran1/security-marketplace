@@ -73,6 +73,10 @@ async function main() {
     ['POST', '/rota-slots/:id/assign-multiple', C.NEW_OPERATIONS],
     ['POST', '/rota-slots/:id/positions/:shiftId/replace', C.NEW_OPERATIONS],
     ['PUT', '/client-portal-users', C.NEW_OPERATIONS],
+    ['POST', '/company-staff/invitations', C.NEW_OPERATIONS],
+    // Removing a person's access is never withheld: a suspended company must still be able to shut someone out.
+    ['POST', '/company-staff/members/:userId/revoke', C.ACCOUNT],
+    ['POST', '/company-staff/invitations/:id/cancel', C.ACCOUNT],
     ['PATCH', '/alerts/:id/ack', C.SAFETY],
     ['PATCH', '/alerts/:id/close', C.SAFETY],
     ['PATCH', '/incidents/:id/status', C.SAFETY],
