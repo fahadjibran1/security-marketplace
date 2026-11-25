@@ -1,4 +1,8 @@
-import sharp = require('sharp');
+// sharp >= 0.35 exposes its CommonJS typings (export =) only through package.json "exports"; under this project's
+// moduleResolution "node" TypeScript reads the top-level "types" (the ESM typings, default export) instead. The CommonJS
+// build is loaded at runtime (require returns the constructor) and typed with the ESM default export's constructor type.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const sharp: typeof import('sharp').default = require('sharp');
 
 /**
  * Stamped patrol photos. GET /patrols/evidence/:id/stamped derives a JPEG from the verified original PER REQUEST: the
