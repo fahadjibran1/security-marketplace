@@ -100,7 +100,7 @@ async function main() {
     {} as never, {} as never, { findByUserId: async () => A.company } as never, auditLogService,
     { createForUser: async () => undefined, createForUserUnlessRecentDuplicate: async () => undefined } as never,
     new WelfareWindowService(windowEngine), windowEngine, ds,
-    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
+    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never, { enabled: () => false, activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
   );
   alertService.onModuleDestroy();
   const access = { companyActorAny: async (user: { sub: number }) => ({ companyId: A.company.id, userId: user.sub }) } as never;

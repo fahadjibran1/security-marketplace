@@ -342,21 +342,23 @@ test('FORM-15-THE-CANONICAL-ACTION-SET', () => {
   }
   assert.equal(new Set(GUARD_ACTION_FORMS.map((f) => f.title)).size, 5, 'no two actions share a name');
 
-  assert.equal(guardActionForm('emergency').confirmWord, 'SOS');
+  // S4-EM-01: Emergency needs no words (two taps on its own full-screen confirmation); nothing needs a typed word.
+  assert.equal(guardActionForm('emergency').requiresText, false);
   assert.equal(guardActionForm('emergency').destructive, true);
-  // Only Emergency is destructive, and only Emergency needs a typed confirmation.
+  // Only Emergency is destructive, and only Emergency needs no note.
   assert.deepEqual(GUARD_ACTION_FORMS.filter((f) => f.destructive).map((f) => f.key), ['emergency']);
-  assert.deepEqual(GUARD_ACTION_FORMS.filter((f) => f.confirmWord).map((f) => f.key), ['emergency']);
+  assert.deepEqual(GUARD_ACTION_FORMS.filter((f) => f.requiresText === false).map((f) => f.key), ['emergency']);
+  assert.ok(GUARD_ACTION_FORMS.every((f) => !('confirmWord' in f)), 'no typed confirmation word anywhere');
 
   for (const form of GUARD_ACTION_FORMS) {
     assert.ok(form.submitLabel && form.busyLabel, `${form.key} needs both labels`);
-    assert.ok(form.placeholder, `${form.key} needs a placeholder`);
+    if (form.requiresText !== false) assert.ok(form.placeholder, `${form.key} needs a placeholder`);
     assert.ok(form.launchAccessibilityLabel, `${form.key} needs an accessible launcher`);
   }
 });
 
 test('FORM-16-THE-BUTTON-IS-ENABLED-ONLY-WHEN-THE-HANDLER-WOULD-ACCEPT-IT', () => {
-  for (const form of GUARD_ACTION_FORMS.filter((f) => !f.confirmWord)) {
+  for (const form of GUARD_ACTION_FORMS.filter((f) => f.requiresText !== false)) {
     assert.equal(resolveActionSubmitState(form, { value: '', busy: false }).disabled, true, `${form.key} empty`);
     assert.equal(resolveActionSubmitState(form, { value: '   ', busy: false }).disabled, true, `${form.key} whitespace`);
     const ready = resolveActionSubmitState(form, { value: 'All quiet on the gate.', busy: false });
@@ -366,30 +368,23 @@ test('FORM-16-THE-BUTTON-IS-ENABLED-ONLY-WHEN-THE-HANDLER-WOULD-ACCEPT-IT', () =
   }
 });
 
-test('FORM-17-EMERGENCY-REQUIRES-THE-CONFIRMATION-WORD', () => {
-  // The word the Guard types changed with the label; the REQUIREMENT did not. Still an exact match,
-  // still checked in the same function, still inert until it matches. PANIC — the old word — must no
-  // longer be accepted, or there would be two ways in and one of them undocumented.
+test('FORM-17-EMERGENCY-NEEDS-NO-TYPED-WORD', () => {
+  // S4-EM-01 (owner decision, 24 Nov 2026): typing SOS under duress is gone. The safeguard against a pocket press is the
+  // second, deliberate tap on the full-screen confirmation (guard-emergency.spec.cjs). Whatever is or is not in the
+  // (unused) value, Emergency is ready to send; only an in-flight send disables it.
   const emergency = guardActionForm('emergency');
-  for (const bad of ['', 'so', 'SO', 'S O S', 'help', 'PANIC', 'panic', 'EMERGENCY']) {
-    const state = resolveActionSubmitState(emergency, { value: bad, busy: false });
-    assert.equal(state.disabled, true, `"${bad}" must not enable an emergency alert`);
-    assert.equal(state.blockedReason, 'confirmation');
-  }
-  // Case and surrounding space are forgiven, exactly as the dispatcher forgives them.
-  for (const good of ['SOS', 'sos', '  Sos  ']) {
-    assert.equal(
-      resolveActionSubmitState(emergency, { value: good, busy: false }).disabled,
-      false,
-      `"${good}"`,
-    );
+  for (const value of ['', '   ', 'anything', 'SOS']) {
+    const state = resolveActionSubmitState(emergency, { value, busy: false });
+    assert.equal(state.disabled, false, `"${value}"`);
+    assert.equal(state.blockedReason, null);
+    assert.equal(state.label, 'SEND EMERGENCY');
   }
 });
 
 test('FORM-18-A-SUBMISSION-IN-FLIGHT-DISABLES-THE-BUTTON-AND-SAYS-SO', () => {
   // This is the double-tap protection: while busy the button cannot start a second request.
   for (const form of GUARD_ACTION_FORMS) {
-    const valid = form.confirmWord ? form.confirmWord : 'a note';
+    const valid = 'a note';
     const busy = resolveActionSubmitState(form, { value: valid, busy: true });
     assert.equal(busy.disabled, true, `${form.key} must be disabled while submitting`);
     assert.equal(busy.label, form.busyLabel, `${form.key} must show its busy label`);
@@ -412,9 +407,10 @@ test('FORM-19-NO-HAND-ROLLED-OVERLAY-SURVIVES-IN-THE-GUARD-SCREEN', () => {
   assert.ok(!/zIndex:\s*20/.test(screen), 'no zIndex-based overlay layering remains');
 });
 
-test('FORM-20-ALL-FIVE-ACTIONS-RENDER-THROUGH-APPMODAL-FROM-ONE-RENDERER', () => {
+test('FORM-20-THE-FOUR-WRITTEN-ACTIONS-RENDER-THROUGH-APPMODAL-FROM-ONE-RENDERER', () => {
   const screen = codeOf(SCREEN);
-  assert.match(screen, /GUARD_ACTION_FORMS\.map\(/, 'one renderer, not five copies');
+  // S4-EM-01: Emergency left this renderer for its own full-screen two-tap confirmation (GuardEmergencyScreen).
+  assert.match(screen, /GUARD_ACTION_FORMS\.filter\(\(form\) => form\.key !== 'emergency'\)\.map\(/, 'one renderer, not four copies');
   assert.match(screen, /<AppModal/, 'hosted by the shared modal');
   assert.match(screen, /resolveActionSubmitState\(form, \{ value, busy \}\)/, 'using the tested submit state');
   // Exactly two AppModal usages: the action-form renderer and the shift summary.
@@ -471,14 +467,15 @@ test('FORM-23-EXACTLY-ONE-LAUNCHER-PER-CANONICAL-ACTION', () => {
     .map((m) => m[1] || m[2])
     .filter((arg) => arg !== 'null');
 
-  // Three call sites: the mapped routine tiles, Emergency's own button, and the one beside the Welfare
-  // Check status. Welfare Check belongs next to its own status and next-due time, so the grid drops it
-  // whenever that block is showing — a Guard is never offered the same action twice.
+  // Two call sites: the mapped routine tiles and the one beside the Welfare Check status. Welfare Check belongs next
+  // to its own status and next-due time, so the grid drops it whenever that block is showing — a Guard is never offered
+  // the same action twice. Emergency (S4-EM-01) opens its own full-screen confirmation, exactly once.
   assert.deepEqual(
     opens.sort(),
-    ['emergency', 'key', 'welfareCheck'],
+    ['key', 'welfareCheck'],
     `unexpected launchers: ${opens.join(', ')}`,
   );
+  assert.equal((screen.match(/setEmergencyOpen\(true\)/g) || []).length, 1, 'one Emergency opener');
   assert.ok(
     /routine\.map\(\(key\) => \{/.test(screen),
     'the routine launchers must come from one map over the canonical list',
@@ -548,9 +545,10 @@ test('FORM-25-BOOK-OFF-IS-NOT-AMONG-THE-REPORTING-ACTIONS', () => {
   assert.ok(barAt > 0, 'the on-duty bar renders Emergency');
   assert.ok(barAt < screen.indexOf('<ScrollView ref={screeningScrollRef}'), 'the on-duty bar is outside (before) the scrolling content');
   const bar = screen.slice(barAt, screen.indexOf('/>', barAt));
-  // S4-UX-01.3 (deliberate retarget): both Emergency presentations share ONE handler, which opens the existing form.
-  assert.match(screen, /const openEmergency = \(\) => setQuickActionModal\('emergency'\);/, 'one Emergency handler');
-  assert.match(bar, /onEmergency=\{openEmergency\}/, 'it opens the existing Emergency form');
+  // S4-EM-01 (deliberate retarget): both Emergency presentations share ONE handler, which opens the full-screen
+  // two-tap confirmation (GuardEmergencyScreen) instead of the old typed form.
+  assert.match(screen, /const openEmergency = \(\) => setEmergencyOpen\(true\);/, 'one Emergency handler');
+  assert.match(bar, /onEmergency=\{openEmergency\}/, 'it opens the Emergency confirmation');
   const barSource = codeOf('src/components/guard/home/GuardOnDutyBar.tsx');
   assert.match(barSource, /backgroundColor: guardColors\.emergency/, 'Emergency keeps its destructive styling');
   for (const term of ['handleCheckOut', 'Book Off', 'End shift', 'createSafetyAlert']) {

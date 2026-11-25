@@ -178,14 +178,16 @@ test('GINBOX-08-OLD-SERVERS-AND-OFFLINE-ARE-CALM', () => {
   assert.match(screen, /\/\/ Independent of the dashboard read[^\n]*\n\s*void loadInbox\(\);\n\s*const \[myGuard/, 'an inbox failure never blocks the dashboard');
 });
 
-test('GINBOX-09-BOTH-ANDROID-CHANNELS', () => {
+test('GINBOX-09-THE-ANDROID-CHANNELS', () => {
   assert.equal(gi.SHIFT_UPDATES_CHANNEL_ID, 'shift-updates');
   assert.equal(gi.SHIFT_UPDATES_CHANNEL_NAME, 'Shift updates');
   assert.equal(wp.WELFARE_CHANNEL_ID, 'welfare-checks');
   const src = codeOf('src/services/pushNotifications.ts');
   const configure = src.slice(src.indexOf('export async function configureWelfareNotifications'), src.indexOf('export async function registerWelfarePush'));
   const channels = [...configure.matchAll(/setNotificationChannelAsync\((\w+), \{[\s\S]*?importance: Notifications\.AndroidImportance\.(\w+)/g)].map((m) => [m[1], m[2]]);
-  assert.deepEqual(channels, [['WELFARE_CHANNEL_ID', 'MAX'], ['SHIFT_UPDATES_CHANNEL_ID', 'DEFAULT']]);
+  // S4-EM-01 added the third: Guard Emergencies, for company responders, at maximum importance, created last in its own try.
+  assert.deepEqual(channels, [['WELFARE_CHANNEL_ID', 'MAX'], ['SHIFT_UPDATES_CHANNEL_ID', 'DEFAULT'], ['EMERGENCY_CHANNEL_ID', 'MAX']]);
+  assert.ok(configure.indexOf('EMERGENCY_CHANNEL_ID') > configure.indexOf('SHIFT_UPDATES_CHANNEL_ID'), 'the Emergency channel cannot stop the others');
   assert.ok(configure.indexOf('SHIFT_UPDATES_CHANNEL_ID') > configure.indexOf('setNotificationCategoryAsync(WELFARE_CATEGORY_ID'),
     'the shift channel is created after the Welfare setup, in its own try, so it can never stop it');
   assert.match(configure, /\} catch \{\n?\s*\/\/ A device without notification support keeps working; Welfare Checks remain available in S4\.\s*\}\s*\/\/ Separate from the Welfare setup/);

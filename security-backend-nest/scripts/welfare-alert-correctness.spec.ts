@@ -371,7 +371,7 @@ async function sweepCases() {
     // The alert actor: the owner of a company acts for that company.
     { findByUserId: async (userId: number) => companies.find((c) => c.user?.id === userId) ?? null } as never,
     auditLogService, notifications as never, welfare, windowEngine, ds,
-    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
+    { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never, { enabled: () => false, activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
   );
   sweep.onModuleDestroy();
 
@@ -841,7 +841,7 @@ async function sweepCases() {
         {} as never, {} as never,
         { findByUserId: async (userId: number) => companies.find((c) => c.user?.id === userId) ?? null } as never,
         auditLogService, notifications as never, welfare, windowEngine, ds,
-        { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never,
+        { getGuardSummary: async () => { throw new Error('compliance lapse scan not exercised by this spec'); } } as never, { enabled: () => false, activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
       );
       fresh.onModuleDestroy();
       return fresh;

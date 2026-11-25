@@ -31,6 +31,7 @@
 
 import type { GuardActionKey } from './guardActionForms';
 import { guardActionForm, resolveActionSubmitState } from './guardActionForms';
+import { EMERGENCY_APP_MESSAGE } from './emergency/guardEmergency';
 
 /** The shift an action applies to. */
 export type ActionShift = { id: number; status: string } | null | undefined;
@@ -70,8 +71,6 @@ export type BlockedReason =
   /** No shift, or a shift that is not in progress. The action needs a live shift either way. */
   | 'no_active_shift'
   | 'note_required'
-  /** The Emergency confirmation word was absent or did not match. */
-  | 'emergency_confirmation_required'
   /** A submission is already in flight. This is the double-tap guard. */
   | 'busy';
 
@@ -109,12 +108,6 @@ export function guardActionBlockedReason(
   if (submit.blockedReason === 'busy') {
     return { reason: 'busy', message: 'Still sending your last submission.' };
   }
-  if (submit.blockedReason === 'confirmation') {
-    return {
-      reason: 'emergency_confirmation_required',
-      message: `Type ${form.confirmWord} to confirm.`,
-    };
-  }
   return { reason: 'note_required', message: 'Enter a note before submitting.' };
 }
 
@@ -123,7 +116,8 @@ const SUCCESS: Record<GuardActionKey, { title: string; message: string }> = {
   logBook: { title: 'Log Book entry saved', message: 'Your Log Book entry was saved.' },
   siteRequest: { title: 'Site Request sent', message: 'The company can now see what the site needs.' },
   incident: { title: 'Incident reported', message: 'The company can now see this incident.' },
-  emergency: { title: 'Emergency alert sent', message: 'Emergency alert sent to control room.' },
+  // S4-EM-01: S4 received it. Never "sent to control room": nobody has confirmed they have seen it.
+  emergency: { title: 'S4 received your Emergency', message: 'S4 received your Emergency. Nobody has confirmed they have seen it yet.' },
 };
 
 /** What goes on the Guard's own timeline for each action. */
@@ -132,7 +126,7 @@ const TIMELINE_TITLE: Record<GuardActionKey, string> = {
   logBook: 'Log Book entry added',
   siteRequest: 'Site Request sent',
   incident: 'Incident raised',
-  emergency: 'Emergency alert sent',
+  emergency: 'Emergency received by S4',
 };
 
 /**
@@ -176,14 +170,14 @@ export async function dispatchGuardAction(
       await api.createIncident({ title: 'Guard incident', notes: text, severity: 'medium', shiftId });
       fx.timeline(shiftId, TIMELINE_TITLE[key], text);
     } else {
-      // The typed value is the confirmation word, never the alert body.
+      // No words are needed: the standard body (sent so an older backend that requires one accepts it).
       await api.createSafetyAlert({
         shiftId,
         type: 'panic',
         priority: 'critical',
-        message: 'Emergency alert raised by guard from the mobile app.',
+        message: EMERGENCY_APP_MESSAGE,
       });
-      fx.timeline(shiftId, TIMELINE_TITLE[key], 'Emergency alert sent to control room.');
+      fx.timeline(shiftId, TIMELINE_TITLE[key], 'S4 received your Emergency.');
     }
 
     fx.clearValue(key);

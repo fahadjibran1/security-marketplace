@@ -28,7 +28,7 @@ itself (409), since only a rejected company can ask.
 
 ## Routes
 
-115 mutating routes are reachable by company users.
+117 mutating routes are reachable by company users.
 
 ### `account` — approved, pending_verification, rejected, suspended
 
@@ -68,6 +68,8 @@ itself (409), since only a rejected company can ask.
 | PATCH | `/incidents/:id/status` | IncidentController.updateStatus |
 | POST | `/patrols/exceptions/:id/acknowledge` | PatrolConfigController.acknowledgeException |
 | POST | `/patrols/exceptions/:id/resolve` | PatrolConfigController.resolveException |
+| POST | `/push-devices/unregister` | WelfarePushController.unregister |
+| POST | `/push-devices` | WelfarePushController.register |
 
 ### `setup` — approved, pending_verification
 

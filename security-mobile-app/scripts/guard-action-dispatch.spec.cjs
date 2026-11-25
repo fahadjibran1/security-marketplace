@@ -138,22 +138,21 @@ async function main() {
     assert.equal(h.total(), 1);
   });
 
-  await test('DISPATCH-05-EMERGENCY-IS-panic-critical-AND-NEVER-SENDS-THE-TYPED-WORD', async () => {
-    // Renamed for the Guard; unchanged on the wire, so a company surface and the alert history keep
-    // reading it exactly as before.
-    const h = harness();
-    const outcome = await dispatchGuardAction(
-      'emergency', { shift: LIVE_SHIFT, value: 'SOS', busy: false }, h.api, h.effects,
-    );
-    assert.deepEqual(outcome, { kind: 'success' });
-    assert.equal(h.calls.createSafetyAlert.length, 1);
-    assert.equal(h.calls.createSafetyAlert[0].type, 'panic');
-    assert.equal(h.calls.createSafetyAlert[0].priority, 'critical');
-    assert.ok(
-      !h.calls.createSafetyAlert[0].message.includes('SOS'),
-      'the confirmation word is not the alert body',
-    );
-    assert.equal(h.total(), 1);
+  await test('DISPATCH-05-EMERGENCY-IS-panic-critical-AND-NEEDS-NO-WORDS', async () => {
+    // Unchanged on the wire, so a company surface and the alert history keep reading it exactly as before.
+    // S4-EM-01: no typed word and no description; the standard body is sent, whatever is in the (unused) value.
+    for (const value of ['', 'anything typed']) {
+      const h = harness();
+      const outcome = await dispatchGuardAction('emergency', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
+      assert.deepEqual(outcome, { kind: 'success' });
+      assert.equal(h.calls.createSafetyAlert.length, 1);
+      assert.equal(h.calls.createSafetyAlert[0].type, 'panic');
+      assert.equal(h.calls.createSafetyAlert[0].priority, 'critical');
+      assert.equal(h.calls.createSafetyAlert[0].message, 'Emergency raised by the Guard from the S4 app.');
+      assert.equal(h.total(), 1);
+      // Never claims the Control Room has it.
+      assert.ok(h.fx.feedback.every((f) => !/control room/i.test(`${f[1]} ${f[2]}`)), JSON.stringify(h.fx.feedback));
+    }
   });
 
   await test('DISPATCH-05B-EVERY-CANONICAL-ACTION-MAKES-EXACTLY-ONE-REQUEST', async () => {
@@ -164,7 +163,7 @@ async function main() {
       ['logBook', 'note'],
       ['siteRequest', 'note'],
       ['incident', 'note'],
-      ['emergency', 'SOS'],
+      ['emergency', ''],
     ];
     assert.equal(cases.length, GUARD_ACTION_FORMS.length, 'every declared form is covered here');
     for (const [key, value] of cases) {
@@ -183,7 +182,7 @@ async function main() {
     const emittedAlertTypes = [];
     for (const [key, value] of [
       ['welfareCheck', 'note'], ['logBook', 'note'], ['siteRequest', 'note'],
-      ['incident', 'note'], ['emergency', 'SOS'],
+      ['incident', 'note'], ['emergency', ''],
     ]) {
       const h = harness();
       await dispatchGuardAction(key, { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
@@ -240,20 +239,21 @@ async function main() {
     }
   });
 
-  await test('DISPATCH-10-EMERGENCY-WITHOUT-THE-WORD-IS-BLOCKED-WITH-ZERO-CALLS', async () => {
-    for (const value of ['', 'help', 'pani']) {
+  await test('DISPATCH-10-EMERGENCY-WITHOUT-A-LIVE-SHIFT-IS-BLOCKED-WITH-ZERO-CALLS', async () => {
+    // S4-EM-01: the typed word is gone; availability is unchanged — an Emergency still needs the Guard's live shift.
+    for (const shift of [null, { id: 1, status: 'accepted' }]) {
       const h = harness();
-      const outcome = await dispatchGuardAction('emergency', { shift: LIVE_SHIFT, value, busy: false }, h.api, h.effects);
+      const outcome = await dispatchGuardAction('emergency', { shift, value: '', busy: false }, h.api, h.effects);
       assert.equal(outcome.kind, 'blocked');
-      assert.equal(outcome.reason, 'emergency_confirmation_required');
-      assert.equal(h.total(), 0, 'an emergency alert must never fire unconfirmed');
+      assert.equal(outcome.reason, 'no_active_shift');
+      assert.equal(h.total(), 0, 'no request without a live shift');
     }
   });
 
   await test('DISPATCH-11-A-SUBMISSION-IN-FLIGHT-CANNOT-START-A-SECOND', async () => {
     for (const form of GUARD_ACTION_FORMS) {
       const h = harness();
-      const value = form.confirmWord ? form.confirmWord : 'note';
+      const value = 'note';
       const outcome = await dispatchGuardAction(form.key, { shift: LIVE_SHIFT, value, busy: true }, h.api, h.effects);
       assert.equal(outcome.kind, 'blocked', form.key);
       assert.equal(outcome.reason, 'busy', form.key);

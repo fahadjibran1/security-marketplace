@@ -170,7 +170,7 @@ async function main() {
       const [note] = await q(`SELECT "userId", title FROM notifications ORDER BY id DESC LIMIT 1`);
       assert.equal(await notifications(), notesBefore + 1);
       assert.equal(note.userId, A.ownerId);
-      assert.equal(note.title, 'CRITICAL: Panic alert raised');
+      assert.equal(note.title, 'EMERGENCY — Guard needs help'); // S4-EM-01 wording
       const [audit] = await q(`SELECT "userId","companyId" FROM audit_logs WHERE action = 'safety_alert.created' AND "entityId" = $1`, [r.body.id]);
       assert.equal(audit.userId, g1.userId);
       assert.equal(audit.companyId, A.id);
@@ -256,7 +256,9 @@ async function main() {
       const close = await api('PATCH', `/alerts/${panic.id}/close`, A.token, { resolutionReason: 'guard_confirmed_safe', resolutionNote: 'Called the guard.' });
       assert.equal(close.status, 200, JSON.stringify(close.body));
       const audits = await q(`SELECT action, "userId" FROM audit_logs WHERE "entityType" = 'safety_alert' AND "entityId" = $1 ORDER BY id`, [panic.id]);
-      assert.deepEqual(audits.map((a) => a.action), ['safety_alert.created', 'safety_alert.acknowledged', 'safety_alert.closed']);
+      // S4-EM-01 adds a separate push-attempt record (never an acknowledgement); the human lifecycle is unchanged.
+      assert.deepEqual(audits.map((a) => a.action).filter((a) => !a.startsWith('safety_alert.emergency_push_')),
+        ['safety_alert.created', 'safety_alert.acknowledged', 'safety_alert.closed']);
     });
   } finally {
     await app.close();

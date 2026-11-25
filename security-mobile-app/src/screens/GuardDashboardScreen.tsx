@@ -40,6 +40,7 @@ import {
 } from '../components/guard/guardInbox';
 import { subscribeGuardNotificationResponses, subscribeGuardNotificationsReceived } from '../services/pushNotifications';
 import { GuardPatrolPanel } from '../components/guard/patrol/GuardPatrolPanel';
+import { GuardEmergencyScreen } from '../components/guard/emergency/GuardEmergencyScreen';
 import {
   GUARD_AMENDMENT_FOREGROUND_MIN_MS,
   GUARD_AMENDMENT_REFRESH_MS,
@@ -61,6 +62,7 @@ import {
   createDailyLog,
   createIncident,
   createSafetyAlert,
+  listMySafetyAlerts,
   formatApiErrorMessage,
   getMyDrivingTransport,
   getMyEmergencyContact,
@@ -624,6 +626,9 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
     }
   }, [profileReads]);
   const [quickActionModal, setQuickActionModal] = useState<QuickActionModal>(null);
+  const [emergencyOpen, setEmergencyOpen] = useState(false);
+  /** S4-EM-01: the real client for the Emergency screen (one create; read-back of the Guard's own alerts). */
+  const guardEmergencyApi = useMemo(() => ({ createSafetyAlert, listMySafetyAlerts }), []);
   const [liveNow, setLiveNow] = useState<number>(Date.now());
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -2322,7 +2327,8 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
   // header SOS control, development bundles only; see guardEmergencyPresentation.ts).
   const emergencyPresentation = guardEmergencyPresentation();
   const emergencyEligible = showOnDutyBar(currentShiftActionTarget);
-  const openEmergency = () => setQuickActionModal('emergency');
+  // S4-EM-01: the launcher opens the full-screen two-tap confirmation (GuardEmergencyScreen), never a typed form.
+  const openEmergency = () => setEmergencyOpen(true);
 
   /**
    * The canonical routine live-shift actions, and the only launchers for them.
@@ -3521,7 +3527,22 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
           absolutely-positioned overlays, each of which the bottom navigation and the
           keyboard could cover — hiding Submit. AppModal is a real RNModal, so it renders
           above the navigation, its body scrolls, and its footer never scrolls away. */}
-      {GUARD_ACTION_FORMS.map((form) => {
+      {/* S4-EM-01: Emergency is its own full-screen, two-tap confirmation — no typing, no description, no scrolling. */}
+      <GuardEmergencyScreen
+        visible={emergencyOpen}
+        shift={currentShiftActionTarget}
+        timeZone={currentHomeShift?.site?.timezone ?? null}
+        api={guardEmergencyApi}
+        onClose={() => setEmergencyOpen(false)}
+        onReceived={(receipt) => {
+          if (currentShiftActionTarget) {
+            pushTimelineEvent(currentShiftActionTarget.id, receipt.duplicate ? 'Emergency already with S4' : 'Emergency received by S4', 'S4 received your Emergency.');
+          }
+          void loadData();
+        }}
+      />
+
+      {GUARD_ACTION_FORMS.filter((form) => form.key !== 'emergency').map((form) => {
         const value = actionFormValue(form.key);
         const busy = actionFormBusy(form.key);
         const submit = resolveActionSubmitState(form, { value, busy });
@@ -3576,7 +3597,7 @@ export function GuardDashboardScreen({ user, onLogout, onAccountDeleted, product
               value={value}
               onChangeText={(next: string) => setActionFormValue(form.key, next)}
               multiline={form.multiline}
-              autoCapitalize={form.confirmWord ? 'characters' : 'sentences'}
+              autoCapitalize="sentences"
               editable={!busy}
               accessibilityLabel={form.title}
             />

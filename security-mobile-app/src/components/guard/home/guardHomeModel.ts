@@ -41,7 +41,7 @@ export function guardHomeMode(phase: GuardHomePhase): GuardHomeMode {
 /**
  * Whether the persistent on-duty bar (and its Emergency launcher) shows.
  *
- * Driven by the same action target the Emergency form submits against, so the bar is shown exactly when an
+ * Driven by the same action target the Emergency confirmation submits against, so the bar is shown exactly when an
  * Emergency can be raised, on every Guard tab, and is never shown when the dispatcher would refuse it.
  */
 export function showOnDutyBar(actionTarget: { id: number } | null | undefined): boolean {

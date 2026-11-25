@@ -157,6 +157,7 @@ function fakeApi(overrides = {}) {
     getMyEmployments: async () => [],
     getMyPayrollAdmin: async () => [],
     createSafetyAlert: async (payload) => { calls.safetyAlerts.push(payload); return { id: 1 }; },
+    listMySafetyAlerts: async () => [],
     fetchCurrentUser: async () => null,
     getRefreshToken: () => 'r1',
     logout: async () => { calls.logout += 1; },
@@ -558,16 +559,24 @@ test('UX-T4-EMERGENCY-IS-OUTSIDE-THE-SCROLLVIEW-ON-EVERY-TAB-AND-OPENS-THE-EXIST
   const [inbox] = byLabel(root, 'Notifications');
   await run(() => inbox.props.onPress());
   checkBar('Notifications');
-  // Exactly one Emergency launcher on screen, and it opens the existing SOS form; nothing is sent by opening it.
+  // Exactly one Emergency launcher on screen, and it opens the full-screen two-tap confirmation (S4-EM-01); nothing is
+  // sent by opening it, and one press of SEND EMERGENCY sends exactly one Emergency for the live shift.
   const emergencies = pressables(byTestId(root, 'guard-on-duty-bar')[0], (p) => p.accessibilityRole === 'button');
   assert.equal(emergencies.length, 1);
   const allEmergency = pressables(root, (p) => /emergency/i.test(String(p.accessibilityLabel || '')));
   assert.equal(allEmergency.length, 1, 'one Emergency launcher on the whole screen');
-  assert.ok(!texts(root).includes('You need immediate help. Type SOS to confirm.'), 'the form is closed before the press');
+  assert.equal(byTestId(root, 'guard-emergency-screen').length, 0, 'the confirmation is closed before the press');
   await run(() => emergencies[0].props.onPress());
-  assert.ok(texts(root).includes('You need immediate help. Type SOS to confirm.'), 'the existing Emergency form opens');
-  assert.ok(texts(root).includes('Send Emergency Alert'), 'with its own submit');
-  assert.equal(calls.safetyAlerts.length, 0, 'opening the form sends nothing');
+  assert.equal(byTestId(root, 'guard-emergency-screen').length, 1, 'the full-screen confirmation opens');
+  assert.ok(texts(root).includes('Send an Emergency alert to your company?'));
+  assert.ok(texts(root).includes('SEND EMERGENCY'), 'with its own SEND');
+  assert.ok(!texts(root).some((t) => /Type SOS/.test(t)), 'nothing to type');
+  assert.equal(calls.safetyAlerts.length, 0, 'opening it sends nothing');
+  await run(() => byTestId(root, 'guard-emergency-send')[0].props.onPress());
+  assert.equal(calls.safetyAlerts.length, 1, 'the second tap sends exactly one Emergency');
+  assert.equal(calls.safetyAlerts[0].shiftId, shift.id);
+  assert.equal(calls.safetyAlerts[0].type, 'panic');
+  assert.equal(byTestId(root, 'guard-emergency-received').length, 1, 'and says S4 received it');
   await run(() => renderer.unmount());
 });
 
@@ -595,8 +604,9 @@ test('UX-T4-THE-BAR-IS-MOUNTED-OUTSIDE-EVERY-TAB-CONDITIONAL', () => {
   // S4-UX-01.3 (deliberate retarget): eligibility is computed once and shared by both Emergency presentations.
   assert.match(screen, /const emergencyEligible = showOnDutyBar\(currentShiftActionTarget\);/, 'eligibility is the Emergency form\'s own target');
   assert.match(screen.slice(barAt - 200, barAt), /\{emergencyEligible && emergencyPresentation === 'bar' \? \(\s*$/, 'shown exactly when the Emergency form can submit (Variant A)');
-  // One Emergency launcher, and the dispatch path is the existing one.
-  assert.equal((screen.match(/setQuickActionModal\('emergency'\)/g) || []).length, 1);
+  // One Emergency launcher (S4-EM-01: it opens the full-screen confirmation); the other actions keep the existing path.
+  assert.equal((screen.match(/setEmergencyOpen\(true\)/g) || []).length, 1);
+  assert.equal((screen.match(/setQuickActionModal\('emergency'\)/g) || []).length, 0);
   assert.match(screen, /guardActionBlockedReason\(form\.key, \{ shift: currentShiftActionTarget, value, busy \}\)/);
 });
 
@@ -1025,7 +1035,7 @@ test('UX-T16-EMERGENCY-VARIANT-B-IS-REVIEW-ONLY-AND-USES-THE-SAME-HANDLER', asyn
     const allEmergency = pressables(root, (p) => /emergency/i.test(String(p.accessibilityLabel || '')));
     assert.equal(allEmergency.length, 1, 'one Emergency launcher on the whole screen');
     await run(() => check('Home').props.onPress());
-    assert.ok(texts(root).includes('You need immediate help. Type SOS to confirm.'), 'the existing Emergency form, with its SOS confirmation');
+    assert.ok(texts(root).includes('SEND EMERGENCY'), 'the Emergency confirmation (S4-EM-01: two taps, no typed word)');
     assert.equal(calls.safetyAlerts.length, 0, 'opening it sends nothing');
     await run(() => renderer.unmount());
     // Not eligible (before Book On): no SOS either.
@@ -2078,7 +2088,7 @@ test('UX-T41-PROFILE-2D-DISCARD-PROMPT-ONLY-FOR-TYPED-VALUES-AND-NEVER-IN-FRONT-
   assert.ok(emergency, 'the Emergency control is on screen');
   await run(() => emergency.props.onPress());
   assert.equal(ALERTS.length, 0, 'no discard question in front of Emergency');
-  assert.ok(texts(root).includes('Send Emergency Alert'), 'the Emergency form opened');
+  assert.ok(texts(root).includes('SEND EMERGENCY'), 'the Emergency confirmation opened');
   assert.equal(sortCode().props.value, '00-00-00', 'and the typed value is untouched');
   await run(() => renderer.unmount());
 });

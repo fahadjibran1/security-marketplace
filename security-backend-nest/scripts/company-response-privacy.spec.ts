@@ -183,6 +183,13 @@ function companyPrivacyExemptions(ids: ProbeIds): Record<string, Exemption> {
     AuthController: { kind: 'exception', reason: "self-service: register/login/refresh/logout and GET /auth/me return only the caller's own account", evidence: ['auth-session.spec.ts', 'gate2-account-lifecycle.spec.ts'] },
     AccountRecoveryController: { kind: 'exception', reason: 'self-service password reset and email verification; responses carry no account data', evidence: ['gate2-account-lifecycle.spec.ts'] },
     AccountController: { kind: 'exception', reason: "self-service deletion of the caller's own account", evidence: ['gate2-account-lifecycle.spec.ts'] },
+    // S4-EM-01: company users register their own phone for Emergency pushes. The only company-reachable handlers are
+    // POST push-devices and push-devices/unregister, answering { registered: true } / { unregistered: true }.
+    WelfarePushController: {
+      kind: 'exception',
+      reason: "self-service: registers or unregisters the caller's own push device; responses are { registered } / { unregistered } only",
+      evidence: ['welfare-push.spec.ts', 'emergency-alert.spec.ts'],
+    },
     // ── Guard data by design, to permitted roles only ──
     GuardPersonnelController: {
       kind: 'exception',

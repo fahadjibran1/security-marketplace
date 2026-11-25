@@ -119,7 +119,8 @@ test('WPUSH-04-BUTTONS-NEED-AN-UNLOCKED-PHONE-AND-OPEN-S4', () => {
 test('WPUSH-05-APP-WIRING', () => {
   const app = codeOf('App.tsx');
   assert.match(app, /async function handleLogout\(\) \{ await unregisterWelfarePush\(\); await logout\(\);/, 'unregistered while the session still works');
-  assert.match(app, /const guardUserId = surface === 'guard' \? session\?\.user\.id \?\? null : null;/, 'only Guards register');
+  // S4-EM-01: Guards (Welfare Checks) and company users (Emergencies at their company) register; nobody else does.
+  assert.match(app, /const pushUserId = surface === 'guard' \|\| surface === 'company' \? session\?\.user\.id \?\? null : null;/, 'only Guards and company users register');
   assert.match(app, /if \(!booting && !session\) setWelfareTap\(\(tap\) => \(tap && tap\.sessionLive \? \{ \.\.\.tap, sessionLive: false \} : tap\)\);/,
     'a tap held while signed out is never submitted automatically after sign-in');
   assert.match(app, /\{surface === 'guard' && welfareTap \? <View key=\{welfareTap\.intent\.key\}/, 'the prompt shows only for a Guard');

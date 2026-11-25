@@ -179,6 +179,11 @@ jobs:
       - name: Verify guard actions reach the API
         run: npm run test:guard-action-dispatch
 
+      # S4-EM-01: the two-tap Emergency. One press sends exactly one request; failures say NOT sent and 999; nothing
+      # claims the Control Room received or acknowledged it; Live Operations puts active Emergencies first.
+      - name: Verify the two-tap Emergency
+        run: npm run test:guard-emergency
+
       # Phase 3C consolidated the active shift onto one action model: Welfare Check, Log Book, Site
       # Request, Incident, Emergency, and Book Off. Two of the old five had a second launcher in an
       # "On-shift reporting" block, and Check Call and Welfare were two names for one thing. The riskiest

@@ -1636,10 +1636,16 @@ export function updateIncidentStatus(
   });
 }
 
-export function createSafetyAlert(payload: CreateSafetyAlertPayload) {
+/**
+ * S4-EM-01: an Emergency passes its request key, sent as the Idempotency-Key header (the same key on every retry of one
+ * Emergency), so S4 answers a retry with the Emergency it already has. A header, never a body field: the API refuses
+ * unknown body fields, and a backend that predates the key ignores the header.
+ */
+export function createSafetyAlert(payload: CreateSafetyAlertPayload, requestKey?: string) {
   return request<SafetyAlert>('/alerts', {
     method: 'POST',
     body: JSON.stringify(payload),
+    ...(requestKey ? { headers: { 'Idempotency-Key': requestKey } } : {}),
   });
 }
 

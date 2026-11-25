@@ -259,7 +259,10 @@ async function main() {
       const g2 = await guard('wpn-dev2');
       assert.equal((await api('POST', '/push-devices', g1.token, { token: 'not-a-token', platform: 'android' })).status, 400, 'shape-checked');
       assert.equal((await api('POST', '/push-devices', g1.token, { token: token(1), platform: 'windows' })).status, 400, 'platform checked');
-      assert.equal((await api('POST', '/push-devices', A.token, { token: token(1), platform: 'ios' })).status, 403, 'Guard-only');
+      // S4-EM-01: a company responder may register a phone (for Emergency pushes only; reminders are per Guard). Its own
+      // token, so g1's below is unaffected; signed out again straight away.
+      assert.equal((await api('POST', '/push-devices', A.token, { token: token(990), platform: 'ios' })).status, 200, 'company responders may register');
+      assert.equal((await api('POST', '/push-devices/unregister', A.token, { token: token(990) })).status, 200);
       assert.equal((await api('POST', '/push-devices', null, { token: token(1), platform: 'ios' })).status, 401);
       await device(g1, token(1));
       await device(g1, token(1));
@@ -468,7 +471,7 @@ async function main() {
       assert.equal(alerts[0].status, 'open');
       assert.equal((await welfareLogs(s12.id)).length, 0, 'Need Help is never a Welfare Check');
       assert.equal(Number((await one(`SELECT count(*) n FROM audit_logs WHERE action = 'safety_alert.created' AND "entityId" = $1`, [taps[0].body.alertId])).n), 1);
-      assert.ok(Number((await one(`SELECT count(*) n FROM notifications WHERE "userId" = $1 AND title LIKE 'CRITICAL%'`, [A.ownerId])).n) >= 1, 'the Control Room is told');
+      assert.ok(Number((await one(`SELECT count(*) n FROM notifications WHERE "userId" = $1 AND title LIKE 'EMERGENCY%'`, [A.ownerId])).n) >= 1, 'the Control Room is told');
       assert.doesNotMatch(JSON.stringify(taps.map((t) => t.body)), /emergency services|999|police/i, 'no claim that emergency services were contacted');
     });
 

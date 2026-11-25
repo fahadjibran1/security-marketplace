@@ -355,7 +355,7 @@ async function main() {
       const sweep = new SafetyAlertService(
         repo(SafetyAlert), repo(DailyLog), repo(AttendanceEvent), repo(Shift), null as never, null as never, null as never,
         auditLogService, { createForUser: async () => undefined, createForUserUnlessRecentDuplicate: async () => undefined } as never,
-        new WelfareWindowService(windowEngine), windowEngine, ds, { getGuardSummary: async () => { throw new Error('unused'); } } as never,
+        new WelfareWindowService(windowEngine), windowEngine, ds, { getGuardSummary: async () => { throw new Error('unused'); } } as never, { enabled: () => false, activeDevices: async () => [], dispatch: async () => undefined } as never /* S4-EM-01 EmergencyPushService */,
       );
       const shift = await workedShift({ endedMinsAgo: 26 * 60 });
       await sweep.runMissedWelfareChecks();
