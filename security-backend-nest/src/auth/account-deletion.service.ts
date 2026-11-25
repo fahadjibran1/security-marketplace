@@ -48,11 +48,10 @@ export const RETENTION_POLICY_CONTROLLED_RECORDS = [
 ] as const;
 
 /**
- * The S4 contact published on https://www.sfour.co.uk/account-deletion for deletion requests. The S4 website also lists
- * support@sfour.co.uk for general help; the deletion page's address is used here because this is a deletion journey.
+ * The S4 support address (owner decision: one address for support, privacy and account deletion).
  * Keep in step with security-mobile-app/src/constants/s4Links.ts.
  */
-export const S4_SUPPORT_EMAIL = 'info@vesoft.co.uk';
+export const S4_SUPPORT_EMAIL = 'support@sfour.co.uk';
 
 /** A unique, undeliverable address for an anonymised client-portal login (its own table, its own id space). */
 export function deletedClientPortalEmail(clientPortalUserId: number): string {
@@ -65,7 +64,7 @@ export const BLOCKER_MESSAGES: Record<DeletionBlocker, string> = {
   platform_admin:
     `A Platform Admin account cannot be deleted from the app. Your request is recorded and another S4 Platform Admin completes it. Contact S4 support at ${S4_SUPPORT_EMAIL} to arrange it.`,
   company_owner:
-    `This account owns a company workspace on S4, so deleting it would leave the company without an owner. Your request is recorded: S4 support closes the company workspace first and then completes the deletion. Contact S4 support at ${S4_SUPPORT_EMAIL} with any questions.`,
+    `This account owns a company workspace on S4, so deleting it would leave the company without an owner. Your request is recorded and stays pending until the company is either transferred to a new owner or closed. Deleting your account never closes the company by itself. Contact S4 support at ${S4_SUPPORT_EMAIL} to arrange a transfer of ownership or to discuss closing the company.`,
   client_portal:
     `Your request is recorded. S4 support completes the deletion of client portal accounts. Records the security company keeps about its client are the company's own. Contact S4 support at ${S4_SUPPORT_EMAIL} with any questions.`,
 };
@@ -147,7 +146,7 @@ export class AccountDeletionService {
         action: 'account.deletion_requested',
         entityType: 'user',
         entityId: userId,
-        afterData: { deletionRequestedAt: now.toISOString() },
+        afterData: { deletionRequestedAt: now.toISOString(), requestedVia: 'in_app' },
       });
     }
     return this.status(userId);
@@ -285,7 +284,7 @@ export class AccountDeletionService {
         action: 'account.deletion_requested',
         entityType: 'client_portal_user',
         entityId: clientPortalUserId,
-        afterData: { clientId: login.client?.id ?? null, requestedAt: new Date().toISOString() },
+        afterData: { clientId: login.client?.id ?? null, requestedAt: new Date().toISOString(), requestedVia: 'in_app' },
       });
     }
     return this.clientPortalStatus(clientPortalUserId);

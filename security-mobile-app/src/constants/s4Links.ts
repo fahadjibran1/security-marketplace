@@ -2,14 +2,12 @@
  * The S4 public pages and support contact, in one place. Every in-app link to them (sign-in, Guard Profile, Company
  * Account, client portal, Platform Admin) reads from here, so a change of address is made once.
  *
- * Support address: https://www.sfour.co.uk/account-deletion publishes info@vesoft.co.uk as the S4 contact for the app,
- * privacy and deletion requests. https://www.sfour.co.uk/support also lists support@sfour.co.uk for general help; the
- * owner has not yet chosen a single address, so the app uses the deletion page's. Keep in step with S4_SUPPORT_EMAIL in
- * security-backend-nest/src/auth/account-deletion.service.ts.
+ * Support address: support@sfour.co.uk (owner decision: one address for support, privacy and account deletion). Keep in
+ * step with S4_SUPPORT_EMAIL in security-backend-nest/src/auth/account-deletion.service.ts.
  *
  * Pure: no react-native import, so the certification suite executes it directly.
  */
-export const S4_SUPPORT_EMAIL = 'info@vesoft.co.uk';
+export const S4_SUPPORT_EMAIL = 'support@sfour.co.uk';
 
 export type S4LinkKey = 'privacy' | 'terms' | 'support' | 'accountDeletion';
 
@@ -53,7 +51,7 @@ export const S4_LINK_ORDER: readonly S4LinkKey[] = ['privacy', 'terms', 'support
 
 export const s4Links = (): S4Link[] => S4_LINK_ORDER.map((key) => S4_LINKS[key]);
 
-/** "contact S4 support at info@vesoft.co.uk" — for copy that used to say only "contact S4 support". */
+/** "contact S4 support at support@sfour.co.uk" — for copy that used to say only "contact S4 support". */
 export const S4_SUPPORT_CONTACT = `S4 support at ${S4_SUPPORT_EMAIL}`;
 
 interface LinkingLike {
