@@ -95,6 +95,11 @@ jobs:
       - name: Verify company verification UI
         run: npm run test:company-verification-ui
 
+      # Platform Admin two-step verification: the sign-in code step and enrolment hold no session until the server
+      # issues one, the enrolment token is a bearer only on the enrolment routes, and nothing secret is logged or stored.
+      - name: Verify Platform Admin two-step verification UI
+        run: npm run test:admin-mfa-ui
+
       # ── Workforce and compliance ──────────────────────────────────────────────
       # Option 3 is core pilot functionality: the pilot literally begins with a company inviting a guard.
       - name: Verify workforce invitation UI

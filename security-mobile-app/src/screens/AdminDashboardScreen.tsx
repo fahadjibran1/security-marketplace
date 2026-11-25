@@ -15,6 +15,7 @@ import type { GuardScreening, ScreeningQueueFilter, ScreeningQueueResponse, Scre
 import { formatScreeningDate, screeningDateToIso } from '../components/guard/screening-format';
 import { colors } from '../theme';
 import { CompanyVerificationPanel } from '../components/admin/CompanyVerificationPanel';
+import { AdminSecurityPanel } from '../components/admin/AdminSecurityPanel';
 import { listCompanyVerification } from '../services/api';
 
 // The reviewer workload. "Needs review" is the default: everything that can actually be progressed
@@ -42,6 +43,8 @@ const loaders: Record<Exclude<AdminSection, 'overview'>, Loader> = {
   // Screening has its own compact queue endpoint and never goes through this generic loader; the
   // key exists only to satisfy the section map. Calling it would fetch every full application.
   screening: async () => [],
+  // Platform Admin two-step verification: AdminSecurityPanel loads its own status; nothing to list or count.
+  security: async () => [],
   // S4-CV-01: the verification page loads itself; the overview counts the companies waiting for a decision.
   verification: () => listCompanyVerification('pending_verification'),
   notifications: listCompanyNotifications,
@@ -68,6 +71,7 @@ function displayRow(section: Exclude<AdminSection, 'overview'>, value: unknown, 
     case 'screening': return { id, title: text(row.guard?.fullName, `Screening #${id}`), detail: `${text(row.progress, '0')}% complete · ${text(row.requirements?.missing?.length, '0')} outstanding requirements`, status: text(row.status), raw: row };
     case 'audit': return { id, title: text(row.action), detail: `${text(row.entityType)} #${text(row.entityId)} · ${text(row.user?.email, 'System actor')} · ${date(row.createdAt)}` };
     case 'notifications': return { id, title: text(row.title), detail: `${text(row.message)} · ${date(row.createdAt)}`, status: text(row.status) };
+    case 'security': return { id, title: 'Two-step verification', detail: 'Managed on the Account security page' };
     case 'health': return { id, title: text(row.name), detail: `API response received · ${Object.keys(row).filter((key) => key !== 'id' && key !== 'name').map((key) => `${key}: ${text(row[key])}`).join(' · ')}`, status: 'available' };
   }
 }
@@ -117,7 +121,7 @@ export function AdminDashboardScreen() {
         const keys: Exclude<AdminSection, 'overview'>[] = ['verification', 'companies', 'guards', 'sites', 'jobs', 'shifts', 'incidents', 'alerts', 'audit'];
         const results = await Promise.all(keys.map((key) => loaders[key]()));
         setOverview(keys.map((key, index) => ({ section: key, count: results[index].length })));
-      } else if (section === 'verification') {
+      } else if (section === 'verification' || section === 'security') {
         // CompanyVerificationPanel owns its own loading, filtering and decisions.
         setRows([]);
       } else if (section === 'screening') {
@@ -249,8 +253,8 @@ export function AdminDashboardScreen() {
   </ScrollView>;
 
   return <View style={[styles.shell, compact && styles.shellCompact]}>{imageViewer?<Modal transparent animationType="fade" onRequestClose={()=>setImageViewer(null)}><View style={styles.modalBackdrop}><View style={styles.imageModal}><Text style={styles.detailHeading}>{imageViewer.label}</Text><Image source={{uri:imageViewer.url}} resizeMode="contain" style={styles.evidenceImage}/><Text style={styles.rowDetail}>This short-lived private preview does not change verification state.</Text><Pressable style={styles.approveButton} onPress={()=>setImageViewer(null)}><Text style={styles.approveText}>Close preview</Text></Pressable></View></View></Modal>:null}{navigation}<ScrollView ref={contentScroll} style={styles.content} contentContainerStyle={styles.contentInner}>
-    <View style={styles.headingRow}><View style={styles.headingCopy}><Text style={styles.title}>{current.label}</Text><Text style={styles.subtitle}>Global Platform Admin view · RC1 authorized capability</Text></View>{section !== 'verification' ? <Pressable style={styles.refreshButton} onPress={load} disabled={loading}><Text style={styles.refreshText}>{loading ? 'Loading…' : 'Refresh'}</Text></Pressable> : null}</View>
-    {section === 'verification' ? <CompanyVerificationPanel /> : <>
+    <View style={styles.headingRow}><View style={styles.headingCopy}><Text style={styles.title}>{current.label}</Text><Text style={styles.subtitle}>Global Platform Admin view · RC1 authorized capability</Text></View>{section !== 'verification' && section !== 'security' ? <Pressable style={styles.refreshButton} onPress={load} disabled={loading}><Text style={styles.refreshText}>{loading ? 'Loading…' : 'Refresh'}</Text></Pressable> : null}</View>
+    {section === 'verification' ? <CompanyVerificationPanel /> : section === 'security' ? <AdminSecurityPanel /> : <>
     {section !== 'overview' && !(section === 'screening' && selected) ? <TextInput accessibilityLabel={section === 'screening' ? 'Search Guards' : 'Search current admin view'} value={query} onChangeText={setQuery} placeholder={section === 'screening' ? 'Search Guards…' : 'Search this view'} style={styles.search} /> : null}
     {section === 'screening' && !selected ? <>
       <View style={styles.grid}>

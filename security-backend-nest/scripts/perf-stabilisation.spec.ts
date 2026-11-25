@@ -277,10 +277,10 @@ async function main() {
     // ── a database failure is not "unauthorised" ─────────────────────────────────────────────────
     const config = { get: () => 'secret' } as any;
     const dbDown = new Error('timeout exceeded when trying to connect');
-    const failing = new JwtStrategy(config, { findById: async () => { throw dbDown; } } as any, { findSessionSubject: async () => { throw dbDown; } } as any);
+    const failing = new JwtStrategy(config, { findById: async () => { throw dbDown; } } as any, { findSessionSubject: async () => { throw dbDown; } } as any, {} as any);
     await assert.rejects(failing.validate({ sub: 1 } as any), (e: any) => e === dbDown, 'user lookup failure surfaces as itself, not 401');
     await assert.rejects(failing.validate({ sub: 1, principalType: 'client_portal' } as any), (e: any) => e === dbDown, 'client portal lookup failure surfaces as itself, not 401');
-    const missingClient = new JwtStrategy(config, { findById: async () => { throw new NotFoundException('Client portal user not found'); } } as any, {} as any);
+    const missingClient = new JwtStrategy(config, { findById: async () => { throw new NotFoundException('Client portal user not found'); } } as any, {} as any, {} as any);
     await assert.rejects(missingClient.validate({ sub: 1, principalType: 'client_portal' } as any), (e: any) => e instanceof UnauthorizedException);
     // PassportStrategy registers every instance it constructs as THE 'jwt' strategy; put the app's back.
     // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -4,7 +4,8 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from './types/jwt-payload.type';
 import { ClientPortalUserService } from '../client-portal-user/client-portal-user.service';
-import { UserStatus } from '../user/entities/user.entity';
+import { UserRole, UserStatus } from '../user/entities/user.entity';
+import { AdminMfaService } from './admin-mfa.service';
 import { AccountRecoveryService } from './account-recovery.service';
 import { mustVerifyEmail } from './auth.service';
 
@@ -25,6 +26,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     config: ConfigService,
     private readonly clientPortalUserService: ClientPortalUserService,
     private readonly accountRecoveryService: AccountRecoveryService,
+    private readonly adminMfa: AdminMfaService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -33,7 +35,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: JwtPayload & { iat?: number }): Promise<JwtPayload> {
+  async validate(payload: JwtPayload & { iat?: number; purpose?: unknown }): Promise<JwtPayload> {
+    // A single-purpose token (two-step challenge or enrolment) is never a session. Those are signed with their own
+    // derived keys and so do not verify here at all; this refuses one regardless.
+    if (payload.purpose !== undefined) throw new UnauthorizedException('Authentication required');
+
     if (payload.principalType === 'client_portal') {
       const clientUser = await this.clientPortalUserService.findById(payload.sub).catch(absentIfNotFound);
       if (!clientUser || !clientUser.isActive) {
@@ -62,6 +68,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (resetAt && typeof payload.iat === 'number' && payload.iat < Math.floor(resetAt.getTime() / 1000)) {
       throw new UnauthorizedException('Session is no longer valid');
     }
+
+    // Platform Admin two-step verification (no other role is touched): an enrolled admin's token must carry the `mfa`
+    // claim, and with PLATFORM_ADMIN_MFA_REQUIRED on an unenrolled admin holds no usable session.
+    if (user.role === UserRole.ADMIN) await this.adminMfa.assertSessionAllowed(user, payload);
 
     return {
       sub: user.id,

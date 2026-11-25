@@ -226,7 +226,7 @@ async function main() {
     const migrate = new DataSource({ ...base, entities: [], migrations: files.map((f) => path.join(migrationsDir, f)), dropSchema: true } as never);
     await migrate.initialize();
     const done = await migrate.runMigrations({ transaction: 'each' });
-    assert.equal(done[done.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
+    assert.equal(done[done.length - 1]?.name, 'AddPlatformAdminMfa1720900000024', 'the head is Migration 77 (AddPlatformAdminMfa, Platform Admin two-step verification; 76 = company verification)');
     console.log(`Generating: ${SITES} sites, ${DAYS} days`);
     await generate(migrate);
     await migrate.destroy();

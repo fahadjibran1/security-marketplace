@@ -81,7 +81,7 @@ async function main() {
   assert.ok(applied.some((m) => m.name === 'AddAccountLifecycleAndVerificationTokens1720900000007'), 'Migration 61 applied');
   assert.ok(applied.some((m) => m.name === 'AddGuardComplianceChecks1720900000008'), 'Migration 62 applied');
   assert.ok(applied.some((m) => m.name === 'AddComplianceLapseAlerts1720900000009'), 'Migration 63 applied');
-  assert.equal(applied[applied.length - 1]?.name, 'AddCompanyVerification1720900000023', 'the head is Migration 76 (AddCompanyVerification, SEC-PUBLIC-03; 75 = Patrol Monitor indexes)');
+  assert.equal(applied[applied.length - 1]?.name, 'AddPlatformAdminMfa1720900000024', 'the head is Migration 77 (AddPlatformAdminMfa, Platform Admin two-step verification; 76 = company verification)');
 
   const { User, UserRole, UserStatus } = await import('../src/user/entities/user.entity');
   const { GuardProfile } = await import('../src/guard-profile/entities/guard-profile.entity');

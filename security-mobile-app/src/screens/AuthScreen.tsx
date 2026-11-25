@@ -1,7 +1,9 @@
 ﻿import { useCallback, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { clientLogin, formatApiErrorMessage, isEmailVerificationRequired, isRegistrationPending, login, register, requestPasswordReset, resendVerificationEmail } from '../services/api';
+import { ApiError, clientLogin, formatApiErrorMessage, isEmailVerificationRequired, isRegistrationPending, login, register, requestPasswordReset, resendVerificationEmail, verifyAdminMfa, type LoginSecondStep } from '../services/api';
 import { AuthSession, AppRole } from '../types/models';
+import { adminMfaErrorMessage, isAdminMfaChallenge, isAdminMfaEnrollmentRequired, normaliseTotpCode, totpCodeError } from '../navigation/admin-mfa';
+import { AdminMfaEnrolment } from '../components/admin/AdminMfaEnrolment';
 import { brand, colors, control, radii, spacing, typography } from '../theme';
 
 interface AuthScreenProps {
@@ -65,6 +67,9 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   // Set when sign-in was refused only because the address is unverified: offers a fresh link.
   const [needsVerification, setNeedsVerification] = useState(false);
+  // Platform Admin two-step verification: the password was right, and the server asked for a code (or enrolment).
+  const [secondStep, setSecondStep] = useState<LoginSecondStep | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
   const isDesktopWeb = width >= 980;
 
   function switchMode(next: AuthMode) {
@@ -72,6 +77,31 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
     setErrorMessage(null);
     setInfoMessage(null);
     setNeedsVerification(false);
+    setSecondStep(null);
+    setMfaCode('');
+  }
+
+  async function handleVerifyCode() {
+    if (!secondStep || !isAdminMfaChallenge(secondStep)) return;
+    const problem = totpCodeError(mfaCode);
+    if (problem) { setErrorMessage(problem); return; }
+    try {
+      setSubmitting(true);
+      setErrorMessage(null);
+      const session = await verifyAdminMfa(secondStep.challengeToken, normaliseTotpCode(mfaCode));
+      setSecondStep(null);
+      setMfaCode('');
+      await onLoggedIn(session);
+    } catch (error) {
+      setMfaCode('');
+      const expired = error instanceof ApiError && (error.body as { code?: string } | null)?.code === 'MFA_CHALLENGE_INVALID';
+      if (expired) setSecondStep(null);
+      setErrorMessage(error instanceof ApiError && error.status !== 429
+        ? adminMfaErrorMessage(error.body, 'We could not verify that code.')
+        : formatApiErrorMessage(error, 'We could not verify that code. Try again.'));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function handleResendVerification() {
@@ -114,6 +144,13 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
             address: role === 'company' ? address : undefined,
             contactDetails: role === 'company' ? contactDetails : undefined,
           });
+      if (isAdminMfaChallenge(session) || isAdminMfaEnrollmentRequired(session)) {
+        // No session yet: ask for the authenticator code, or set the authenticator up first.
+        setPassword('');
+        setMfaCode('');
+        setSecondStep(session);
+        return;
+      }
       if (isRegistrationPending(session)) {
         // No session until the address is verified: send the person to sign in once they have.
         setMode('login');
@@ -168,6 +205,29 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
               </Pressable>
             ) : null}
 
+            {secondStep && isAdminMfaEnrollmentRequired(secondStep) ? (
+              <View style={styles.fields} testID="admin-mfa-enrolment-step">
+                <Text style={styles.sectionLabel}>Set up two-step verification to continue</Text>
+                <Text style={styles.subtitle}>S4 requires an authenticator app for Platform Admin accounts. This takes about a minute.</Text>
+                <AdminMfaEnrolment
+                  enrollmentToken={secondStep.enrollmentToken}
+                  onEnrolled={async (session) => { setSecondStep(null); await onLoggedIn(session); }}
+                  onCancel={() => switchMode('login')}
+                />
+              </View>
+            ) : secondStep && isAdminMfaChallenge(secondStep) ? (
+              <View style={styles.fields} testID="admin-mfa-code-step">
+                <Text style={styles.sectionLabel}>Two-step verification</Text>
+                <Text style={styles.subtitle}>Enter the 6-digit code from your authenticator app.</Text>
+                <LabeledInput label="Authentication code" keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" maxLength={9} editable={!submitting} value={mfaCode} onChangeText={setMfaCode} placeholder="123456" onInputFocus={!isDesktopWeb ? bumpScrollForKeyboard : undefined} onSubmitEditing={handleVerifyCode} />
+                <Pressable accessibilityRole="button" style={({ pressed }: { pressed: boolean }) => [styles.primaryButton, pressed && styles.primaryButtonPressed, submitting && styles.primaryButtonDisabled]} onPress={handleVerifyCode} disabled={submitting}>
+                  <Text style={styles.primaryButtonText}>{submitting ? 'Verifying…' : 'Verify and sign in'}</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" onPress={() => switchMode('login')} style={styles.linkButton}>
+                  <Text style={styles.linkText}>Back to sign in</Text>
+                </Pressable>
+              </View>
+            ) : <>
             <View style={styles.modeRow}>
               {(['login', 'register'] as AuthMode[]).map((value) => (
                 <Pressable key={value} accessibilityRole="button" style={[styles.segment, mode === value && styles.segmentActive]} onPress={() => switchMode(value)}>
@@ -232,6 +292,7 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
                 <Text style={styles.linkText}>Back to sign in</Text>
               </Pressable>
             ) : null}
+            </>}
           </View>
         </View>
       </ScrollView>

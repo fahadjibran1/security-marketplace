@@ -1,5 +1,6 @@
 import { AuthSession } from '../auth/entities/auth-session.entity';
 import { UserVerificationToken } from '../auth/entities/user-verification-token.entity';
+import { PlatformAdminMfa } from '../auth/entities/platform-admin-mfa.entity';
 import { AttendanceEvent } from '../attendance/entities/attendance.entity';
 import { Assignment } from '../assignment/entities/assignment.entity';
 import { Attachment } from '../attachment/entities/attachment.entity';
@@ -111,6 +112,8 @@ export const appEntities = [
   WelfareReminder,
   GuardNotificationDispatch,
   UserVerificationToken,
+  // Platform Admin two-step verification (Migration 77)
+  PlatformAdminMfa,
   // Patrol Management (Migration 68)
   ...patrolEntities,
 ];

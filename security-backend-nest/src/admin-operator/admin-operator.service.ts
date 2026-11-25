@@ -2,12 +2,13 @@ import * as bcrypt from 'bcrypt';
 import { isEmail } from 'class-validator';
 import { DataSource, EntityManager } from 'typeorm';
 import { AuditLog } from '../audit-log/entities/audit-log.entity';
+import { PlatformAdminMfa } from '../auth/entities/platform-admin-mfa.entity';
 import { User, UserRole, UserStatus } from '../user/entities/user.entity';
 
 const ADMIN_OPERATOR_LOCK_ID = 534_401_400;
 const MIN_PASSWORD_LENGTH = 12;
 
-export type OperatorResult = { userId: number; email: string };
+export type OperatorResult = { userId: number; email: string; mfaReset?: boolean };
 
 export function normalizeOperatorEmail(value: string | undefined): string {
   const email = value?.trim().toLowerCase() ?? '';
@@ -86,8 +87,14 @@ export class AdminOperatorService {
       target.passwordHash = await bcrypt.hash(password, 10);
       target.status = UserStatus.ACTIVE;
       await users.save(target);
-      await this.audit(manager, 'platform_admin.recovered', target, beforeStatus, UserStatus.ACTIVE);
-      return { userId: target.id, email: target.email };
+      // Recovery is how a Platform Admin who lost the authenticator device regains access: two-step verification is
+      // reset with the password (re-enrol after signing in; with PLATFORM_ADMIN_MFA_REQUIRED on, sign-in leads
+      // straight to enrolment). A started, unconfirmed enrolment is discarded too.
+      const mfa = await manager.getRepository(PlatformAdminMfa).delete({ userId: target.id });
+      await this.audit(manager, 'platform_admin.recovered', target, beforeStatus, UserStatus.ACTIVE, {
+        mfaReset: (mfa.affected ?? 0) > 0,
+      });
+      return { userId: target.id, email: target.email, mfaReset: (mfa.affected ?? 0) > 0 };
     });
   }
 
@@ -101,6 +108,7 @@ export class AdminOperatorService {
     admin: User,
     beforeStatus: UserStatus | null,
     afterStatus: UserStatus,
+    detail: Record<string, unknown> = {},
   ): Promise<void> {
     const audits = manager.getRepository(AuditLog);
     await audits.save(audits.create({
@@ -117,6 +125,7 @@ export class AdminOperatorService {
         status: afterStatus,
         actorType: 'SYSTEM_OPERATOR',
         method: 'trusted_cli',
+        ...detail,
       },
     }));
   }

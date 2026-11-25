@@ -26,6 +26,11 @@ import { AccountRecoveryController } from './account-recovery.controller';
 import { AccountController } from './account.controller';
 import { EmailModule } from '../email/email.module';
 import { AUTH_THROTTLERS } from './auth-throttler.guard';
+import { PlatformAdminMfa } from './entities/platform-admin-mfa.entity';
+import { AdminMfaService } from './admin-mfa.service';
+import { AdminMfaController } from './admin-mfa.controller';
+import { AdminMfaChallengeGuard, AdminMfaEnrolmentGuard } from './admin-mfa.guards';
+import { EncryptionService } from '../guard-personnel/encryption.service';
 
 @Module({
   imports: [
@@ -38,7 +43,7 @@ import { AUTH_THROTTLERS } from './auth-throttler.guard';
     AuditLogModule,
     EmailModule,
     PassportModule,
-    TypeOrmModule.forFeature([CompanyMembership, AuthSession, UserVerificationToken]),
+    TypeOrmModule.forFeature([CompanyMembership, AuthSession, UserVerificationToken, PlatformAdminMfa]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -48,7 +53,7 @@ import { AUTH_THROTTLERS } from './auth-throttler.guard';
       })
     })
   ],
-  controllers: [AuthController, AccountRecoveryController, AccountController, ClientIpDiagnosticsController],
+  controllers: [AuthController, AccountRecoveryController, AccountController, ClientIpDiagnosticsController, AdminMfaController],
   providers: [
     AuthService,
     AuthSessionService,
@@ -58,6 +63,12 @@ import { AUTH_THROTTLERS } from './auth-throttler.guard';
     JwtStrategy,
     AuthThrottlerGuard,
     LoginAttemptLimiter,
+    // Platform Admin two-step verification. EncryptionService is the personnel-data AES-256-GCM helper
+    // (GUARD_DATA_ENCRYPTION_KEY), which GuardPersonnelModule already requires at boot.
+    AdminMfaService,
+    AdminMfaChallengeGuard,
+    AdminMfaEnrolmentGuard,
+    EncryptionService,
   ],
   // ThrottlerModule and the proxy-aware guard are exported so other modules can rate-limit their own
   // bearer-secret endpoints against the same configuration instead of registering a second throttler

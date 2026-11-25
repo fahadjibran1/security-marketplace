@@ -6,7 +6,10 @@ import { AuditLog } from '../src/audit-log/entities/audit-log.entity';
 import { AuthService } from '../src/auth/auth.service';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
 
-type Store = { users: User[]; audits: AuditLog[]; nextUserId: number; queries: string[] };
+import { PlatformAdminMfa } from '../src/auth/entities/platform-admin-mfa.entity';
+
+/** mfaUserIds: admins holding a platform_admin_mfa row (two-step verification enrolled or started). */
+type Store = { users: User[]; audits: AuditLog[]; nextUserId: number; queries: string[]; mfaUserIds: number[] };
 
 function cloneStore(source: Store): Store {
   return {
@@ -14,6 +17,17 @@ function cloneStore(source: Store): Store {
     audits: source.audits.map((value) => ({ ...value } as AuditLog)),
     nextUserId: source.nextUserId,
     queries: [...source.queries],
+    mfaUserIds: [...source.mfaUserIds],
+  };
+}
+
+function mfaRepo(store: Store) {
+  return {
+    delete: async ({ userId }: { userId: number }) => {
+      const before = store.mfaUserIds.length;
+      store.mfaUserIds = store.mfaUserIds.filter((id) => id !== userId);
+      return { affected: before - store.mfaUserIds.length, raw: [] };
+    },
   };
 }
 
@@ -23,7 +37,7 @@ function fakeDataSource(store: Store) {
       const pending = cloneStore(store);
       const manager = {
         query: async (sql: string) => { pending.queries.push(sql); return []; },
-        getRepository: (entity: unknown) => entity === User ? userRepo(pending) : auditRepo(pending),
+        getRepository: (entity: unknown) => entity === User ? userRepo(pending) : entity === PlatformAdminMfa ? mfaRepo(pending) : auditRepo(pending),
       };
       const result = await work(manager);
       Object.assign(store, pending);
@@ -69,7 +83,7 @@ function auditRepo(store: Store) {
 
 const strongPassword = 'RC1-Strong!Pass9';
 const recoveryPassword = 'RC1-Recover!Pass8';
-const makeStore = (): Store => ({ users: [], audits: [], nextUserId: 1, queries: [] });
+const makeStore = (): Store => ({ users: [], audits: [], nextUserId: 1, queries: [], mfaUserIds: [] });
 
 async function main() {
   let passed = 0;
@@ -96,9 +110,11 @@ async function main() {
       { findByEmail: async () => store.users[0], updateLastLogin: async () => undefined } as any,
       { sign: () => 'redacted-test-token' } as any,
       {} as any, {} as any, {} as any, {} as any, { create: async () => { throw new Error('auth session not expected in this test'); } } as any, {} as any, {} as any, { sendVerification: async () => undefined } as any,
+      // Two-step verification not enrolled and not required: the password sign-in issues the session as before.
+      { loginGate: async () => null } as any,
     );
     const result = await auth.login({ email: store.users[0].email, password: strongPassword });
-    equal(result.user.role, UserRole.ADMIN);
+    equal('user' in result ? result.user.role : null, UserRole.ADMIN, 'a session, not a two-step challenge');
   });
   await test('second bootstrap attempt is rejected and leaves one admin', async () => {
     await rejects(() => service.bootstrap('second@example.test', strongPassword), /already exists/);
@@ -144,6 +160,15 @@ async function main() {
     equal(store.users[0].status, UserStatus.ACTIVE);
     ok(store.users[0].passwordHash !== oldHash);
     ok(await bcrypt.compare(recoveryPassword, store.users[0].passwordHash));
+  });
+  await test('recovery resets two-step verification (lost authenticator device)', async () => {
+    store.mfaUserIds.push(store.users[0].id, 999);
+    const result = await service.recover(store.users[0].email, recoveryPassword, true);
+    equal(result.mfaReset, true);
+    deepStrictEqual(store.mfaUserIds, [999], 'only the recovered admin is reset');
+    const audit = [...store.audits].reverse().find((entry) => entry.action === 'platform_admin.recovered');
+    equal((audit?.afterData as any).mfaReset, true);
+    equal((await service.recover(store.users[0].email, recoveryPassword, true)).mfaReset, false, 'nothing to reset the second time');
   });
   await test('recovery action is audited without secrets', () => {
     const audit = store.audits.find((entry) => entry.action === 'platform_admin.recovered');

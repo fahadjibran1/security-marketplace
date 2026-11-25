@@ -91,6 +91,8 @@ function buildHarness() {
     { transaction: async (work: (manager: unknown) => Promise<unknown>) => work({}) } as any,
     { find: async () => [], findOne: async () => null } as any,
     { sendVerification: async () => { calls.verificationsSent += 1; } } as any,
+    // Platform Admin two-step verification: never reached by these flows (an empty object would throw if it were).
+    {} as any,
   );
 
   return { service, calls };
@@ -116,7 +118,8 @@ function buildJwtStrategyHarness(user: any | null, clientUser: any | null = null
   const clientPortalUserService = {
     findById: async () => clientUser ?? Promise.reject(new NotFoundException('Client portal user not found')),
   };
-  return new JwtStrategy(config as any, clientPortalUserService as any, accountRecoveryService as any);
+  // No Platform Admin here: the two-step verification check is never reached (an empty object would throw if it were).
+  return new JwtStrategy(config as any, clientPortalUserService as any, accountRecoveryService as any, {} as any);
 }
 
 async function expectUnauthorized(work: () => Promise<unknown>) {
