@@ -78,6 +78,7 @@ jobs:
       RESOLUTION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_resolution
       GATE2_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_gate2
       GATE2_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_gate2_migration
+      ACCOUNT_DELETION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_account_deletion
       M62_MIGRATION_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_m62_migration
       COMPLIANCE_CHECKS_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_compliance_checks
       BOOK_ON_COMPLIANCE_DATABASE_URL: postgresql://s4:s4_test_password@localhost:5432/s4_book_on_compliance
@@ -246,6 +247,11 @@ jobs:
 
       - name: Create Migration 61 rehearsal database
         run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_gate2_migration;"
+
+      # Public release: the Platform Admin account-deletion queue (owner, client portal, platform admin and emailed
+      # requests). Boots the application against its own migration-built schema, which it drops.
+      - name: Create account deletion requests certification database
+        run: PGPASSWORD=s4_test_password psql -h localhost -U s4 -d s4_release_gate -c "CREATE DATABASE s4_account_deletion;"
 
       # Compliance (Migrations 62/63), alert security, pool diagnostics and performance specs. Each drops or
       # migrates its own schema, so each gets its own database; without them these specs cannot run in CI.

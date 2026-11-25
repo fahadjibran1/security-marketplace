@@ -182,7 +182,7 @@ function companyPrivacyExemptions(ids: ProbeIds): Record<string, Exemption> {
     HealthController: { kind: 'exception', reason: 'liveness/readiness only; no account or tenant data', evidence: ['deploy-manifest.spec.ts', 'http-security-headers.spec.ts'] },
     AuthController: { kind: 'exception', reason: "self-service: register/login/refresh/logout and GET /auth/me return only the caller's own account", evidence: ['auth-session.spec.ts', 'gate2-account-lifecycle.spec.ts'] },
     AccountRecoveryController: { kind: 'exception', reason: 'self-service password reset and email verification; responses carry no account data', evidence: ['gate2-account-lifecycle.spec.ts'] },
-    AccountController: { kind: 'exception', reason: "self-service deletion of the caller's own account", evidence: ['gate2-account-lifecycle.spec.ts'] },
+    AccountController: { kind: 'exception', reason: "self-service deletion of the caller's own account (status and request carry only the caller's own deletion state)", evidence: ['gate2-account-lifecycle.spec.ts', 'account-deletion-requests.spec.ts'] },
     // ── Guard data by design, to permitted roles only ──
     GuardPersonnelController: {
       kind: 'exception',

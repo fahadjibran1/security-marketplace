@@ -222,7 +222,9 @@ export function companyVerificationBanner(
         reason,
         canRequestReconsideration: canManageCompany,
         canCorrectDetails: canManageCompany,
-        supportGuidance: 'If you think this is a mistake, contact S4 support.',
+        // The address is S4_SUPPORT_EMAIL (src/constants/s4Links.ts), written out because this module is loaded on its
+        // own by company-verification-ui.spec; s4-links.spec checks the two agree.
+        supportGuidance: 'If you think this is a mistake, contact S4 support at info@vesoft.co.uk.',
       };
     case 'suspended':
       return {
@@ -236,7 +238,7 @@ export function companyVerificationBanner(
         reason,
         canRequestReconsideration: false,
         canCorrectDetails: false,
-        supportGuidance: 'Only S4 can lift a suspension. Contact S4 support to discuss it.',
+        supportGuidance: 'Only S4 can lift a suspension. Contact S4 support at info@vesoft.co.uk to discuss it.',
       };
     default:
       return null;

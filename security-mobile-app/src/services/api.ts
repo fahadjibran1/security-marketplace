@@ -575,7 +575,7 @@ export interface AccountDeletionStatus {
   deletionRequestedAt: string | null;
   deletionCompletedAt: string | null;
   selfServiceAvailable: boolean;
-  blocker: 'platform_admin' | 'company_owner' | null;
+  blocker: 'platform_admin' | 'company_owner' | 'client_portal' | null;
   blockerMessage: string | null;
 }
 
@@ -583,6 +583,7 @@ export function getAccountDeletionStatus() {
   return request<AccountDeletionStatus>('/account/deletion');
 }
 
+/** Records the request. A client portal login uses the same call; S4 completes it from the admin queue. */
 export function requestAccountDeletion() {
   return request<AccountDeletionStatus>('/account/deletion/request', { method: 'POST', body: '{}' });
 }
@@ -592,6 +593,51 @@ export function confirmAccountDeletion(password: string) {
     method: 'POST',
     body: JSON.stringify({ password }),
   });
+}
+
+// ── Account deletion requests (Platform Admin) ─────────────────────────────────────────────────────
+
+export type DeletionRequestAccountType = 'guard' | 'company_owner' | 'company_member' | 'platform_admin' | 'client_user' | 'client_portal';
+
+export interface AdminDeletionRequest {
+  kind: 'user' | 'client_portal_user';
+  id: number;
+  email: string;
+  name: string | null;
+  role: string;
+  accountType: DeletionRequestAccountType;
+  requestedAt: string;
+  requestedBy: 'self' | 'admin';
+  companies: Array<{ id: number; name: string; verificationStatus: string; shiftsInProgress: number }>;
+  client: { id: number; name: string; companyId: number | null; companyName: string | null } | null;
+  blockedCode: string | null;
+  blockedReason: string | null;
+}
+
+export interface AdminDeletionCompletion {
+  deleted: boolean;
+  kind: 'user' | 'client_portal_user';
+  id: number;
+  accountType: DeletionRequestAccountType;
+  deletionCompletedAt: string;
+  closedCompanyIds: number[];
+}
+
+export function listAccountDeletionRequests() {
+  return request<AdminDeletionRequest[]>('/admin/account-deletion-requests');
+}
+
+/** Record a deletion request received by email, for the account registered with `email`. */
+export function recordAccountDeletionRequest(email: string) {
+  return request<{ alreadyRequested: boolean; request: AdminDeletionRequest }>('/admin/account-deletion-requests', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim() }),
+  });
+}
+
+export function completeAccountDeletionRequest(kind: AdminDeletionRequest['kind'], id: number) {
+  const path = kind === 'client_portal_user' ? 'client-portal-users' : 'users';
+  return request<AdminDeletionCompletion>(`/admin/account-deletion-requests/${path}/${id}/complete`, { method: 'POST', body: '{}' });
 }
 
 /**

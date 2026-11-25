@@ -62,6 +62,6 @@ import { AUTH_THROTTLERS } from './auth-throttler.guard';
   // ThrottlerModule and the proxy-aware guard are exported so other modules can rate-limit their own
   // bearer-secret endpoints against the same configuration instead of registering a second throttler
   // with separate storage.
-  exports: [AuthService, AuthSessionService, ThrottlerModule, AuthThrottlerGuard, LoginAttemptLimiter]
+  exports: [AuthService, AuthSessionService, AccountDeletionService, ThrottlerModule, AuthThrottlerGuard, LoginAttemptLimiter]
 })
 export class AuthModule {}

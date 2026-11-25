@@ -9,8 +9,11 @@ import { JwtPayload } from './types/jwt-payload.type';
 import { CompanyCapability, CompanyCapabilityRequired } from '../company/company-capability';
 
 /**
- * The signed-in account holder's own account. Only an S4 user account may use these — a client portal
- * login is a different principal with its own table and is not deleted through here.
+ * The signed-in account holder's own account.
+ *
+ * A client portal login is a different principal with its own table. It may see its deletion status and ask for
+ * deletion (the request is recorded for S4 support, who completes it from the Platform Admin queue), but it can never
+ * complete deletion itself here.
  */
 @Controller('account')
 @UseGuards(JwtAuthGuard)
@@ -26,6 +29,7 @@ export class AccountController {
 
   @Get('deletion')
   deletionStatus(@CurrentUser() user: JwtPayload) {
+    if (user.principalType === 'client_portal') return this.deletion.clientPortalStatus(user.sub);
     return this.deletion.status(this.userId(user));
   }
 
@@ -33,6 +37,7 @@ export class AccountController {
   @HttpCode(200)
   @CompanyCapabilityRequired(CompanyCapability.ACCOUNT)
   requestDeletion(@CurrentUser() user: JwtPayload) {
+    if (user.principalType === 'client_portal') return this.deletion.requestClientPortalDeletion(user.sub);
     return this.deletion.requestDeletion(this.userId(user));
   }
 

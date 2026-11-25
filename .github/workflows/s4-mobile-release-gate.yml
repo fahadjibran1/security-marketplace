@@ -318,6 +318,12 @@ jobs:
       - name: Verify account lifecycle journeys
         run: npm run test:account-lifecycle
 
+      # Public release: the S4 Privacy, Terms, Support and Account Deletion links on every account and sign-in surface
+      # (one constants module, one support address), the client portal deletion request, and the Platform Admin
+      # account-deletion queue rendered with the real reconciler.
+      - name: Verify S4 links and account deletion requests
+        run: npm run test:account-deletion-ui
+
       # UAT FIX 03: an incident is not a safety alert. Both production defects were correctly-rendered
       # buttons wired to the wrong handler, which no source grep and no bundle export could see — so
       # this step presses the real buttons on the real queue and asserts WHICH callback fires.

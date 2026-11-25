@@ -228,7 +228,8 @@ export class AuthService {
     const clientUser = await this.clientPortalUserService.findByEmail(dto.email);
     if (!clientUser) throw new UnauthorizedException('Invalid credentials');
 
-    const valid = await bcrypt.compare(dto.password, clientUser.passwordHash);
+    // A deleted client portal login carries the deletion sentinel, which no password can match.
+    const valid = isUsablePasswordHash(clientUser.passwordHash) && (await bcrypt.compare(dto.password, clientUser.passwordHash));
     if (!valid) throw new UnauthorizedException('Invalid credentials');
     if (!clientUser.isActive) {
       throw new ForbiddenException('Client portal access is disabled for this account');

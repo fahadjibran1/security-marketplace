@@ -14,6 +14,7 @@ import {
   CompanyMembershipStatus,
 } from '../company-membership/company-membership-types';
 import { GuardProfile } from '../guard-profile/entities/guard-profile.entity';
+import { ClientPortalUser } from '../client-portal-user/entities/client-portal-user.entity';
 import { User, UserRole, UserStatus } from '../user/entities/user.entity';
 import { AuthSessionService } from './auth-session.service';
 import { DELETED_ACCOUNT_PASSWORD_SENTINEL, isUsablePasswordHash } from './password-policy';
@@ -46,14 +47,39 @@ export const RETENTION_POLICY_CONTROLLED_RECORDS = [
   'company_relationships_and_memberships',
 ] as const;
 
-export type DeletionBlocker = 'platform_admin' | 'company_owner';
+/**
+ * The S4 contact published on https://www.sfour.co.uk/account-deletion for deletion requests. The S4 website also lists
+ * support@sfour.co.uk for general help; the deletion page's address is used here because this is a deletion journey.
+ * Keep in step with security-mobile-app/src/constants/s4Links.ts.
+ */
+export const S4_SUPPORT_EMAIL = 'info@vesoft.co.uk';
 
-const BLOCKER_MESSAGES: Record<DeletionBlocker, string> = {
+/** A unique, undeliverable address for an anonymised client-portal login (its own table, its own id space). */
+export function deletedClientPortalEmail(clientPortalUserId: number): string {
+  return `deleted-client-${clientPortalUserId}@deleted.invalid`;
+}
+
+export type DeletionBlocker = 'platform_admin' | 'company_owner' | 'client_portal';
+
+export const BLOCKER_MESSAGES: Record<DeletionBlocker, string> = {
   platform_admin:
-    'A Platform Admin account cannot be deleted from the app. Contact S4 support to arrange it.',
+    `A Platform Admin account cannot be deleted from the app. Your request is recorded and another S4 Platform Admin completes it. Contact S4 support at ${S4_SUPPORT_EMAIL} to arrange it.`,
   company_owner:
-    'This account owns a company workspace on S4, so deleting it would leave the company without an owner. Contact S4 support so the workspace can be transferred or closed first.',
+    `This account owns a company workspace on S4, so deleting it would leave the company without an owner. Your request is recorded: S4 support closes the company workspace first and then completes the deletion. Contact S4 support at ${S4_SUPPORT_EMAIL} with any questions.`,
+  client_portal:
+    `Your request is recorded. S4 support completes the deletion of client portal accounts. Records the security company keeps about its client are the company's own. Contact S4 support at ${S4_SUPPORT_EMAIL} with any questions.`,
 };
+
+/** The completion audit's afterData: ids and facts only, never the former email, name or phone. */
+export function deletionCompletedAuditData(role: UserRole | string, completedAt: Date) {
+  return {
+    role,
+    status: UserStatus.INACTIVE,
+    deletionCompletedAt: completedAt.toISOString(),
+    sessionsRevoked: true,
+    retainedRecordCategories: [...RETENTION_POLICY_CONTROLLED_RECORDS],
+  };
+}
 
 /**
  * Account deletion by anonymisation in place.
@@ -157,35 +183,7 @@ export class AccountDeletionService {
       const valid = isUsablePasswordHash(user.passwordHash) && (await bcrypt.compare(password, user.passwordHash));
       if (!valid) throw new BadRequestException('The password you entered is not correct.');
 
-      const completedAt = new Date();
-      await users.update(
-        { id: userId },
-        {
-          email: deletedAccountEmail(userId),
-          firstName: null,
-          lastName: null,
-          phone: null,
-          passwordHash: DELETED_ACCOUNT_PASSWORD_SENTINEL,
-          status: UserStatus.INACTIVE,
-          deletionCompletedAt: completedAt,
-        },
-      );
-
-      // Guard profile: the phone number is a direct contact identifier with no evidential role, and
-      // location sharing must stop. The column is NOT NULL, so it is blanked rather than nulled. The
-      // name and SIA licence number stay: they attribute operational evidence (shifts, Log Book,
-      // incidents) and their retention is an owner/legal decision.
-      await manager
-        .getRepository(GuardProfile)
-        .createQueryBuilder()
-        .update(GuardProfile)
-        .set({ phone: '', locationSharingEnabled: false })
-        .where('"userId" = :userId', { userId })
-        .execute();
-
-      await this.tokens.invalidateOutstanding(userId, null, manager);
-      await this.sessions.revokeAllForUser(userId, 'account_deleted', manager);
-      await removePushDevicesForUser(manager, userId);
+      const completedAt = await this.anonymiseUserInTransaction(manager, userId);
       return { alreadyDeleted: false, completedAt, role: user.role };
     });
 
@@ -196,13 +194,7 @@ export class AccountDeletionService {
         entityType: 'user',
         entityId: userId,
         // No former email, name or phone: this entry must not re-create what was just removed.
-        afterData: {
-          role: result.role,
-          status: UserStatus.INACTIVE,
-          deletionCompletedAt: result.completedAt.toISOString(),
-          sessionsRevoked: true,
-          retainedRecordCategories: [...RETENTION_POLICY_CONTROLLED_RECORDS],
-        },
+        afterData: deletionCompletedAuditData(result.role, result.completedAt),
       });
     }
 
@@ -211,5 +203,91 @@ export class AccountDeletionService {
       deletionCompletedAt: result.completedAt.toISOString(),
       message: 'Your S4 account has been deleted and you have been signed out.',
     };
+  }
+
+  /**
+   * The anonymisation itself, shared by self-service confirmation and a Platform Admin completing a recorded request
+   * (AccountDeletionAdminService). The caller holds the user row locked in `manager`'s transaction and has already
+   * decided the account may be deleted. Returns the completion time it recorded.
+   */
+  async anonymiseUserInTransaction(manager: EntityManager, userId: number): Promise<Date> {
+    const completedAt = new Date();
+    await manager.getRepository(User).update(
+      { id: userId },
+      {
+        email: deletedAccountEmail(userId),
+        firstName: null,
+        lastName: null,
+        phone: null,
+        passwordHash: DELETED_ACCOUNT_PASSWORD_SENTINEL,
+        status: UserStatus.INACTIVE,
+        deletionCompletedAt: completedAt,
+      },
+    );
+
+    // Guard profile: the phone number is a direct contact identifier with no evidential role, and
+    // location sharing must stop. The column is NOT NULL, so it is blanked rather than nulled. The
+    // name and SIA licence number stay: they attribute operational evidence (shifts, Log Book,
+    // incidents) and their retention is an owner/legal decision.
+    await manager
+      .getRepository(GuardProfile)
+      .createQueryBuilder()
+      .update(GuardProfile)
+      .set({ phone: '', locationSharingEnabled: false })
+      .where('"userId" = :userId', { userId })
+      .execute();
+
+    await this.tokens.invalidateOutstanding(userId, null, manager);
+    await this.sessions.revokeAllForUser(userId, 'account_deleted', manager);
+    await removePushDevicesForUser(manager, userId);
+    return completedAt;
+  }
+
+  // ── client portal logins (client_portal_users) ──────────────────────────────────────────────────────────
+  //
+  // A client portal login lives in its own table, which has no deletion columns. Rather than add a migration, its
+  // request is the audit entry itself: `account.deletion_requested` (by the user) or `account.deletion_requested_by_admin`
+  // (recorded by S4 from an emailed request), entityType `client_portal_user`. Completion anonymises the row
+  // (deletedClientPortalEmail), which is what marks it done.
+
+  /** When this client portal login first asked (or was recorded as asking) for deletion, or null. */
+  async clientPortalRequestedAt(clientPortalUserId: number, manager: EntityManager = this.dataSource.manager): Promise<Date | null> {
+    const rows: Array<{ at: Date | null }> = await manager.query(
+      `SELECT MIN("createdAt") AS at FROM audit_logs
+        WHERE "entityType" = 'client_portal_user' AND "entityId" = $1
+          AND action IN ('account.deletion_requested', 'account.deletion_requested_by_admin')`,
+      [clientPortalUserId],
+    );
+    return rows[0]?.at ? new Date(rows[0].at) : null;
+  }
+
+  async clientPortalStatus(clientPortalUserId: number) {
+    const login = await this.dataSource.getRepository(ClientPortalUser).findOne({ where: { id: clientPortalUserId } });
+    if (!login) throw new NotFoundException('Client portal user not found');
+    const requestedAt = await this.clientPortalRequestedAt(clientPortalUserId);
+    return {
+      deletionRequestedAt: requestedAt?.toISOString() ?? null,
+      deletionCompletedAt: null,
+      selfServiceAvailable: false,
+      blocker: 'client_portal' as DeletionBlocker,
+      blockerMessage: BLOCKER_MESSAGES.client_portal,
+    };
+  }
+
+  /** A client portal user asks for deletion. Recorded once; S4 completes it from the admin queue. */
+  async requestClientPortalDeletion(clientPortalUserId: number) {
+    const login = await this.dataSource.getRepository(ClientPortalUser).findOne({ where: { id: clientPortalUserId } });
+    if (!login) throw new NotFoundException('Client portal user not found');
+    if (!(await this.clientPortalRequestedAt(clientPortalUserId))) {
+      await this.auditLog.log({
+        company: login.client?.company?.id ? { id: login.client.company.id } : null,
+        user: null,
+        action: 'account.deletion_requested',
+        entityType: 'client_portal_user',
+        entityId: clientPortalUserId,
+        afterData: { clientId: login.client?.id ?? null, requestedAt: new Date().toISOString() },
+      });
+    }
+    return this.clientPortalStatus(clientPortalUserId);
   }
 }

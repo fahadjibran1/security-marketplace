@@ -6,6 +6,7 @@ import { CompanyVerificationModule } from './company/verification/company-verifi
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
+import { AccountDeletionAdminModule } from './auth/account-deletion-admin.module';
 import { CompanyModule } from './company/company.module';
 import { GuardProfileModule } from './guard-profile/guard-profile.module';
 import { JobModule } from './job/job.module';
@@ -133,6 +134,7 @@ import { PatrolModule } from './patrol/patrol.module';
     OperationsModule,
     PatrolModule,
     CompanyVerificationModule,
+    AccountDeletionAdminModule,
   ],
   controllers: [HealthController],
   providers: [

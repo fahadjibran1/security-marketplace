@@ -24,3 +24,21 @@ export const ACCOUNT_DELETION_COPY = {
   cancel: 'Cancel',
   deletedNotice: 'Your S4 account has been deleted and you have been signed out.',
 } as const;
+
+/**
+ * A client portal login cannot delete itself: it asks, and S4 support completes the request from the Platform Admin
+ * queue. Records the security company holds about its client (sites, service records, approvals) are the company's.
+ */
+export const CLIENT_ACCOUNT_DELETION_COPY = {
+  entryTitle: 'Request account deletion',
+  entryCaption: 'Ask S4 to delete your client portal login.',
+  explainTitle: 'Request deletion of your client portal login',
+  explainPoints: [
+    'S4 support will delete your client portal login. Once it is done you will no longer be able to sign in.',
+    'Your name and email address will be removed from the login.',
+    'Records the security company keeps about your organisation — sites, service records, reports, approvals and invoices — belong to that company and are not deleted.',
+  ],
+  explainContinue: 'Send request',
+  cancel: 'Cancel',
+  requestedTitle: 'We have recorded your request',
+} as const;
