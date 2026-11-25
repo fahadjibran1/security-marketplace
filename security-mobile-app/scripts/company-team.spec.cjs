@@ -247,7 +247,7 @@ test('TEAM-UI-06-TEAM-WORKSPACE', async () => {
   await act(async () => { revokeButtons[0].props.onPress(); });
   assert.ok(!calls.some((c) => c[0] === 'revoke'), 'nothing happens before confirmation');
   assert.match(text(renderer), /Revoke Casey Control's access\?/);
-  assert.match(text(renderer), /signed out of S4 on every device/);
+  assert.match(text(renderer), /lose access to your company at once, and a team account will be signed out of S4 on every device/);
   await press(renderer, 'Revoke access');
   assert.deepEqual(calls.find((c) => c[0] === 'revoke'), ['revoke', 5]);
 

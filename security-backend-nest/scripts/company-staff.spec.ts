@@ -567,6 +567,27 @@ async function main() {
       assert.equal((await one(`SELECT "isEmailVerified" FROM users WHERE email = 'stalpha.valid@example.invalid'`)).isEmailVerified, true);
     });
 
+    // ── STAFF-15 ───────────────────────────────────────────────────────────────────────────────────────
+    await test('STAFF-15-REVOKE-ENDS-COMPANY-ACCESS-BUT-NOT-AN-INDEPENDENT-ACCOUNT', async () => {
+      // A person whose S4 account is not a company-staff account (here a Guard login) but who holds a membership:
+      // revocation must end their access to THIS company at once without signing them out of their own account.
+      const email = 'stalpha.indep@example.invalid';
+      const userId = await user(email, 'guard', 'Indep');
+      await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'operations','active')`, [userId, A.id]);
+      const session = await login(email, PASSWORD, true);
+      assert.equal(session.status, 201, msg(session));
+      const before = Number((await one(`SELECT count(*)::int n FROM auth_sessions WHERE "userId" = $1 AND "revokedAt" IS NULL`, [userId])).n);
+      assert.ok(before >= 1);
+      const r = await api('POST', `/company-staff/members/${userId}/revoke`, A.token);
+      assert.equal(r.status, 200, msg(r));
+      assert.equal((await one(`SELECT status::text AS s FROM company_memberships WHERE "userId" = $1 AND "companyId" = $2`, [userId, A.id])).s, 'suspended');
+      const after = Number((await one(`SELECT count(*)::int n FROM auth_sessions WHERE "userId" = $1 AND "revokedAt" IS NULL`, [userId])).n);
+      assert.equal(after, before, 'their own sessions are untouched');
+      assert.ok(!(await recipientsByRule(A.id)).includes(userId), 'not an Emergency recipient');
+      const audit = await one(`SELECT "afterData" FROM audit_logs WHERE action = 'company.staff.access_revoked' AND "afterData"::jsonb ->> 'userId' = $1`, [String(userId)]);
+      assert.equal(audit.afterData.sessionsRevoked, false);
+    });
+
     console.log(JSON.stringify({ event: 'company_staff_tests_passed', tests: passed, emergencyModule: !!emergency }));
   } finally {
     await app.close();

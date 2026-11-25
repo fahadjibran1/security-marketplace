@@ -44,7 +44,7 @@ export const INVALID_STAFF_INVITATION =
  */
 export const STAFF_INVITATION_ACCOUNT_EXISTS =
   'An S4 account already uses this email address, so this invitation cannot create a new one. ' +
-  'Ask the person who invited you to contact S4 support.';
+  'Ask the person who invited you to contact S4 support at support@sfour.co.uk.';
 
 export const ROLE_LABELS: Record<CompanyMembershipRole, string> = {
   [CompanyMembershipRole.OWNER]: 'Owner',
@@ -387,7 +387,20 @@ export class CompanyStaffService {
       membership.canAmendShifts = false;
       membership.canManageAttendance = false;
       await manager.getRepository(CompanyMembership).save(membership);
-      await this.authSessionService.revokeAllForUser(targetUserId, 'company_access_revoked', manager);
+      // Access to THIS company ends now regardless of sessions (every company route re-resolves the membership).
+      // Sessions are ended only for a company-staff account with no other active membership, so a person who also
+      // works for another company, or holds any other kind of S4 account, keeps that independent access.
+      const [other] = await manager.query(
+        `SELECT u.role,
+                EXISTS (SELECT 1 FROM company_memberships o
+                         WHERE o."userId" = u.id AND o.status = 'active' AND o."companyId" <> $2) AS "otherActive"
+           FROM users u WHERE u.id = $1`,
+        [targetUserId, actor.company.id],
+      );
+      const sessionsRevoked = other?.role === 'company_staff' && !other?.otherActive;
+      if (sessionsRevoked) {
+        await this.authSessionService.revokeAllForUser(targetUserId, 'company_access_revoked', manager);
+      }
       await this.auditLogService.logInTransaction(manager, {
         company: { id: actor.company.id },
         user: { id: actor.userId },
@@ -395,7 +408,7 @@ export class CompanyStaffService {
         entityType: 'company_membership',
         entityId: membership.id,
         beforeData: before,
-        afterData: { userId: targetUserId, status: membership.status, sessionsRevoked: true },
+        afterData: { userId: targetUserId, status: membership.status, sessionsRevoked },
         ipAddress: meta?.ipAddress ?? null,
         userAgent: meta?.userAgent ?? null,
       });

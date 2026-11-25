@@ -109,4 +109,4 @@ export function validateInvite(email: string, role: TeamRole | null, grantable: 
 }
 
 export const REVOKE_CONFIRMATION =
-  'They will lose access to your company at once and be signed out of S4 on every device. They will stop receiving Emergency alerts. This cannot be undone here: to give them access again, contact S4 support.';
+  'They will lose access to your company at once, and a team account will be signed out of S4 on every device. They will stop receiving Emergency alerts. This cannot be undone here: to give them access again, contact S4 support at support@sfour.co.uk.';
