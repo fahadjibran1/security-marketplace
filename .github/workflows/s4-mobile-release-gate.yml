@@ -68,6 +68,13 @@ jobs:
       - name: Verify auth token refresh
         run: npm run test:auth-refresh
 
+      # Production, 24 Nov: two portal tabs renewed with the same refresh token and reuse detection (rightly)
+      # revoked the session in every tab. Two real api.ts instances share a fake localStorage, Web Locks and
+      # BroadcastChannel: one renewal across tabs, the rotated token adopted, a stale token never sent, logout
+      # propagated, the lease fallback, and the native path unchanged.
+      - name: Verify multi-tab session renewal (web)
+        run: npm run test:multitab-refresh
+
       - name: Verify session expiry handling
         run: npm run test:session-expiry
 

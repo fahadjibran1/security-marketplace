@@ -7,12 +7,13 @@ import { GuardDashboardScreen } from './src/screens/GuardDashboardScreen';
 import { AdminDashboardScreen } from './src/screens/AdminDashboardScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { StatePanel } from './src/components/StatePanel';
-import { clearLocalSession, fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
+import { adoptSharedSession, clearLocalSession, fetchCurrentUser, getRefreshToken, logout, restoreSession, setRefreshCoordination, setRefreshPersister, setUnauthorizedHandler } from './src/services/api';
+import { browserCrossTabEnv, installCrossTabAuth } from './src/services/crossTabAuth';
 import { AppErrorBoundary } from './src/components/AppErrorBoundary';
 import { AccountLinkScreen } from './src/screens/AccountLinkScreen';
 import { AccountLink, takeAccountLink } from './src/components/account/accountLinks';
 import { installAttendanceLocationTransport } from './src/services/attendanceTransport';
-import { clearStoredSession, loadStoredSession, persistSession } from './src/services/session';
+import { SESSION_KEY, clearStoredSession, isStoredRefreshToken, loadStoredSession, persistSession } from './src/services/session';
 import { AuthSession } from './src/types/models';
 import { getAppSurface } from './src/navigation/role-routing';
 import { brand, colors, control, radii, spacing, typography } from './src/theme';
@@ -59,6 +60,17 @@ export default function App() {
     void configureWelfareNotifications();
     return subscribeWelfareResponses((intent) => setWelfareTap({ intent, sessionLive: true }));
   }, []);
+  // Web portal: tabs share the stored session, so renewals are serialised across tabs and a rotation or sign-out in one
+  // tab reaches the others (services/crossTabAuth). Installed before the session restore below. Never on native.
+  useEffect(() => {
+    if (!IS_WEB) return undefined;
+    return installCrossTabAuth({
+      api: { setRefreshCoordination, adoptSharedSession, clearLocalSession, getRefreshToken },
+      env: browserCrossTabEnv(),
+      sessionKey: SESSION_KEY,
+      onSignedOutElsewhere: (message) => { setSession(null); setAuthNotice(message); },
+    });
+  }, []);
   useEffect(() => {
     async function bootstrapSession() {
       try {
@@ -78,7 +90,8 @@ export default function App() {
           fetchCurrentUser().then(freshUser => {
             setSession({ accessToken: '', user: freshUser });
             const rotated = getRefreshToken();
-            if (rotated) persistSession({ user: freshUser, refreshToken: rotated });
+            // Web: skip the write if another tab has rotated or ended the shared session meanwhile.
+            if (rotated && (!IS_WEB || isStoredRefreshToken(rotated))) persistSession({ user: freshUser, refreshToken: rotated });
           }).catch(() => { /* offline — keep the cached user; the 401 path handles a dead session */ });
         }
       }
