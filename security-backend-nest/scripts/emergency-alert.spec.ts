@@ -27,6 +27,8 @@
  *          acknowledged; a new key is a new Emergency; another Guard's key matches nothing; a malformed key is ignored
  *   EM-18  owed-push recovery: an OPEN Emergency whose push was owed and never attempted is pushed once, between 60 s
  *          and 10 min old; too new, stale, acknowledged, already claimed or kill-switched ones are left alone
+ *   EM-19  another company's alert and a nonexistent alert id get the SAME 404 on acknowledge, resolve and
+ *          resolution-reasons (no existence oracle); the alert is untouched and its own company still acts
  *
  * Needs EMERGENCY_SPEC_DATABASE_URL pointing at a DISPOSABLE local database — it drops the schema.
  */
@@ -327,8 +329,8 @@ async function main() {
         assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, A.staff[role].token)).status, 403, role);
         assert.equal((await api('PATCH', `/alerts/${r.body.id}/close`, A.staff[role].token, { resolutionReason: 'false_activation', resolutionNote: 'x' })).status, 403, role);
       }
-      assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, B.staff.control_room.token)).status, 400, 'another company');
-      assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, B.token)).status, 400, 'another company owner');
+      assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, B.staff.control_room.token)).status, 404, 'another company');
+      assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, B.token)).status, 404, 'another company owner');
       assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, g9.token)).status, 403, 'a Guard');
       assert.equal((await one(`SELECT status::text s FROM safety_alerts WHERE id = $1`, [r.body.id])).s, 'open', 'untouched');
       // Owner account and Admin membership keep acting.
@@ -553,6 +555,33 @@ async function main() {
       (push as any).enabled = () => false;
       try { assert.equal(await push.recoverOwedPushes(), 0); } finally { (push as any).enabled = EmergencyPushService.prototype.enabled.bind(push); }
       assert.equal(await count(`SELECT count(*)::int n FROM audit_logs WHERE "entityId" = $1 AND action = 'safety_alert.emergency_push_recovery'`, [off]), 0);
+    });
+
+    await test('EM-19-ANOTHER-COMPANYS-ALERT-AND-A-NONEXISTENT-ID-ARE-INDISTINGUISHABLE', async () => {
+      const g19 = await guard('emg19', A);
+      const s19 = await shift(A, g19);
+      const r = await emergency(g19, s19);
+      const [{ max }] = await q(`SELECT COALESCE(MAX(id), 0) + 1000 AS max FROM safety_alerts`);
+      const missing = Number(max);
+      const close = { resolutionReason: 'false_activation', resolutionNote: 'x' };
+      for (const [who, token] of [['another company owner', B.token], ['another company Control Room', B.staff.control_room.token]] as const) {
+        const calls: Array<[string, string, any?]> = [['PATCH', 'ack'], ['PATCH', 'close', close], ['GET', 'resolution-reasons']];
+        for (const [method, action, body] of calls) {
+          const real = await api(method, `/alerts/${r.body.id}/${action}`, token, body);
+          const none = await api(method, `/alerts/${missing}/${action}`, token, body);
+          assert.equal(real.status, 404, `${who} ${action}: another company's alert is not found`);
+          assert.equal(none.status, 404, `${who} ${action}: a nonexistent alert is not found`);
+          assert.deepEqual(real.body, none.body, `${who} ${action}: identical response`);
+        }
+      }
+      const row = await one(`SELECT status::text s, "acknowledgedByUserId" a, "closedByUserId" c FROM safety_alerts WHERE id = $1`, [r.body.id]);
+      assert.deepEqual([row.s, row.a, row.c], ['open', null, null], 'untouched by the other company');
+      // An in-company role without alerts.manage is still refused with 403 (its own company's alert is not hidden from it).
+      assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, A.staff.finance.token)).status, 403);
+      // The alert's own company keeps every right.
+      assert.equal((await api('GET', `/alerts/${r.body.id}/resolution-reasons`, A.staff.control_room.token)).status, 200);
+      assert.equal((await api('PATCH', `/alerts/${r.body.id}/ack`, A.staff.control_room.token)).status, 200);
+      assert.equal((await api('PATCH', `/alerts/${r.body.id}/close`, A.token, { resolutionReason: 'false_activation', resolutionNote: 'Pressed by mistake; Guard confirmed by phone.' })).status, 200);
     });
   } finally {
     await app.close();

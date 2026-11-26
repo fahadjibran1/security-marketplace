@@ -403,8 +403,8 @@ async function main() {
     expect(await api('GET', `/patrols/exceptions/${ex}/investigation`, bTok), 404, 'PATROL_NOT_FOUND');
     expect(await api('POST', `/patrols/exceptions/${ex}/acknowledge`, bTok), 404, 'PATROL_NOT_FOUND');
     expect(await api('POST', `/patrols/exceptions/${ex}/resolve`, bTok, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 404, 'PATROL_NOT_FOUND');
-    expect(await api('PATCH', `/alerts/${al}/ack`, bTok), 400, undefined, 'another company\'s alert');
-    expect(await api('PATCH', `/alerts/${al}/close`, bTok, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 400);
+    expect(await api('PATCH', `/alerts/${al}/ack`, bTok), 404, undefined, 'another company\'s alert');
+    expect(await api('PATCH', `/alerts/${al}/close`, bTok, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 404);
     assert.equal(((await api('GET', '/alerts/company', bTok)).body as any[]).some((a) => a.id === al), false);
   });
 

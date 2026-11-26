@@ -374,7 +374,7 @@ async function main() {
       // A Guard cannot act on it.
       assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, dedupeGuard.token)).status, 403);
       // Another company cannot act on it.
-      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, B.token)).status, 400);
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, B.token)).status, 404);
 
       const ack = await api('PATCH', `/alerts/${alert.id}/ack`, A.token);
       assert.equal(ack.status, 200, JSON.stringify(ack.body));
@@ -536,8 +536,8 @@ async function main() {
         assert.equal(r.status, 403, `${role}: ${r.status}`);
       }
       const otherHr = await memberToken(B, 'hr_compliance');
-      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, otherHr)).status, 400, 'another company’s HR cannot act');
-      assert.equal((await api('PATCH', `/alerts/${alert.id}/close`, otherHr, { resolutionReason: 'other', resolutionNote: 'x' })).status, 400);
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, otherHr)).status, 404, 'another company’s HR cannot act');
+      assert.equal((await api('PATCH', `/alerts/${alert.id}/close`, otherHr, { resolutionReason: 'other', resolutionNote: 'x' })).status, 404);
       assert.equal((await api('PATCH', `/alerts/${alert.id}/ack`, g.token)).status, 403, 'nor the Guard');
       assert.equal((await one(`SELECT status::text AS s FROM safety_alerts WHERE id = $1`, [alert.id])).s, 'open');
     });

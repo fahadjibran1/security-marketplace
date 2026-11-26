@@ -249,7 +249,7 @@ async function main() {
       const [panic] = await q(`SELECT id FROM safety_alerts WHERE "shiftId" = $1 AND type::text = 'panic' ORDER BY id LIMIT 1`, [s1]);
       const [lapse] = await q(`SELECT id FROM safety_alerts WHERE "shiftId" = $1 AND type::text = 'compliance_lapse' ORDER BY id LIMIT 1`, [s1]);
       assert.equal((await api('PATCH', `/alerts/${panic.id}/ack`, g1.token)).status, 403, 'a Guard cannot acknowledge');
-      assert.equal((await api('PATCH', `/alerts/${panic.id}/ack`, B.token)).status, 400, 'another company cannot');
+      assert.equal((await api('PATCH', `/alerts/${panic.id}/ack`, B.token)).status, 404, 'another company cannot');
       assert.equal((await api('PATCH', `/alerts/${panic.id}/ack`, A.hr)).status, 403, 'HR / Compliance cannot act on an SOS');
       assert.equal((await api('PATCH', `/alerts/${lapse.id}/ack`, A.hr)).status, 200, 'but can on a compliance alert');
       assert.equal((await api('PATCH', `/alerts/${panic.id}/ack`, A.token)).status, 200, 'the owner can act on an SOS');

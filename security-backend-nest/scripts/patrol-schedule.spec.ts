@@ -835,7 +835,7 @@ async function main() {
       await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id IN ($1, $2)`, [other.id, s01.co.id]);
       const otherOwner = await login(other.ownerEmail);
       expect(await api('POST', `/patrols/exceptions/${target.id}/resolve`, otherOwner, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 404, 'PATROL_NOT_FOUND');
-      expect(await api('PATCH', `/alerts/${target.safetyAlertId}/ack`, otherOwner), 400, undefined, 'another company\'s alert');
+      expect(await api('PATCH', `/alerts/${target.safetyAlertId}/ack`, otherOwner), 404, undefined, 'another company\'s alert');
       await focus(s01.co.id);
       expect(await api('POST', `/patrols/exceptions/${target.id}/resolve`, members.operations, { resolutionReason: 'not_a_reason', resolutionNote: 'x' }), 400);
       expect(await api('POST', `/patrols/exceptions/${target.id}/acknowledge`, members.operations), 200);
@@ -975,7 +975,7 @@ async function main() {
       await q(`INSERT INTO company_memberships ("userId","companyId","membershipRole",status) VALUES ($1,$2,'control_room','active')`, [otherCr, other.id]);
       await q(`UPDATE companies SET "patrolsEnabled" = true WHERE id IN ($1, $2)`, [other.id, s.co.id]);
       const otherTok = await login(otherCrEmail);
-      expect(await api('PATCH', `/alerts/${a3.id}/ack`, otherTok), 400, undefined, 'another company\'s alert');
+      expect(await api('PATCH', `/alerts/${a3.id}/ack`, otherTok), 404, undefined, 'another company\'s alert');
       expect(await api('POST', `/patrols/exceptions/${e3.id}/acknowledge`, otherTok), 404, 'PATROL_NOT_FOUND');
       expect(await api('POST', `/patrols/exceptions/${e3.id}/resolve`, otherTok, { resolutionReason: 'guard_contacted', resolutionNote: 'x' }), 404, 'PATROL_NOT_FOUND');
       assert.equal((await one(`SELECT status FROM patrol_exceptions WHERE id = $1`, [e3.id])).status, 'open');

@@ -1330,14 +1330,20 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * A company-scoped alert lookup. Another company's alert and a nonexistent id get the SAME 404, so a company user cannot
+   * learn whether an alert id exists outside their own company.
+   */
+  private async loadCompanyAlert(companyId: number, alertId: number): Promise<SafetyAlert> {
+    const alert = await this.loadAlert(alertId);
+    if (!alert || alert.company.id !== companyId) throw new NotFoundException('Safety alert not found');
+    return alert;
+  }
+
   async acknowledgeForCompany(userId: number, alertId: number): Promise<SafetyAlert> {
     const actor = await this.alertActor(userId);
 
-    const alert = await this.loadAlert(alertId);
-    if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== actor.companyId) {
-      throw new BadRequestException('This alert does not belong to the current company');
-    }
+    const alert = await this.loadCompanyAlert(actor.companyId, alertId);
     if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
     return this.acknowledge(alert.id, userId, actor.owner ? actor.company : alert.company);
@@ -1373,11 +1379,7 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
   ): Promise<SafetyAlert> {
     const actor = await this.alertActor(userId);
 
-    const alert = await this.loadAlert(alertId);
-    if (!alert) throw new NotFoundException('Safety alert not found');
-    if (alert.company.id !== actor.companyId) {
-      throw new BadRequestException('This alert does not belong to the current company');
-    }
+    const alert = await this.loadCompanyAlert(actor.companyId, alertId);
     if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
 
     return this.close(alert.id, userId, actor.owner ? actor.company : alert.company, resolution);
@@ -1401,14 +1403,13 @@ export class SafetyAlertService implements OnModuleInit, OnModuleDestroy {
    * without the client re-deriving the rule.
    */
   async resolutionOptions(userId: number, alertId: number, asAdmin: boolean) {
-    const alert = await this.loadAlert(alertId);
-    if (!alert) throw new NotFoundException('Safety alert not found');
-
-    if (!asAdmin) {
+    let alert: SafetyAlert | null;
+    if (asAdmin) {
+      alert = await this.loadAlert(alertId);
+      if (!alert) throw new NotFoundException('Safety alert not found');
+    } else {
       const actor = await this.alertActor(userId);
-      if (alert.company.id !== actor.companyId) {
-        throw new BadRequestException('This alert does not belong to the current company');
-      }
+      alert = await this.loadCompanyAlert(actor.companyId, alertId);
       if (!actor.owner) this.assertMemberMayAct(actor.role, alert);
     }
 
