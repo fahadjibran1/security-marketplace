@@ -11,8 +11,9 @@ owner-approved one, it says **OWNER TO DECIDE**.
 
 **Source.** `security-backend-nest/src/**/entities/*.entity.ts` (67 tables), `security-backend-nest/src/auth/account-deletion*.ts`,
 `render.yaml`, `security-mobile-app/package.json`, `security-mobile-app/app.json`, `security-mobile-app/src/services/*`.
-Branch `feature/s4-rel-account-deletion` (base `release/s4-pilot-rc1` @ `a700c20`), 24 Nov 2026. Production configuration
-values were not read; where the code allows a choice, the entry says so.
+Written against the S4 1.3.0 release candidate, which combines Emergency alerts (S4-EM-01), Platform Admin two-step
+verification, company staff management and this account-deletion work (verified on the integration branch, 26 Nov 2026).
+Production configuration values were not read; where the code allows a choice, the entry says so.
 
 ---
 
@@ -23,12 +24,21 @@ values were not read; where the code allows a choice, the entry says so.
 | **Render** (API hosting) | All API traffic and every record below passes through the API process. | `render.yaml` (`security-marketplace-api`, plan starter) | Deployment |
 | **PostgreSQL database** at `DATABASE_URL` | Every table below. The code does not name the database provider. | `src/database/*`, `render.yaml` (`DATABASE_URL`, value not in repo) | `DATABASE_URL` — **owner to confirm the provider and region** |
 | **Vercel** (web app at `https://app.sfour.co.uk`) | Serves the web build of the app; the browser then calls the API directly. The web session is held in the browser's `localStorage` (`src/services/session.ts`). | `S4_WEB_APP_URL` in `render.yaml`; web build of `security-mobile-app` | Deployment |
-| **Resend** (`https://api.resend.com/emails`) | Recipient email address and message body for three kinds of email: `password_reset`, `email_verification` (both carry a one-time link), `shift_amendment_confirmation`. | `src/email/transactional-email.service.ts`, `src/auth/account-recovery.service.ts`, `src/shift-amendment/shift-amendment.service.ts` | `RESEND_API_KEY` + `EMAIL_FROM`; without them nothing is sent |
-| **Expo push service** (`https://exp.host`), which delivers through **Google FCM** (Android) and **Apple APNs** (iOS) | Push token, notification title and body (Welfare Check reminders and Guard notifications, e.g. shift amendments). Bodies can name a site. (Company-user push for Emergency alerts is in the separate, unmerged EM-01 branch, not this base.) | `src/welfare-push/expo-push.client.ts`, `welfare-push/*`, `guard-notification/*`; mobile `src/services/pushNotifications.ts`, `expo-notifications`; Android `GOOGLE_SERVICES_JSON` in `app.config.js` | Push enabled per company/feature in code |
+| **Resend** (`https://api.resend.com/emails`) | Recipient email address and message body for four kinds of email: `password_reset`, `email_verification`, `staff_invitation` (each carries a one-time link; a staff invitation also names the company and role), `shift_amendment_confirmation`. | `src/email/transactional-email.service.ts`, `src/auth/account-recovery.service.ts`, `src/company-staff/company-staff.service.ts`, `src/shift-amendment/shift-amendment.service.ts` | `RESEND_API_KEY` + `EMAIL_FROM`; without them nothing is sent |
+| **Expo push service** (`https://exp.host`), which delivers through **Google FCM** (Android) and **Apple APNs** (iOS) | Push token, notification title and body: Welfare Check reminders and Guard notifications (e.g. shift amendments) to Guards; Emergency alerts to the company owner and Admin / Operations / Control Room members who registered a phone (title and body name the Guard and the site; Android channel "Guard Emergencies"). Bodies can name a site. | `src/welfare-push/expo-push.client.ts`, `welfare-push/*`, `guard-notification/*`, `src/safety-alert/emergency-push.service.ts`; mobile `src/services/pushNotifications.ts`, `expo-notifications`; Android `GOOGLE_SERVICES_JSON` in `app.config.js` | Push enabled per company/feature in code |
 | **S3-compatible object store — compliance / screening evidence** | Uploaded documents (right-to-work, SIA, ID, address and other screening evidence). Private bucket, short-lived signed URLs (`EVIDENCE_SIGNED_URL_TTL_SECONDS`, 180 s in `render.yaml`). | `src/compliance/evidence-storage.service.ts` | `EVIDENCE_STORAGE_*` — **owner to confirm provider/region** |
 | **S3-compatible object store — patrol photo evidence** (code comments name Cloudflare R2 as the expected provider) | Patrol checkpoint photos and evidence export ZIPs. Separate bucket and keys. | `src/patrol/evidence/patrol-object-store.ts` | `PATROL_EVIDENCE_STORAGE_*` — **owner to confirm provider/region** |
 | **Sentry** (`@sentry/node`) | Server error reports. | `src/monitoring/monitoring.ts` | Only if `SENTRY_DSN` is set. `render.yaml` deliberately does not declare it, so it is **off** unless added by hand. |
 | Mobile app | No analytics, crash-reporting or advertising SDK in `security-mobile-app/package.json`. | — | — |
+
+**Device permissions requested by the app** (`security-mobile-app/app.json`):
+
+| Permission | When it is asked for (code / prompt text) | Data it produces |
+|---|---|---|
+| Location, while in use only (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`; iOS when-in-use) | Book On at a site that requires location verification. Background location is blocked (`ACCESS_BACKGROUND_LOCATION`, foreground-service permissions are in `blockedPermissions`; background location disabled in the plugin). | One reading stored on `attendance_events`; patrol scan coordinates on patrol records |
+| Camera (`CAMERA`) | Patrols only: scanning checkpoint QR labels and taking patrol photos inside S4. Photos are not saved to the photo library and the image file carries no location (the coordinates are stored separately on the patrol record). Microphone and audio recording are blocked. | Patrol photos (object store) |
+| Notifications | After sign-in on a phone (Android 13+ / iOS prompt) | Expo push token in `push_devices` |
+| Not requested | Contacts, photo library / storage (read/write blocked), microphone, overlay windows, Face ID | — |
 
 On the device, the app stores the session (refresh/access token) in `expo-secure-store` (native) or `localStorage` (web),
 and queues patrol scans/photos for upload in `expo-sqlite` and the app's file system until they sync.
@@ -50,7 +60,8 @@ hash used for duplicate detection. "On self-deletion / admin completion" refers 
 | `client_portal_users` | `email`, `firstName`, `lastName`, `passwordHash`, `role`, `lastLoginAt` | Created by a company for its client | Client portal sign-in | Row kept (admin completion). `email` → `deleted-client-{id}@deleted.invalid`; names → empty; password → sentinel; `isActive` false; `lastLoginAt` null | **OWNER TO DECIDE** |
 | `auth_sessions` | `tokenHash` (SHA-256 of refresh token), `familyId`, timestamps | Mobile sign-in | Renewable mobile sessions | The deleted user's own sessions revoked (`revokedAt`, reason `account_deleted`). Other users' sessions (e.g. a deleted owner's team) are not touched. Rows kept. | **OWNER TO DECIDE** |
 | `user_verification_tokens` | `tokenHash`, `purpose`, timestamps | Password reset, email verification | One-time emailed links | Outstanding ones invalidated. Rows kept. | **OWNER TO DECIDE** |
-| `push_devices` | `token` (Expo push token), `platform`, `appVersion`, `lastSeenAt` | Guard app sign-in (`src/services/pushNotifications.ts`) | Sending push notifications | **Rows deleted** for the deleted user | n/a after deletion; otherwise **OWNER TO DECIDE** |
+| `platform_admin_mfa` | `totpSecretEncrypted`, `pendingSecretEncrypted` (authenticator secret, AES-256-GCM with `GUARD_DATA_ENCRYPTION_KEY`), `enabledAt`, `lastUsedStep` | Platform Admin enrolment (Account security) | Two-step sign-in for Platform Admins only | **Kept unchanged** by anonymisation (the account can no longer sign in). `npm run admin:recover` resets it; the row would go only with the user row (FK cascade), which no path deletes | **OWNER TO DECIDE** |
+| `push_devices` | `token` (Expo push token), `platform`, `appVersion`, `lastSeenAt` | App sign-in on a phone: Guards, and company users who receive Emergency alerts (`src/services/pushNotifications.ts`) | Sending push notifications | **Rows deleted** for the deleted user | n/a after deletion; otherwise **OWNER TO DECIDE** |
 | `audit_logs` | `user` (id), `company`, `action`, `beforeData`/`afterData` (JSON, may contain names/emails written by other actions, e.g. client portal user create/update, invitations), `ipAddress`, `userAgent` (set by some routes, e.g. Guard invitation acceptance) | Server, on audited actions | Security and change history | **Not changed.** Deletion audit entries themselves carry ids only (`account.deletion_*`), plus, for an emailed request, the administrator's verification method and short verification note. Earlier entries that contain the person's email or name stay as they are. | **OWNER TO DECIDE** |
 
 ### 2.2 Guard profile and personnel records (company-held)
@@ -86,7 +97,7 @@ hash used for duplicate detection. "On self-deletion / admin completion" refers 
 | Table | Personal data | Collected where | Use in code | On owner deletion (admin completion) | Retention |
 |---|---|---|---|---|---|
 | `companies` | `name`, `companyNumber`, `address`, `contactDetails` (free text, may hold a person's contact), owner `userId`, `verificationNote` | Company registration | Company identity, S4 verification | **Not changed by the deletion.** The owner's deletion is refused until every owned company is already closed (`suspended` or `rejected`) by a separate Company verification decision, or ownership has been transferred | **OWNER TO DECIDE** |
-| `company_memberships`, `company_invitations` (`email`) | Team membership, inviter ids; invitee email | Company portal | Team access | **Not changed by the deletion**: memberships keep their status and members' sessions are not ended. Members' own accounts are not deleted. | **OWNER TO DECIDE** |
+| `company_memberships`, `company_invitations` (`email`, `tokenDigest` = SHA-256 of the emailed token, which itself is never stored) | Team membership and role, inviter ids; invitee email | Company portal **Team** (staff invitations) | Team access; who receives Emergency alerts | **Not changed by the deletion**: memberships keep their status and members' sessions are not ended. Members' own accounts are not deleted. | **OWNER TO DECIDE** |
 | `clients` | `contactName`, `contactEmail`, `contactPhone`, `contactDetails` | Company portal | The company's client records | **Kept unchanged** — company data, also when a client portal login is deleted | **OWNER TO DECIDE** |
 | `sites` | `address`, `contactDetails`, `clientName`, site coordinates, `specialInstructions` | Company portal | Operations | **Kept unchanged** | **OWNER TO DECIDE** |
 
