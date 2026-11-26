@@ -9,6 +9,7 @@ import {
 } from '../../services/api';
 import { colors, control, radii, spacing, typography } from '../../theme';
 import { ACCOUNT_DELETION_COPY as COPY } from './accountDeletionCopy';
+import { S4LegalLinks } from './S4LegalLinks';
 
 type Step = 'idle' | 'explain' | 'blocked' | 'confirm';
 
@@ -28,7 +29,8 @@ interface AccountSettingsPanelProps {
  *
  * Two server steps, matching the lifecycle: Continue records the request (deletionRequestedAt), and the
  * password confirmation completes it. An account that cannot delete itself (a company owner, a Platform
- * Admin) is told why after Continue — the request is still recorded so support can act on it.
+ * Admin) is told why after Continue — the request is still recorded, and S4 completes it from the Platform Admin
+ * account-deletion queue. The S4 privacy, terms, support and account-deletion links close the panel.
  */
 export function AccountSettingsPanel({ email, onDeleted, leading }: AccountSettingsPanelProps) {
   const [step, setStep] = useState<Step>('idle');
@@ -167,6 +169,9 @@ export function AccountSettingsPanel({ email, onDeleted, leading }: AccountSetti
           </View>
         </View>
       ) : null}
+
+      <View style={styles.divider} />
+      <S4LegalLinks showSupportAddress testID="account-legal-links" />
     </View>
   );
 }

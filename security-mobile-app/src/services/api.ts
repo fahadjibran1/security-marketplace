@@ -674,7 +674,7 @@ export interface AccountDeletionStatus {
   deletionRequestedAt: string | null;
   deletionCompletedAt: string | null;
   selfServiceAvailable: boolean;
-  blocker: 'platform_admin' | 'company_owner' | null;
+  blocker: 'platform_admin' | 'company_owner' | 'client_portal' | null;
   blockerMessage: string | null;
 }
 
@@ -682,6 +682,7 @@ export function getAccountDeletionStatus() {
   return request<AccountDeletionStatus>('/account/deletion');
 }
 
+/** Records the request. A client portal login uses the same call; S4 completes it from the admin queue. */
 export function requestAccountDeletion() {
   return request<AccountDeletionStatus>('/account/deletion/request', { method: 'POST', body: '{}' });
 }
@@ -691,6 +692,86 @@ export function confirmAccountDeletion(password: string) {
     method: 'POST',
     body: JSON.stringify({ password }),
   });
+}
+
+// ── Account deletion requests (Platform Admin) ─────────────────────────────────────────────────────
+
+export type DeletionRequestAccountType = 'guard' | 'company_owner' | 'company_member' | 'platform_admin' | 'client_user' | 'client_portal';
+
+export interface AdminDeletionRequest {
+  kind: 'user' | 'client_portal_user';
+  id: number;
+  email: string;
+  name: string | null;
+  role: string;
+  accountType: DeletionRequestAccountType;
+  requestedAt: string;
+  requestedBy: 'self' | 'admin';
+  companies: Array<{ id: number; name: string; verificationStatus: string; closed: boolean; shiftsInProgress: number; futureShifts: number }>;
+  client: { id: number; name: string; companyId: number | null; companyName: string | null } | null;
+  blockedCode: string | null;
+  blockedReason: string | null;
+}
+
+/** One owned company in the pre-completion summary: ids and counts only. */
+export interface AdminDeletionCompanySummary {
+  companyId: number;
+  verificationStatus: string;
+  closed: boolean;
+  shiftsInProgress: number;
+  futureShifts: number;
+  timesheetsAwaitingApproval: number;
+  approvedTimesheetsNotPaid: number;
+  invoiceBatchesNotPaid: number;
+  payrollBatchesNotPaid: number;
+  clientWeeklyApprovalsOpen: number;
+  clientShiftDisputesOpen: number;
+}
+
+export interface AdminDeletionPreview {
+  kind: 'user';
+  userId: number;
+  accountType: DeletionRequestAccountType;
+  requestedVia: 'in_app' | 'admin_recorded';
+  identityConfirmationRequired: boolean;
+  companies: AdminDeletionCompanySummary[];
+  blockedCode: string | null;
+  canComplete: boolean;
+}
+
+export type DeletionVerificationMethod = 'request_from_registered_email' | 'confirmed_in_app_by_user' | 'other_verified';
+
+export interface AdminDeletionCompletion {
+  deleted: boolean;
+  kind: 'user' | 'client_portal_user';
+  id: number;
+  accountType: DeletionRequestAccountType;
+  deletionCompletedAt: string;
+  ownedCompanyIds: number[];
+}
+
+export function listAccountDeletionRequests() {
+  return request<AdminDeletionRequest[]>('/admin/account-deletion-requests');
+}
+
+/** The read-only summary shown before completing a user's request. */
+export function getAccountDeletionPreview(userId: number) {
+  return request<AdminDeletionPreview>(`/admin/account-deletion-requests/users/${userId}/preview`);
+}
+
+/** Record a deletion request received by email, for the account registered with `email`, with how it was verified. */
+export function recordAccountDeletionRequest(email: string, verificationMethod: DeletionVerificationMethod, verificationNote: string) {
+  return request<{ alreadyRequested: boolean; request: AdminDeletionRequest }>('/admin/account-deletion-requests', {
+    method: 'POST',
+    body: JSON.stringify({ email: email.trim(), verificationMethod, verificationNote: verificationNote.trim() }),
+  });
+}
+
+/** Complete a request. identityConfirmed is required (true) for a request recorded from an email. */
+export function completeAccountDeletionRequest(kind: AdminDeletionRequest['kind'], id: number, options: { identityConfirmed?: boolean } = {}) {
+  const path = kind === 'client_portal_user' ? 'client-portal-users' : 'users';
+  const body = options.identityConfirmed ? { identityConfirmed: true } : {};
+  return request<AdminDeletionCompletion>(`/admin/account-deletion-requests/${path}/${id}/complete`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 /**

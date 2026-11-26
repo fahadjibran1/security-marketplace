@@ -5,6 +5,7 @@ import { AuthSession, AppRole } from '../types/models';
 import { adminMfaErrorMessage, isAdminMfaChallenge, isAdminMfaEnrollmentRequired, normaliseTotpCode, totpCodeError } from '../navigation/admin-mfa';
 import { AdminMfaEnrolment } from '../components/admin/AdminMfaEnrolment';
 import { brand, colors, control, radii, spacing, typography } from '../theme';
+import { S4LegalLinks } from '../components/account/S4LegalLinks';
 
 interface AuthScreenProps {
   onLoggedIn: (session: AuthSession) => void | Promise<void>;
@@ -293,6 +294,9 @@ export function AuthScreen({ onLoggedIn, noticeMessage, onDismissNotice }: AuthS
               </Pressable>
             ) : null}
             </>}
+            <View style={styles.legalFooter}>
+              <S4LegalLinks testID="auth-legal-links" />
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -351,4 +355,5 @@ const styles = StyleSheet.create({
   primaryButtonPressed: { backgroundColor: colors.accentTeal },
   primaryButtonDisabled: { backgroundColor: colors.disabledSurface },
   primaryButtonText: { color: colors.textOnBrand, ...typography.bodyStrong },
+  legalFooter: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
 });

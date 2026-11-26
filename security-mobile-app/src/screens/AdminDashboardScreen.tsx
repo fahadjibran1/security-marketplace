@@ -16,7 +16,9 @@ import { formatScreeningDate, screeningDateToIso } from '../components/guard/scr
 import { colors } from '../theme';
 import { CompanyVerificationPanel } from '../components/admin/CompanyVerificationPanel';
 import { AdminSecurityPanel } from '../components/admin/AdminSecurityPanel';
-import { listCompanyVerification } from '../services/api';
+import { listAccountDeletionRequests, listCompanyVerification } from '../services/api';
+import { AccountDeletionRequestsPanel } from '../components/admin/AccountDeletionRequestsPanel';
+import { S4LegalLinks } from '../components/account/S4LegalLinks';
 
 // The reviewer workload. "Needs review" is the default: everything that can actually be progressed
 // right now, which is why it spans three derived buckets.
@@ -47,6 +49,8 @@ const loaders: Record<Exclude<AdminSection, 'overview'>, Loader> = {
   security: async () => [],
   // S4-CV-01: the verification page loads itself; the overview counts the companies waiting for a decision.
   verification: () => listCompanyVerification('pending_verification'),
+  // The deletion queue page loads itself; the overview counts the requests waiting.
+  accountDeletion: listAccountDeletionRequests,
   notifications: listCompanyNotifications,
   health: async () => [{ id: 'live', name: 'Liveness', ...(await getHealthLive()) }, { id: 'ready', name: 'Readiness', ...(await getHealthReady()) }],
 };
@@ -56,6 +60,7 @@ function displayRow(section: Exclude<AdminSection, 'overview'>, value: unknown, 
   const id = text(row.id, String(index + 1));
   switch (section) {
     case 'verification': return { id, title: text(row.name), detail: text(row.verificationStatus) };
+    case 'accountDeletion': return { id: `${text(row.kind)}-${id}`, title: text(row.email), detail: `${text(row.accountType)} · requested ${date(row.requestedAt)}` };
     case 'companies': return { id, title: text(row.name), detail: `Company no. ${text(row.companyNumber)} · ${text(row.address)}` };
     case 'guards': return { id, title: text(row.fullName), detail: `Account: ${text(row.user?.status, 'unknown')} · Profile: ${isGuardProfileComplete(row) ? 'Complete' : 'Incomplete'} · Vetting: company review required · Work eligibility: assessed per company`, status: `Account ${text(row.user?.status, 'unknown')}` };
     case 'sites': return { id, title: text(row.name), detail: `${text(row.address)} · ${text(row.company?.name, 'Company not linked')}`, status: text(row.status) };
@@ -118,11 +123,11 @@ export function AdminDashboardScreen() {
     setLoading(true); setError(null);
     try {
       if (section === 'overview') {
-        const keys: Exclude<AdminSection, 'overview'>[] = ['verification', 'companies', 'guards', 'sites', 'jobs', 'shifts', 'incidents', 'alerts', 'audit'];
+        const keys: Exclude<AdminSection, 'overview'>[] = ['verification', 'accountDeletion', 'companies', 'guards', 'sites', 'jobs', 'shifts', 'incidents', 'alerts', 'audit'];
         const results = await Promise.all(keys.map((key) => loaders[key]()));
         setOverview(keys.map((key, index) => ({ section: key, count: results[index].length })));
-      } else if (section === 'verification' || section === 'security') {
-        // CompanyVerificationPanel owns its own loading, filtering and decisions.
+      } else if (section === 'verification' || section === 'security' || section === 'accountDeletion') {
+        // CompanyVerificationPanel, AdminSecurityPanel and AccountDeletionRequestsPanel own their own loading and decisions.
         setRows([]);
       } else if (section === 'screening') {
         // The reviewer queue has its own compact endpoint and its own effect; never load the full
@@ -254,7 +259,7 @@ export function AdminDashboardScreen() {
 
   return <View style={[styles.shell, compact && styles.shellCompact]}>{imageViewer?<Modal transparent animationType="fade" onRequestClose={()=>setImageViewer(null)}><View style={styles.modalBackdrop}><View style={styles.imageModal}><Text style={styles.detailHeading}>{imageViewer.label}</Text><Image source={{uri:imageViewer.url}} resizeMode="contain" style={styles.evidenceImage}/><Text style={styles.rowDetail}>This short-lived private preview does not change verification state.</Text><Pressable style={styles.approveButton} onPress={()=>setImageViewer(null)}><Text style={styles.approveText}>Close preview</Text></Pressable></View></View></Modal>:null}{navigation}<ScrollView ref={contentScroll} style={styles.content} contentContainerStyle={styles.contentInner}>
     <View style={styles.headingRow}><View style={styles.headingCopy}><Text style={styles.title}>{current.label}</Text><Text style={styles.subtitle}>Global Platform Admin view · RC1 authorized capability</Text></View>{section !== 'verification' && section !== 'security' ? <Pressable style={styles.refreshButton} onPress={load} disabled={loading}><Text style={styles.refreshText}>{loading ? 'Loading…' : 'Refresh'}</Text></Pressable> : null}</View>
-    {section === 'verification' ? <CompanyVerificationPanel /> : section === 'security' ? <AdminSecurityPanel /> : <>
+    {section === 'verification' ? <CompanyVerificationPanel /> : section === 'security' ? <AdminSecurityPanel /> : section === 'accountDeletion' ? <AccountDeletionRequestsPanel /> : <>
     {section !== 'overview' && !(section === 'screening' && selected) ? <TextInput accessibilityLabel={section === 'screening' ? 'Search Guards' : 'Search current admin view'} value={query} onChangeText={setQuery} placeholder={section === 'screening' ? 'Search Guards…' : 'Search this view'} style={styles.search} /> : null}
     {section === 'screening' && !selected ? <>
       <View style={styles.grid}>
@@ -283,6 +288,7 @@ export function AdminDashboardScreen() {
     {error ? <View style={styles.errorBox}><Text style={styles.error}>{error}</Text><Pressable onPress={load}><Text style={styles.retry}>Retry</Text></Pressable></View> : null}
     {section === 'overview' && loading ? <Text style={styles.loading}>Loading Platform Admin overview…</Text> : null}
     {section === 'overview' && !error ? <View style={styles.grid}>{overview.map((metric) => { const item = ADMIN_NAV_ITEMS.find((entry) => entry.key === metric.section)!; return <Pressable key={metric.section} onPress={() => setSection(metric.section)} style={styles.metricCard}><Text style={styles.cardLabel}>{item.key === 'verification' ? 'Companies awaiting verification' : item.label}</Text><Text style={styles.cardValue}>{loading ? '—' : metric.count}</Text><Text style={styles.link}>Open view →</Text></Pressable>; })}</View> : null}
+    {section === 'overview' ? <S4LegalLinks testID="admin-overview-legal-links" /> : null}
     {section !== 'overview' && section !== 'screening' && !loading && !error && visibleRows.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>{query ? 'No matching records' : current.emptyLabel}</Text><Text style={styles.emptyText}>{query ? 'Clear or change the search term.' : 'This is expected for a freshly provisioned pilot database.'}</Text></View> : null}
     {section !== 'overview' && loading ? <Text style={styles.loading}>Loading {current.label.toLocaleLowerCase()}…</Text> : null}
     {selected ? <View style={styles.detailPanel}>{section==='screening'?<Pressable accessibilityRole="button" onPress={backToQueue}><Text style={styles.backToQueue}>← Back to Screening Review</Text></Pressable>:null}<Text style={styles.detailHeading}>{selected.title}</Text><Text style={styles.rowDetail}>{selected.detail}</Text>{selected.status ? <Text style={styles.status}>{selected.status}</Text> : null}

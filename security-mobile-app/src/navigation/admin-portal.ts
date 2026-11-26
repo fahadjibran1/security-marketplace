@@ -3,7 +3,7 @@ import type { AppRole } from '../types/models';
 export type AdminSection =
   | 'overview' | 'companies' | 'verification' | 'guards' | 'sites' | 'jobs' | 'applications'
   | 'assignments' | 'shifts' | 'attendance' | 'timesheets' | 'incidents'
-  | 'alerts' | 'dailyLogs' | 'screening' | 'audit' | 'notifications' | 'health' | 'security';
+  | 'alerts' | 'dailyLogs' | 'screening' | 'audit' | 'notifications' | 'health' | 'security' | 'accountDeletion';
 
 export interface AdminNavItem {
   key: AdminSection;
@@ -29,6 +29,7 @@ export const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { key: 'dailyLogs', label: 'Daily logs', group: 'Assurance', emptyLabel: 'No daily logs have been recorded yet.' },
   { key: 'screening', label: 'Screening review', group: 'Assurance', emptyLabel: 'No screening files have been started yet.' },
   { key: 'audit', label: 'Audit trail', group: 'Assurance', emptyLabel: 'No audit events have been recorded yet.' },
+  { key: 'accountDeletion', label: 'Account deletion requests', group: 'Assurance', emptyLabel: 'No account deletion requests are waiting.' },
   { key: 'notifications', label: 'Admin notifications', group: 'Assurance', emptyLabel: 'No admin notifications have been received yet.' },
   { key: 'health', label: 'Service health', group: 'Assurance', emptyLabel: 'No health response was returned.' },
   { key: 'security', label: 'Account security', group: 'Assurance', emptyLabel: 'Two-step verification settings for your Platform Admin account.' },

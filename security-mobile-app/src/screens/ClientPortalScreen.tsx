@@ -8,6 +8,7 @@ import { ClientInvoicesWorkspace } from '../components/client/ClientInvoicesWork
 import { ClientReportsWorkspace } from '../components/client/ClientReportsWorkspace';
 import { ClientServiceRecordsWorkspace } from '../components/client/ClientServiceRecordsWorkspace';
 import { ClientSitesWorkspace } from '../components/client/ClientSitesWorkspace';
+import { ClientAccountPanel } from '../components/account/ClientAccountPanel';
 import {
   formatApiErrorMessage,
   getClientPortalDashboard,
@@ -26,7 +27,7 @@ import {
 } from '../types/models';
 import { colors } from '../theme';
 
-type ClientSection = 'dashboard' | 'sites' | 'service-records' | 'incidents' | 'reports' | 'invoices' | 'timesheets';
+type ClientSection = 'dashboard' | 'sites' | 'service-records' | 'incidents' | 'reports' | 'invoices' | 'timesheets' | 'account';
 
 const NAV_ITEMS: Array<{ id: ClientSection; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -36,6 +37,7 @@ const NAV_ITEMS: Array<{ id: ClientSection; label: string }> = [
   { id: 'reports', label: 'Reports' },
   { id: 'invoices', label: 'Invoices' },
   { id: 'timesheets', label: 'Timesheets' },
+  { id: 'account', label: 'Account' },
 ];
 
 export function ClientPortalScreen({ user }: { user: AuthUser }) {
@@ -87,6 +89,8 @@ export function ClientPortalScreen({ user }: { user: AuthUser }) {
         return <ClientInvoicesWorkspace invoices={invoices} />;
       case 'timesheets':
         return <ClientWeeklyApprovalsScreen userRole={user.role} />;
+      case 'account':
+        return <ClientAccountPanel email={user.email} />;
       default:
         return null;
     }
