@@ -300,6 +300,7 @@ const NAV_FEATHER_ICONS: Record<string, string> = {
   'contract-pricing': 'tag',
   'compliance':       'shield',
   'audit':            'list',
+  'team':             'user-check',
   'incidents':        'alert-triangle',
   'alerts':           'bell',
 };

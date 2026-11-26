@@ -190,6 +190,10 @@ function companyPrivacyExemptions(ids: ProbeIds): Record<string, Exemption> {
       reason: "self-service: registers or unregisters the caller's own push device; responses are { registered } / { unregistered } only",
       evidence: ['welfare-push.spec.ts', 'emergency-alert.spec.ts'],
     },
+    CompanyStaffInvitationAcceptController: {
+      kind: 'exception', reason: 'public acceptance of an emailed staff invitation; answers only a confirmation (the new account\'s own email, company name and role), never a token or another account',
+      evidence: ['company-staff.spec.ts'],
+    },
     // ── Guard data by design, to permitted roles only ──
     GuardPersonnelController: {
       kind: 'exception',
@@ -199,6 +203,10 @@ function companyPrivacyExemptions(ids: ProbeIds): Record<string, Exemption> {
     },
     // ── Purpose-built responses, read below by every company role ──
     CompanyGuardInvitationController: { kind: 'contract', reason: 'invitation codes and their status; no guard or account objects', evidence: ['company-guard-link-security.spec.ts'], probes: { list: '/company-guards/invitations' } },
+    CompanyStaffController: {
+      kind: 'contract', reason: "the company's own team (name, email, role, status, joined) and open staff invitations, built field by field; staff.manage only; no token, digest or account metadata",
+      evidence: ['company-staff.spec.ts'], probes: { list: '/company-staff' },
+    },
     CompanyVerificationSelfController: {
       kind: 'contract', reason: "the caller's own company verification status, S4's note to it and the decision time, built field by field; the reconsideration request answers the same",
       evidence: ['sec-public-launch.spec.ts'], probes: { status: '/companies/me/verification' },

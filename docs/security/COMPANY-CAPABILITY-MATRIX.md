@@ -28,7 +28,7 @@ itself (409), since only a rejected company can ask.
 
 ## Routes
 
-117 mutating routes are reachable by company users.
+122 mutating routes are reachable by company users.
 
 ### `account` — approved, pending_verification, rejected, suspended
 
@@ -45,6 +45,9 @@ itself (409), since only a rejected company can ask.
 | POST | `/auth/resend-verification` | AccountRecoveryController.resendVerification |
 | POST | `/auth/reset-password` | AccountRecoveryController.resetPassword |
 | POST | `/auth/verify-email` | AccountRecoveryController.verifyEmail |
+| POST | `/company-staff-invitations/accept` | CompanyStaffInvitationAcceptController.accept |
+| POST | `/company-staff/invitations/:id/cancel` | CompanyStaffController.cancel |
+| POST | `/company-staff/members/:userId/revoke` | CompanyStaffController.revoke |
 | PATCH | `/notifications/:id/read` | NotificationController.markRead |
 
 ### `registration` — approved, pending_verification, rejected
@@ -78,6 +81,7 @@ itself (409), since only a rejected company can ask.
 | PUT | `/attendance/control-room/:userId` | AttendanceController.setControlRoomAuthorisation |
 | PATCH | `/clients/:id` | ClientController.update |
 | POST | `/clients` | ClientController.create |
+| PATCH | `/company-staff/members/:userId/role` | CompanyStaffController.changeRole |
 | PATCH | `/contract-pricing/:id/deactivate` | ContractPricingController.deactivate |
 | PATCH | `/contract-pricing/:id` | ContractPricingController.update |
 | POST | `/contract-pricing` | ContractPricingController.create |
@@ -110,6 +114,7 @@ itself (409), since only a rejected company can ask.
 | PUT | `/client-portal-users` | ClientPortalUserController.upsert |
 | POST | `/company-guards/invitations` | CompanyGuardInvitationController.create |
 | POST | `/company-guards` | CompanyGuardController.create |
+| POST | `/company-staff/invitations` | CompanyStaffController.invite |
 | POST | `/job-applications/:id/hire` | JobApplicationController.hire |
 | POST | `/jobs` | JobController.create |
 | POST | `/rota-slots/:id/assign-multiple` | RotaSlotController.assignMultiple |

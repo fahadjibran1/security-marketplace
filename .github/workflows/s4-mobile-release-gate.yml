@@ -340,6 +340,10 @@ jobs:
       # account-deletion queue rendered with the real reconciler.
       - name: Verify S4 links and account deletion requests
         run: npm run test:account-deletion-ui
+      # Company staff management: the Team section (members, invitations, invite with a grantable role, revoke with
+      # confirmation, who receives Emergency alerts) and the /join-company accept page.
+      - name: Verify company Team and staff invitation acceptance
+        run: npm run test:company-team
 
       # UAT FIX 03: an incident is not a safety alert. Both production defects were correctly-rendered
       # buttons wired to the wrong handler, which no source grep and no bundle export could see — so

@@ -133,7 +133,7 @@ test('STORE-03-NOTHING-DEPENDS-ON-THE-RETIRED-SCHEME', () => {
   assert.equal(links.parseAccountLink('/reset-password', '?token=x'.padEnd(40, 'x')).kind, 'reset-password');
   assert.equal(links.parseAccountLink('/verify-email', '?token=x'.padEnd(40, 'x')).kind, 'verify-email');
   const vercel = JSON.parse(read('vercel.json'));
-  assert.deepEqual(vercel.rewrites.map((r) => r.source).sort(), ['/reset-password', '/verify-email']);
+  assert.deepEqual(vercel.rewrites.map((r) => r.source).sort(), ['/join-company', '/reset-password', '/verify-email']);
 });
 
 test('STORE-04-ANDROID-PERMISSIONS-ARE-THE-PILOT-MINIMUM', () => {

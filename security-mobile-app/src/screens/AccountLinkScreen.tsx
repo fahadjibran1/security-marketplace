@@ -15,6 +15,8 @@ type Phase = 'form' | 'working' | 'done' | 'failed';
 const INVALID_LINK = {
   'reset-password': 'This password reset link is invalid or has expired. Request a new one from the S4 sign-in screen.',
   'verify-email': 'This verification link is invalid or has expired. Request a new one from the S4 sign-in screen.',
+  // App routes /join-company to StaffInvitationScreen, never here; listed so every link kind has a message.
+  'join-company': 'This invitation link is invalid or has expired. Ask the person who invited you to send a new invitation.',
 } as const;
 
 /**

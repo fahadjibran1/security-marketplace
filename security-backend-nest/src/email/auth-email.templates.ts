@@ -54,6 +54,50 @@ export function passwordResetEmail(to: string, webAppUrl: string, token: string)
   };
 }
 
+/** Company names and role labels are entered by people, so they are escaped before going into the HTML part. */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
+}
+
+/**
+ * An invitation to join a company's staff on S4. The link opens the S4 web app's /join-company page, where the
+ * invited person sets their name and password. Seven days, single use.
+ */
+export function staffInvitationEmail(
+  to: string,
+  webAppUrl: string,
+  token: string,
+  companyName: string,
+  roleLabel: string,
+): TransactionalEmail {
+  const url = `${webAppUrl}/join-company?token=${encodeURIComponent(token)}`;
+  const company = (companyName || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() || 'A company';
+  const footer = 'If you were not expecting this invitation, you can ignore this email. No account is created unless you accept.';
+  return {
+    kind: 'staff_invitation',
+    to,
+    subject: `You have been invited to join ${company} on S4`,
+    text: [
+      `You have been invited to join ${company} on S4`,
+      '',
+      `${company} has invited you to join its team on S4 as ${roleLabel}.`,
+      'Open this link to set your name and password. It works once and expires in 7 days:',
+      url,
+      '',
+      footer,
+    ].join('\n'),
+    html: layout(
+      'You have been invited to join a team on S4',
+      [
+        `${escapeHtml(company)} has invited you to join its team on S4 as ${escapeHtml(roleLabel)}.`,
+        'Use the button below to set your name and password. The link works once and expires in 7 days.',
+      ],
+      { label: 'Accept invitation', url },
+      footer,
+    ),
+  };
+}
+
 export function emailVerificationEmail(to: string, webAppUrl: string, token: string): TransactionalEmail {
   const url = `${webAppUrl}/verify-email?token=${encodeURIComponent(token)}`;
   const footer = 'If you did not create an S4 account, you can ignore this email.';
