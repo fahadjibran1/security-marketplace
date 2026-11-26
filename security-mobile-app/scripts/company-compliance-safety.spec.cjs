@@ -437,7 +437,8 @@ const FIXTURE = [
 
   await test('FINANCE NAVIGATION: Compliance is hidden without compliance.view; the section, dashboard tile and loader honour it too', () => {
     assert.match(dashboard, /resolveCompliancePermissions\(user\?\.companyPermissions, user\?\.role\)/);
-    assert.match(dashboard, /itemIds: group\.itemIds\.filter\(\(id\) => id !== 'compliance' \|\| canViewCompliance\)/);
+    // Team (company staff management) is filtered in the same expression, gated on staff.manage.
+    assert.match(dashboard, /itemIds: group\.itemIds\.filter\(\(id\) => \(id !== 'compliance' \|\| canViewCompliance\) && \(id !== 'team' \|\| canManageStaff\)\)/);
     assert.equal((dashboard.match(/groups=\{navGroups\}/g) || []).length, 2, 'both sidebars use the permission-filtered groups');
     assert.doesNotMatch(dashboard, /groups=\{COMPANY_NAV_GROUPS\}/);
     assert.match(dashboard, /canViewCompliance=\{compliancePermissions\.canView\}/);
