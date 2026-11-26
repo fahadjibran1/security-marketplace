@@ -71,10 +71,16 @@ test('STORE-01-THE-PERMANENT-S4-IDENTITY', () => {
   // S4 1.2.4 (21 Nov 2026): Android 28 adds UX-02 Packages A and B (PR #125) on the same store identity, prepared, not
   // built. Android 27 is uploaded and is the active Play Internal Testing release (owner-stated 21 Nov 2026). The iOS
   // build number stays 24 (no iOS build); the shared marketing version is 1.2.4.
-  assert.equal(expo.version, '1.2.4');
-  assert.equal(expo.android.versionCode, 28);
-  assert.equal(expo.ios.buildNumber, '24');
-  assert.ok(expo.android.versionCode > 27, 'above Android 27, the active Play Internal Testing release (owner-stated 21 Nov 2026)');
+  // S4 1.3.0 (26 Nov 2026): Android 29 and iOS 25 for the integrated 1.3.0 release candidate (5bdfdd2: EM-01, PRs #129
+  // to #134) on the same store identity, prepared, not built. Android 28 is uploaded to Play Internal Testing and was
+  // tested by the owner (owner-stated 26 Nov 2026); EAS holds no Android build above 28. iOS 23 is the highest build in
+  // App Store Connect; iOS 24 was built and never reached App Store Connect.
+  assert.equal(expo.version, '1.3.0');
+  assert.equal(expo.android.versionCode, 29);
+  assert.equal(expo.ios.buildNumber, '25');
+  assert.ok(expo.android.versionCode > 28, 'above Android 28 (uploaded, owner-stated 26 Nov 2026), the active Play Internal Testing release');
+  assert.ok(Number(expo.ios.buildNumber) > 24, 'above iOS 24, built and never submitted (its submission errored)');
+  assert.ok(expo.android.versionCode > 27, 'above Android 27, distributed and superseded by 28');
   assert.ok(expo.android.versionCode > 26, 'above Android 26, distributed and superseded by 27');
   assert.ok(expo.android.versionCode > 25, 'above Android 25, uploaded to Play Internal Testing (owner-verified 15 Nov 2026)');
   assert.ok(Number(expo.ios.buildNumber) > 23, 'above iOS 23, uploaded to App Store Connect');
@@ -231,7 +237,7 @@ test('STORE-08-ONE-PRODUCT-NAME-FOR-EVERY-ROLE', () => {
 
 test('STORE-09-IOS-IDENTITY-IS-SET-AND-NOTHING-IS-BUILT', () => {
   assert.equal(expo.ios.bundleIdentifier, 'com.sfour.s4');
-  assert.equal(expo.ios.buildNumber, '24');
+  assert.equal(expo.ios.buildNumber, '25', 'S4 1.3.0: above the built, never submitted 24 (prepared, not built)');
   assert.equal(expo.ios.infoPlist.ITSAppUsesNonExemptEncryption, false);
   assert.equal(expo.ios.config.usesNonExemptEncryption, false);
   // No hand-written usage strings that could drift from the plugin's, and none for unused capabilities.

@@ -807,7 +807,7 @@ test('GPAT-15-WELFARE-CHECKS-STAY-INDEPENDENT-OF-PATROLS', () => {
 test('GPAT-16-CAMERA-CONFIG-AND-UNCHANGED-IDENTITY-VERSION-AND-RELEASE-INPUTS', () => {
   const expo = JSON.parse(codeOf('app.json')).expo;
   assert.deepEqual([expo.android.package, expo.ios.bundleIdentifier, expo.version, expo.android.versionCode, expo.ios.buildNumber, expo.name, expo.scheme],
-    ['com.sfour.s4', 'com.sfour.s4', '1.2.4', 28, '24', 'S4', 's4security'], 'identity unchanged; the version is S4 1.2.4 (Android 28: 1.2.3 (27) plus UX-02 Packages A and B; iOS build number unchanged at 24)');
+    ['com.sfour.s4', 'com.sfour.s4', '1.3.0', 29, '25', 'S4', 's4security'], 'identity unchanged; the version is S4 1.3.0 (Android 29 above the uploaded 28; iOS 25 above the built, never submitted 24)');
   assert.deepEqual(expo.updates, { enabled: false });
   assert.ok(!('runtimeVersion' in expo));
   assert.equal(expo.extra.eas.projectId, 'c786f15c-7d60-4122-9001-02cabbb7692b');
