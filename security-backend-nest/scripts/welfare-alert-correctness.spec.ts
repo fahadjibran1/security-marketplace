@@ -29,7 +29,7 @@ process.env.TZ = 'UTC';
 
 import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
-import { ConflictException, BadRequestException } from '@nestjs/common';
+import { ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 import { appEntities } from '../src/database/entities';
 import { User, UserRole, UserStatus } from '../src/user/entities/user.entity';
@@ -678,8 +678,8 @@ async function sweepCases() {
       const [b] = await summaries(theirs.id);
       assert.equal(a.companyId, alpha.company.id);
       assert.equal(b.companyId, bravo.company.id);
-      await refused(() => sweep.acknowledgeForCompany(bravo.owner, a.id), BadRequestException, 'another company acknowledging');
-      await refused(() => sweep.closeForCompany(bravo.owner, a.id, RESOLVE), BadRequestException, 'another company resolving');
+      await refused(() => sweep.acknowledgeForCompany(bravo.owner, a.id), NotFoundException, 'another company acknowledging');
+      await refused(() => sweep.closeForCompany(bravo.owner, a.id, RESOLVE), NotFoundException, 'another company resolving');
       assert.equal((await summaries(mine.id))[0].status, SafetyAlertStatus.OPEN, 'untouched');
       const alphaAlerts = (await sweep.findForCompany(alpha.owner)).map((x) => x.id);
       assert.ok(alphaAlerts.includes(a.id) && !alphaAlerts.includes(b.id), 'each company sees only its own');

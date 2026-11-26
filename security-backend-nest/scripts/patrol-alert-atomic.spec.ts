@@ -384,8 +384,8 @@ async function main() {
   await test('PAA-14-TENANCY-UNCHANGED', async () => {
     const foreign = await makePatrolCase({ company: B });
     const before = await auditTotal();
-    assert.equal((await refusal(() => alertService.acknowledgeForCompany(ava, foreign.alertId), 'other company')).status, 400);
-    assert.equal((await refusal(() => alertService.closeForCompany(ava, foreign.alertId, RESOLVE), 'other company')).status, 400);
+    assert.equal((await refusal(() => alertService.acknowledgeForCompany(ava, foreign.alertId), 'other company')).status, 404);
+    assert.equal((await refusal(() => alertService.closeForCompany(ava, foreign.alertId, RESOLVE), 'other company')).status, 404);
     assert.equal((await refusal(() => alertService.acknowledgePatrolAlert(ava, A.company.id, foreign.alertId), 'other company')).status, 404);
     assert.equal((await refusal(() => alertService.closePatrolAlert(ava, A.company.id, foreign.alertId, RESOLVE), 'other company')).status, 404);
     assert.equal((await refusal(() => alertService.acknowledgeForCompany(ava, 987654), 'missing')).status, 404);
