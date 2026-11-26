@@ -998,7 +998,7 @@ test('SIGNER-13I-THE-1-1-2-VC20-IS-DISTRIBUTED-AND-USES-THE-VC17-VC18-VC19-UPLOA
   assert.match(current.note, /Uploaded by the owner to Google Play Internal Testing and Active there \(owner-confirmed 28 Oct 2026\)/);
   assert.doesNotMatch(current.note, /Not uploaded to Google Play/, 'no longer presented as not uploaded');
   assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.4 (28)', 'Play now shows 1.2.4 (28) (owner-stated 26 Nov 2026)');
-  assert.match(config.playConsole.source, /active release 1\.1\.2 \(20\): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28\. Not inspected from the build machine\.; active release 1\.2\.0 \(23\): published to Internal Testing 2026-10-31, owner-confirmed \(S4 did not upload it; rollout, testers and time not recorded\)\.; active release 1\.2\.2 \(25\): uploaded 2026-11-11 and available to internal testers, owner-verified from Play Console screenshots 2026-11-15 \(no versionCode 26 or higher\)\.; active release 1\.2\.2 \(26\): available to internal testers, owner-confirmed from a Play Console screenshot 2026-11-15 and restated 2026-11-17 \(S4 did not upload it; not inspected from the build machine\)\.; active release 1\.2\.3 \(27\): uploaded by the owner and the active Internal Testing release, owner-stated 2026-11-21 \(S4 did not upload it; no screenshot; upload date unknown; not inspected from the build machine\)\.; active release 1\.2\.4 \(28\): uploaded by the owner to Internal Testing and tested by the owner, owner-stated 2026-11-26 \(S4 did not upload it; no screenshot; upload date unknown; not inspected from the build machine\)\.$/);
+  assert.match(config.playConsole.source, /active release 1\.1\.2 \(20\): owner uploaded to Play Internal Testing, owner-confirmed 2026-10-28\. Not inspected from the build machine\.; active release 1\.2\.0 \(23\): published to Internal Testing 2026-10-31, owner-confirmed \(S4 did not upload it; rollout, testers and time not recorded\)\.; active release 1\.2\.2 \(25\): uploaded 2026-11-11 and available to internal testers, owner-verified from Play Console screenshots 2026-11-15 \(no versionCode 26 or higher\)\.; active release 1\.2\.2 \(26\): available to internal testers, owner-confirmed from a Play Console screenshot 2026-11-15 and restated 2026-11-17 \(S4 did not upload it; not inspected from the build machine\)\.; active release 1\.2\.3 \(27\): uploaded by the owner and the active Internal Testing release, owner-stated 2026-11-21 \(S4 did not upload it; no screenshot; upload date unknown; not inspected from the build machine\)\.; active release 1\.2\.4 \(28\): uploaded 2026-11-21 09:36 and released 09:38 to Internal Testing, owner-checked in Play Console 2026-11-26 \(S4 did not upload it; not inspected from the build machine\); versionCode 29 unused \(owner-checked 2026-11-26\)\.$/);
   // vc19 is kept exactly as the distributed-superseded build below it (SIGNER-13H).
   assert.equal(vc19.status, 'distributed-superseded');
   assert.equal(vc19.aabSha256, '168c3f116ad84be0b41225ac5658b815968d7af5006e9ccd012e8a0363f731ca');
@@ -1542,16 +1542,18 @@ test('SIGNER-13Q-THE-1-2-4-VC28-IS-THE-DISTRIBUTED-ARTEFACT-ON-THE-SAME-IDENTITY
   // Distributed: exactly the owner-stated Play facts; everything not stated is unknown, never invented.
   assert.deepEqual(Object.keys(prepared).filter((key) => /^play|internalTesting|uploaded|handover/i.test(key)), ['playInternalTesting'], 'one Play fact, no handover');
   const play = prepared.playInternalTesting;
-  assert.deepEqual(Object.keys(play).sort(), ['activeRelease', 'confirmedBy', 'confirmedOn', 'evidence', 'note', 'status', 'testedBy', 'unknown', 'uploadedBy'], 'the stated facts and nothing more');
+  assert.deepEqual(Object.keys(play).sort(), ['activeRelease', 'confirmedBy', 'confirmedOn', 'evidence', 'note', 'releasedAt', 'status', 'testedBy', 'unknown', 'uploadedAt', 'uploadedBy'], 'the stated facts and nothing more');
   assert.deepEqual([play.status, play.confirmedBy, play.confirmedOn, play.activeRelease, play.uploadedBy, play.testedBy], ['active', 'owner', '2026-11-26', '1.2.4 (28)', 'owner (not S4)', 'owner']);
-  assert.match(play.evidence, /^owner statement \(26 Nov 2026, in the S4 1\.3\.0 version brief\): the e1866f5b AAB \(1\.2\.4, 28\) was uploaded to Google Play Internal Testing and tested by the owner\. No screenshot\./);
-  assert.match(play.evidence, /EAS \(read on 26 Nov 2026\) holds no Android build above 28\.$/);
-  assert.deepEqual(play.unknown, ['whether the uploaded file is byte-identical to the verified EAS artefact (no handover hash check is recorded here and the Play-side hash was not read back from Play Console)', 'rollout', 'tester count', 'upload date and time']);
+  // Corrected 26 Nov 2026 (S4 1.3.0 Android production build approval): the owner read the upload and release times in Play Console.
+  assert.match(play.evidence, /^Owner-checked in Google Play Console on 26 Nov 2026: versionCode 28 \(S4 1\.2\.4\) is the current active Internal Testing release, uploaded 21 Nov 2026 09:36 and released 09:38; versionCode 29 is unused\./);
+  assert.match(play.uploadedAt, /^2026-11-21T09:36 \(owner-read from Google Play Console/);
+  assert.match(play.releasedAt, /^2026-11-21T09:38 \(owner-read from Google Play Console/);
+  assert.deepEqual(play.unknown, ['whether the uploaded file is byte-identical to the verified EAS artefact (no handover hash check is recorded here and the Play-side hash was not read back from Play Console)', 'rollout', 'tester count']);
   assert.ok(!('uploadedOn' in play) && !('uploadedAabSha256' in play), 'no upload date or uploaded hash is invented');
   assert.match(play.note, /hash was not read back from Play Console/);
   assert.match(prepared.note, /the signing material was staged as temporary copies for the EAS upload and deleted afterwards, the originals unchanged; nothing was generated or replaced/);
-  assert.match(prepared.note, /S4 did not upload it \(the build machine has no Play developer account\)\. Owner-stated on 26 Nov 2026: 1\.2\.4 \(28\) was uploaded by the owner to Google Play Internal Testing and tested by the owner/);
-  assert.match(prepared.note, /No screenshot was provided, the upload date is unknown and the Play-side hash was not read back/);
+  assert.match(prepared.note, /S4 did not upload it \(the build machine has no Play developer account\)\. Owner-checked in Google Play Console on 26 Nov 2026: 1\.2\.4 \(28\) is the active Internal Testing release, uploaded 21 Nov 2026 09:36 and released 09:38\. The Play-side hash was not read back/);
+  assert.match(prepared.note, /released 09:38\. The Play-side hash was not read back, so whether the uploaded file/);
   assert.doesNotMatch(prepared.note, /Not uploaded to Google Play/, 'no longer presented as not uploaded');
   assert.equal(config.playConsole.internalTesting.activeRelease, '1.2.4 (28)', 'Play\'s active internal release');
   assert.match(prepared.note, /UX-02 Packages A and B \(PR #125, merged 20 Nov 2026\)/);
@@ -1589,16 +1591,16 @@ test('SIGNER-13R-THE-1-3-0-VC29-IS-PREPARED-NOT-BUILT-ON-THE-SAME-IDENTITY-AND-U
   assert.equal(prepared.versionCode, Math.max(current.versionCode, ...config.retiredArtefacts.map((entry) => entry.versionCode)) + 1, 'one above every Android build');
   assert.equal(prepared.versionCode, current.versionCode + 1, 'one above the distributed 28');
   assert.ok(prepared.versionCode > 28, 'above 28 (uploaded, owner-stated 26 Nov 2026)');
-  assert.match(prepared.storeNumberCheck, /^NOT VERIFIED from Play Console\. The owner stated on 26 Nov 2026 that 1\.2\.4 \(28\) is uploaded to Google Play Internal Testing; EAS \(read 26 Nov 2026\) holds no Android build above 28\./);
-  assert.match(prepared.storeNumberCheck, /The owner must confirm it before 29 is built\.$/);
+  assert.match(prepared.storeNumberCheck, /^Owner-verified in Google Play Console on 26 Nov 2026 \(S4 1\.3\.0 Android production build approval\): versionCode 28 \(1\.2\.4\) is the current active Internal Testing release and versionCode 29 is unused\./);
+  assert.match(prepared.storeNumberCheck, /Not inspected from the build machine\.$/);
   for (const key of ['easBuildId', 'easBuildUrl', 'aabSha256', 'aabFilename', 'aabSizeBytes', 'gitCommit', 'certifiedOn', 'verified', 'uploadCertificateSha256', 'completedAt', 'apkSha256']) {
     assert.ok(!(key in prepared), `prepared, not built: no ${key}`);
   }
   assert.deepEqual(Object.keys(prepared).filter((key) => /^play|internalTesting|uploaded|handover/i.test(key)), [], 'no Play fact');
-  assert.match(prepared.note, /Prepared, not built: no EAS build, file, hash, upload or store fact yet\. Not uploaded to Google Play\./);
+  assert.match(prepared.note, /Prepared, not built: no EAS build, file, hash, upload or store fact yet\. Not uploaded to Google Play\. Owner-approved for one EAS production build on 26 Nov 2026 after the Play Console check\./);
   assert.deepEqual([prepared.easBuildProfile, prepared.distribution, prepared.sourceBranch], ['production', 'STORE', 'release/s4-1.3.0-version']);
-  assert.equal(prepared.sourceFixCommit, '5bdfdd24d78ae464167c101a9b4193ef7daae5ea', 'the integrated 1.3.0 release candidate');
-  assert.match(prepared.sourceBase, /^5bdfdd2 \(integration\/s4-1\.3\.0: production a700c20 plus EM-01 two-tap Emergency PR #129/);
+  assert.equal(prepared.sourceFixCommit, 'c170917644e53b493426f269e4472fb0412feac6', 'the 1.3.0 release deployed to production');
+  assert.match(prepared.sourceBase, /^c170917 \(release\/s4-pilot-rc1, deployed to production 26 Nov 2026: 5bdfdd2 = EM-01 #129/);
   // An in-place update: the same identity, upload key, plugins, Expo project, API and session storage key.
   assert.equal(config.package, 'com.sfour.s4');
   assert.equal(appJson.expo.android.package, 'com.sfour.s4');

@@ -1093,10 +1093,10 @@ test('BUILD-01M-S4-1-2-4-ANDROID-28-ADDS-UX-02-AND-IS-THE-DISTRIBUTED-ARTEFACT',
     ['active', 'owner', '2026-11-26', '1.2.4 (28)', 'owner']);
   assert.ok(!('uploadedOn' in pa.playInternalTesting) && !('uploadedAabSha256' in pa.playInternalTesting), 'no upload date or uploaded hash is invented');
   assert.ok(!('ownerHandover' in pa), 'no handover is invented');
-  assert.match(pa.note, /Owner-stated on 26 Nov 2026: 1\.2\.4 \(28\) was uploaded by the owner to Google Play Internal Testing and tested by the owner/);
+  assert.match(pa.note, /Owner-checked in Google Play Console on 26 Nov 2026: 1\.2\.4 \(28\) is the active Internal Testing release, uploaded 21 Nov 2026 09:36 and released 09:38/);
   assert.doesNotMatch(pa.note, /Not uploaded to Google Play/);
   assert.equal(android.playConsole.internalTesting.activeRelease, '1.2.4 (28)');
-  assert.match(android.playConsole.source, /active release 1\.2\.4 \(28\): uploaded by the owner to Internal Testing and tested by the owner, owner-stated 2026-11-26/);
+  assert.match(android.playConsole.source, /active release 1\.2\.4 \(28\): uploaded 2026-11-21 09:36 and released 09:38 to Internal Testing, owner-checked in Play Console 2026-11-26/);
   // iOS: the built 1.2.2 (24) is kept exactly and is not re-labelled; the 1.2.4 note is kept.
   assert.deepEqual([ios.preparedArtefact.status, ios.preparedArtefact.marketingVersion, ios.preparedArtefact.buildNumber, ios.preparedArtefact.easBuildId],
     ['built-not-submitted', '1.2.2', '24', 'd7433bed-16c7-4d13-8a4e-ad99b84e92ca']);
@@ -1131,10 +1131,10 @@ test('BUILD-01N-S4-1-3-0-ANDROID-29-IOS-25-PREPARED-NOT-BUILT', () => {
   assert.ok(pa.versionCode > 28, 'above 28 (uploaded, owner-stated 26 Nov 2026)');
   assert.equal(pa.versionCode, Math.max(vc28.versionCode, ...android.retiredArtefacts.map((entry) => entry.versionCode)) + 1, 'one above every Android build');
   assert.deepEqual([pa.versionName, vc28.versionName].map((v) => v.split('.').map(Number)), [[1, 3, 0], [1, 2, 4]], '1.3.0 is a higher versionName than the distributed 1.2.4');
-  assert.match(pa.storeNumberCheck, /^NOT VERIFIED from Play Console\./, 'the store check is not claimed');
-  assert.match(pa.storeNumberCheck, /EAS \(read 26 Nov 2026\) holds no Android build above 28/);
-  assert.match(pa.storeNumberCheck, /The owner must confirm it before 29 is built\.$/);
-  assert.deepEqual([pa.sourceBranch, pa.sourceFixCommit], ['release/s4-1.3.0-version', '5bdfdd24d78ae464167c101a9b4193ef7daae5ea']);
+  assert.match(pa.storeNumberCheck, /^Owner-verified in Google Play Console on 26 Nov 2026/, 'the owner checked Play before the build');
+  assert.match(pa.storeNumberCheck, /versionCode 29 is unused/);
+  assert.match(pa.storeNumberCheck, /Not inspected from the build machine\.$/);
+  assert.deepEqual([pa.sourceBranch, pa.sourceFixCommit], ['release/s4-1.3.0-version', 'c170917644e53b493426f269e4472fb0412feac6']);
   for (const pr of ['#129', '#130', '#131', '#132', '#133', '#134']) {
     assert.ok(pa.sourceBase.includes(pr), `the 1.3.0 integration names ${pr}`);
   }
